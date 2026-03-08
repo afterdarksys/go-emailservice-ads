@@ -1,0 +1,36 @@
+# Build artifacts
+bin/
+*.log
+
+# Data directories
+data/
+/var/
+
+# Documentation
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test files
+*_test.go
+test-*.sh
+test-*.py
+send-test-email.py
+test-suite.py
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

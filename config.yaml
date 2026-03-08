@@ -1,0 +1,49 @@
+server:
+  addr: ":2525"
+  domain: "localhost.local"
+  max_message_bytes: 10485760  # 10MB
+  max_recipients: 50
+  allow_insecure_auth: false    # SECURITY: Disable auth over non-TLS (set to true for testing only)
+  require_auth: true             # SECURITY: Require authentication for sending mail
+  require_tls: true              # SECURITY: Require STARTTLS before allowing AUTH
+  mode: "test"
+
+  # Connection and Rate Limiting
+  max_connections: 1000          # Total concurrent connections
+  max_per_ip: 10                 # Connections per IP
+  rate_limit_per_ip: 100         # Messages per hour per IP
+  enable_greylist: false         # Greylisting (can cause delays)
+  disable_vrfy: true             # Disable VRFY (prevents user enumeration)
+  disable_expn: true             # Disable EXPN (prevents list expansion)
+
+  # Local domains
+  local_domains:
+    - "localhost"
+    - "localhost.local"
+
+  tls:
+    cert: "./data/certs/server.crt"
+    key: "./data/certs/server.key"
+
+imap:
+  addr: ":1143"
+  require_tls: true              # SECURITY: Require TLS for IMAP (use implicit TLS on port 993 or STARTTLS)
+  tls:
+    cert: "./data/certs/server.crt"
+    key: "./data/certs/server.key"
+
+api:
+  rest_addr: ":8080"
+  grpc_addr: ":50051"
+
+auth:
+  default_users:
+    - username: "testuser"
+      password: "testpass123"     # WARNING: Change in production! Use strong passwords.
+      email: "testuser@localhost.local"
+    - username: "admin"
+      password: "admin123"        # WARNING: Change in production!
+      email: "admin@localhost.local"
+
+logging:
+  level: "debug"

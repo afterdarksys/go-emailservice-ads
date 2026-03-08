@@ -1,0 +1,248 @@
+# TODO - go-emailservice-ads
+
+## CRITICAL (Must Do Before Production) 🚨
+
+- [ ] **Implement real SMTP delivery** - Currently workers just sleep 10ms!
+  - File: `internal/smtpd/queue.go:149-153`
+  - Need: MX lookup, SMTP client, connection pooling
+  - Impact: Messages accepted but never actually delivered
+
+## HIGH Priority ⚠️
+
+- [ ] Enable DMARC enforcement
+  - Integrate DMARC check in `server.go:Data()`
+  - Enforce reject/quarantine policies
+
+- [ ] Configure DKIM signing for outbound mail
+  - Generate DKIM keys (`openssl genrsa -out dkim-private.pem 2048`)
+  - Add to config.yaml
+  - Publish public key to DNS
+
+- [ ] Add security metrics to API
+  - `/api/v1/security/stats` - SPF/DKIM/greylisting stats
+  - `/api/v1/dns/stats` - DNS cache statistics
+  - `/api/v1/greylisting/stats` - Greylisting details
+
+- [ ] Configure replication for HA
+  - Set up primary/secondary nodes
+  - Test failover procedures
+  - Document recovery process
+
+## MEDIUM Priority 📋
+
+- [ ] Enable greylisting in production
+  - Set `enable_greylist: true` in config.yaml
+  - Monitor spam reduction metrics
+  - Tune retry delay if needed
+
+- [ ] Configure directory service integration
+  - Set `directory.base_url` in config
+  - Test user lookups
+  - Integrate with msgs.global directory
+
+- [ ] Implement connection pooling
+  - Pool SMTP connections to same destination
+  - Reduce connection overhead
+  - Improve throughput
+
+- [ ] Add transport maps
+  - Custom routing rules per domain
+  - Smart host configuration
+  - Fallback relay support
+
+- [ ] Implement bounce handling
+  - Parse SMTP error codes
+  - Generate bounce messages
+  - Track bounce rates
+
+- [ ] Add content filtering
+  - Attachment scanning
+  - Virus detection
+  - Size limits per domain
+
+## LOW Priority 📝
+
+- [ ] Create Grafana dashboards
+  - Queue performance
+  - Security events
+  - System health
+
+- [ ] Set up Prometheus alerting
+  - DLQ size threshold
+  - Failed delivery rate
+  - Storage capacity
+
+- [ ] Implement hot config reload
+  - Watch config file for changes
+  - Reload without restart
+  - Validate before applying
+
+- [ ] Add Bayesian spam filtering
+  - Train on spam corpus
+  - Integrate with queue processing
+  - Provide feedback loop
+
+- [ ] Implement DANE/TLSA
+  - DNS-based certificate validation
+  - Enhance TLS security
+  - Prevent MITM attacks
+
+- [ ] Add queue aging/cleanup
+  - Remove old messages from DLQ
+  - Archive completed messages
+  - Enforce retention policies
+
+- [ ] Implement hold queue
+  - Manual review before delivery
+  - Policy enforcement hooks
+  - Admin approval workflow
+
+- [ ] Add per-client rate limiting
+  - Track send rates per authenticated user
+  - Prevent email bombing
+  - Configurable thresholds
+
+- [ ] Implement reputation tracking
+  - Track sender IP behavior
+  - Block abusive senders
+  - Whitelist trusted sources
+
+## Performance Optimizations
+
+- [ ] Tune worker counts per tier
+  - Benchmark different configurations
+  - Adjust based on traffic patterns
+  - Monitor resource usage
+
+- [ ] Optimize DNS caching
+  - Increase cache TTL for stable domains
+  - Implement negative caching
+  - Prefetch common domains
+
+- [ ] Add message compression
+  - Compress stored messages
+  - Reduce disk usage
+  - Faster storage operations
+
+- [ ] Implement lazy loading
+  - Don't load full message for listing
+  - Stream large messages
+  - Reduce memory footprint
+
+## Testing & Quality
+
+- [ ] Add load testing suite
+  - Target: 1,000-5,000 msg/s
+  - Verify disaster recovery under load
+  - Test all security features
+
+- [ ] Create security test suite
+  - SPF spoofing attempts
+  - DKIM tampering detection
+  - TLS cipher validation
+
+- [ ] Add integration tests
+  - Full SMTP conversation
+  - IMAP mailbox operations
+  - API endpoint coverage
+
+- [ ] Implement chaos testing
+  - Simulate crashes
+  - Network failures
+  - Disk full scenarios
+
+## Documentation
+
+- [ ] Create API documentation
+  - OpenAPI/Swagger spec
+  - Example requests/responses
+  - Authentication guide
+
+- [ ] Write deployment guide
+  - Production checklist
+  - Scaling recommendations
+  - Monitoring setup
+
+- [ ] Document disaster recovery procedures
+  - Backup/restore process
+  - Failover steps
+  - Recovery verification
+
+- [ ] Create troubleshooting guide
+  - Common issues
+  - Log interpretation
+  - Performance tuning
+
+## Compliance & Security
+
+- [ ] Review data retention policies
+  - Legal requirements
+  - Storage limits
+  - Deletion procedures
+
+- [ ] Implement audit logging
+  - Track admin actions
+  - Message access logs
+  - Configuration changes
+
+- [ ] Add encryption at rest
+  - Encrypt journal files
+  - Encrypt message store
+  - Key management
+
+- [ ] Implement GDPR compliance
+  - Data export capability
+  - Right to deletion
+  - Privacy controls
+
+## Future Enhancements
+
+- [ ] Add web UI for management
+  - Queue visualization
+  - Message search
+  - Admin controls
+
+- [ ] Implement gRPC API properly
+  - Service definitions
+  - Streaming support
+  - Client libraries
+
+- [ ] Add webhook support
+  - Delivery notifications
+  - Bounce notifications
+  - Custom integrations
+
+- [ ] Implement message routing rules
+  - Based on headers
+  - Content inspection
+  - Custom filters
+
+- [ ] Add plugin system
+  - Custom delivery methods
+  - Content filters
+  - Authentication backends
+
+---
+
+## Completed ✅
+
+- [x] Multi-tier queue system (1,050 workers)
+- [x] Persistent storage with WAL
+- [x] Deduplication via SHA256 hashing
+- [x] Retry scheduler with exponential backoff
+- [x] Dead letter queue
+- [x] SPF verification (enforced)
+- [x] DKIM verification (logging)
+- [x] DNS caching
+- [x] Enhanced authentication with account lockout
+- [x] Modern TLS cipher suites
+- [x] IMAP server
+- [x] Metrics endpoint (Prometheus)
+- [x] Management CLI (mailctl)
+- [x] Docker deployment
+- [x] Kubernetes manifests
+- [x] Comprehensive documentation
+
+---
+
+Last updated: 2026-03-08

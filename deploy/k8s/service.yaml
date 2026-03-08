@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-smtp
+  namespace: mail-system
+  labels:
+    app: go-emailservice-ads
+spec:
+  type: LoadBalancer
+  ports:
+  - name: smtp
+    port: 25
+    targetPort: 2525
+    protocol: TCP
+  selector:
+    app: go-emailservice-ads
+    tier: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-api
+  namespace: mail-system
+  labels:
+    app: go-emailservice-ads
+spec:
+  type: ClusterIP
+  ports:
+  - name: rest
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP
+  selector:
+    app: go-emailservice-ads
+    tier: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-replication
+  namespace: mail-system
+  labels:
+    app: go-emailservice-ads
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for replication
+  ports:
+  - name: replication
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: go-emailservice-ads

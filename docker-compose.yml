@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  # Primary mail server
+  mail-primary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: afterdarksys/go-emailservice-ads:latest
+    container_name: mail-primary
+    hostname: mail-primary.local
+    ports:
+      - "2525:2525"   # SMTP
+      - "8080:8080"   # REST API
+      - "50051:50051" # gRPC
+      - "9090:9090"   # Replication
+    volumes:
+      - mail-primary-data:/var/lib/mail-storage
+      - mail-primary-logs:/var/log/mail
+      - ./config.yaml:/opt/goemailservices/config.yaml:ro
+    environment:
+      - LOG_LEVEL=info
+      - REPLICATION_MODE=primary
+      - REPLICATION_PEERS=mail-secondary:9090
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - mailnet
+
+  # Secondary mail server (disaster recovery)
+  mail-secondary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: afterdarksys/go-emailservice-ads:latest
+    container_name: mail-secondary
+    hostname: mail-secondary.local
+    ports:
+      - "2526:2525"   # SMTP
+      - "8081:8080"   # REST API
+      - "50052:50051" # gRPC
+      - "9091:9090"   # Replication
+    volumes:
+      - mail-secondary-data:/var/lib/mail-storage
+      - mail-secondary-logs:/var/log/mail
+      - ./config.yaml:/opt/goemailservices/config.yaml:ro
+    environment:
+      - LOG_LEVEL=info
+      - REPLICATION_MODE=secondary
+      - REPLICATION_PEERS=mail-primary:9090
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - mailnet
+    depends_on:
+      - mail-primary
+
+  # Monitoring (Prometheus)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mail-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+    networks:
+      - mailnet
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mail-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    networks:
+      - mailnet
+    depends_on:
+      - prometheus
+
+  # PostgreSQL for metadata (future use)
+  postgres:
+    image: postgres:16-alpine
+    container_name: mail-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=maildb
+      - POSTGRES_USER=mailuser
+      - POSTGRES_PASSWORD=changeme
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - mailnet
+
+  # Redis for caching/coordination (future use)
+  redis:
+    image: redis:7-alpine
+    container_name: mail-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - mailnet
+
+volumes:
+  mail-primary-data:
+    driver: local
+  mail-primary-logs:
+    driver: local
+  mail-secondary-data:
+    driver: local
+  mail-secondary-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  mailnet:
+    driver: bridge

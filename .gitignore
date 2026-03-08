@@ -1,0 +1,61 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+goemailservices
+mailctl
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Data directories
+/data/
+*.db
+*.journal
+
+# Logs
+*.log
+service.log
+
+# Runtime
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Certificates (don't commit private keys!)
+*.key
+*.pem
+*.crt
+!example.crt
+!example.pem
+
+# Environment
+.env
+.env.local
+
+# Build artifacts
+dist/
+build/

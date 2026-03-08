@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mail-storage-pvc
+  namespace: mail-system
+  labels:
+    app: go-emailservice-ads
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard  # Adjust based on your cluster

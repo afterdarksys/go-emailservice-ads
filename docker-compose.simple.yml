@@ -1,0 +1,31 @@
+version: '3.8'
+
+# Simplified single-instance deployment for testing
+services:
+  mail:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: afterdarksys/go-emailservice-ads:latest
+    container_name: mail-server
+    hostname: mail.local
+    ports:
+      - "2525:2525"   # SMTP
+      - "8080:8080"   # REST API
+      - "50051:50051" # gRPC
+    volumes:
+      - mail-data:/var/lib/mail-storage
+      - ./config.yaml:/opt/goemailservices/config.yaml:ro
+    environment:
+      - LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  mail-data:
+    driver: local

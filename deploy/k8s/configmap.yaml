@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-config
+  namespace: mail-system
+data:
+  config.yaml: |
+    server:
+      addr: ":2525"
+      domain: "mail.example.com"
+      max_message_bytes: 52428800  # 50MB
+      max_recipients: 100
+      mode: "production"
+
+    api:
+      rest_addr: ":8080"
+      grpc_addr: ":50051"
+
+    logging:
+      level: "info"

@@ -1,0 +1,12 @@
+- read ~/development/msgs.global/
+- read ~/development/dnsscience.io
+
+Now that you understand what line of work I am, lets do this:
+
+What is "goemailservices" I envision it like this:
+ - queue for SMTP: goemailservices/smtpd/{int,out,msa,bulk,emergency}
+ - strat for imap: goemailservices/user/username/operation
+ - strat for dirsvc: gomailservices/directory/?query= lots of ldap filters
+ - should support tls,dkim,dmarc verification,other
+
+- SASLauthd is useful

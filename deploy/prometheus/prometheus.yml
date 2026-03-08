@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'mail-primary'
+    static_configs:
+      - targets: ['mail-primary:8080']
+        labels:
+          instance: 'primary'
+
+  - job_name: 'mail-secondary'
+    static_configs:
+      - targets: ['mail-secondary:8080']
+        labels:
+          instance: 'secondary'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
