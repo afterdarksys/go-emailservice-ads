@@ -27,9 +27,18 @@ type Metrics struct {
 	dkimPass           int64
 	dkimFail           int64
 
+	// DANE metrics (RFC 7672)
+	daneLookups        int64
+	daneSuccesses      int64
+	daneFailures       int64
+	daneCacheHits      int64
+	dnssecValidations  int64
+	dnssecFailures     int64
+
 	// Gauges
 	queueDepth         int64
 	activeConnections  int64
+	daneEnabledDomains int64
 
 	mu sync.RWMutex
 }
@@ -125,6 +134,48 @@ func (m *Metrics) IncrementDKIMFail() {
 	m.dkimFail++
 }
 
+// IncrementDANELookups increments the DANE lookup counter
+func (m *Metrics) IncrementDANELookups() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.daneLookups++
+}
+
+// IncrementDANESuccesses increments the DANE success counter
+func (m *Metrics) IncrementDANESuccesses() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.daneSuccesses++
+}
+
+// IncrementDANEFailures increments the DANE failure counter
+func (m *Metrics) IncrementDANEFailures() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.daneFailures++
+}
+
+// IncrementDANECacheHits increments the DANE cache hit counter
+func (m *Metrics) IncrementDANECacheHits() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.daneCacheHits++
+}
+
+// IncrementDNSSECValidations increments the DNSSEC validation counter
+func (m *Metrics) IncrementDNSSECValidations() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dnssecValidations++
+}
+
+// IncrementDNSSECFailures increments the DNSSEC failure counter
+func (m *Metrics) IncrementDNSSECFailures() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dnssecFailures++
+}
+
 // SetQueueDepth sets the current queue depth
 func (m *Metrics) SetQueueDepth(depth int64) {
 	m.mu.Lock()
@@ -137,6 +188,13 @@ func (m *Metrics) SetActiveConnections(count int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.activeConnections = count
+}
+
+// SetDANEEnabledDomains sets the count of domains with DANE enabled
+func (m *Metrics) SetDANEEnabledDomains(count int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.daneEnabledDomains = count
 }
 
 // GetSnapshot returns a snapshot of current metrics
@@ -157,8 +215,15 @@ func (m *Metrics) GetSnapshot() map[string]int64 {
 		"spf_fail":            m.spfFail,
 		"dkim_pass":           m.dkimPass,
 		"dkim_fail":           m.dkimFail,
+		"dane_lookups":        m.daneLookups,
+		"dane_successes":      m.daneSuccesses,
+		"dane_failures":       m.daneFailures,
+		"dane_cache_hits":     m.daneCacheHits,
+		"dnssec_validations":  m.dnssecValidations,
+		"dnssec_failures":     m.dnssecFailures,
 		"queue_depth":         m.queueDepth,
 		"active_connections":  m.activeConnections,
+		"dane_enabled_domains": m.daneEnabledDomains,
 	}
 }
 
@@ -219,6 +284,31 @@ func (m *Metrics) Handler() http.HandlerFunc {
 		w.Write([]byte("# TYPE dkim_fail counter\n"))
 		w.Write([]byte("dkim_fail " + format(snapshot["dkim_fail"]) + "\n\n"))
 
+		// DANE metrics
+		w.Write([]byte("# HELP dane_lookups Total DANE TLSA lookups\n"))
+		w.Write([]byte("# TYPE dane_lookups counter\n"))
+		w.Write([]byte("dane_lookups " + format(snapshot["dane_lookups"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dane_successes Total successful DANE validations\n"))
+		w.Write([]byte("# TYPE dane_successes counter\n"))
+		w.Write([]byte("dane_successes " + format(snapshot["dane_successes"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dane_failures Total DANE validation failures\n"))
+		w.Write([]byte("# TYPE dane_failures counter\n"))
+		w.Write([]byte("dane_failures " + format(snapshot["dane_failures"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dane_cache_hits Total DANE cache hits\n"))
+		w.Write([]byte("# TYPE dane_cache_hits counter\n"))
+		w.Write([]byte("dane_cache_hits " + format(snapshot["dane_cache_hits"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dnssec_validations Total DNSSEC validations\n"))
+		w.Write([]byte("# TYPE dnssec_validations counter\n"))
+		w.Write([]byte("dnssec_validations " + format(snapshot["dnssec_validations"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dnssec_failures Total DNSSEC validation failures\n"))
+		w.Write([]byte("# TYPE dnssec_failures counter\n"))
+		w.Write([]byte("dnssec_failures " + format(snapshot["dnssec_failures"]) + "\n\n"))
+
 		w.Write([]byte("# HELP queue_depth Current queue depth\n"))
 		w.Write([]byte("# TYPE queue_depth gauge\n"))
 		w.Write([]byte("queue_depth " + format(snapshot["queue_depth"]) + "\n\n"))
@@ -226,6 +316,10 @@ func (m *Metrics) Handler() http.HandlerFunc {
 		w.Write([]byte("# HELP active_connections Current active connections\n"))
 		w.Write([]byte("# TYPE active_connections gauge\n"))
 		w.Write([]byte("active_connections " + format(snapshot["active_connections"]) + "\n\n"))
+
+		w.Write([]byte("# HELP dane_enabled_domains Count of domains with DANE enabled\n"))
+		w.Write([]byte("# TYPE dane_enabled_domains gauge\n"))
+		w.Write([]byte("dane_enabled_domains " + format(snapshot["dane_enabled_domains"]) + "\n\n"))
 	}
 }
 

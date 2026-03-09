@@ -18,6 +18,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/directory"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 	"github.com/afterdarksys/go-emailservice-ads/internal/greylisting"
+	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/security"
 )
 
@@ -31,9 +32,10 @@ type Server struct {
 	dirClient  *directory.Client
 
 	// Security components
-	policyEngine *security.PolicyEngine
-	dkimVerifier *security.Verifier
-	greylisting  *greylisting.Greylisting
+	policyEngine  *security.PolicyEngine
+	dkimVerifier  *security.Verifier
+	greylisting   *greylisting.Greylisting
+	policyManager *policy.Manager
 
 	// Connection tracking for limits
 	connections   map[string]int // IP -> connection count
@@ -42,7 +44,7 @@ type Server struct {
 }
 
 // NewServer initializes a new ESMTP Server
-func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager) *Server {
+func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyMgr *policy.Manager) *Server {
 	v := auth.NewValidator(logger)
 	dir := directory.NewClient(cfg, logger)
 
@@ -81,6 +83,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager) *Server
 		policyEngine:  policyEngine,
 		dkimVerifier:  dkimVerifier,
 		greylisting:   greylist,
+		policyManager: policyMgr,
 	}
 	s := smtp.NewServer(be)
 
@@ -168,6 +171,7 @@ type Backend struct {
 	policyEngine  *security.PolicyEngine
 	dkimVerifier  *security.Verifier
 	greylisting   *greylisting.Greylisting
+	policyManager *policy.Manager
 }
 
 // NewSession is called after client greeting (EHLO/HELO)
@@ -192,6 +196,7 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		policyEngine:  bkd.policyEngine,
 		dkimVerifier:  bkd.dkimVerifier,
 		greylisting:   bkd.greylisting,
+		policyManager: bkd.policyManager,
 		ip:            ip,
 		ehlo:          c.Hostname(),
 		authenticated: false,
@@ -208,6 +213,7 @@ type Session struct {
 	policyEngine  *security.PolicyEngine
 	dkimVerifier  *security.Verifier
 	greylisting   *greylisting.Greylisting
+	policyManager *policy.Manager
 	msg           *Message // active message state
 	ip            string
 	ehlo          string
@@ -382,6 +388,101 @@ func (s *Session) Data(r io.Reader) error {
 					zap.String("result", dkimResult))
 			}
 		}()
+	}
+
+	// === POLICY ENGINE EVALUATION ===
+	if s.policyManager != nil {
+		// Create email context for policy evaluation
+		emailCtx, err := policy.NewEmailContext(s.msg.From, s.msg.To, s.ip, s.ehlo, b)
+		if err != nil {
+			s.logger.Warn("Failed to create policy context", zap.Error(err))
+			// Continue without policy evaluation
+		} else {
+			// Set authentication info
+			emailCtx.Authenticated = s.authenticated
+			emailCtx.Username = s.username
+
+			// Set direction
+			emailCtx.IsInbound = !s.authenticated
+			emailCtx.IsOutbound = s.authenticated
+			emailCtx.LocalDomains = s.config.Server.LocalDomains
+
+			// TODO: Populate security results (SPF, DKIM, DMARC)
+			// These would come from earlier checks in the SMTP flow
+			emailCtx.SPFResult = policy.SPFNone
+			emailCtx.DKIMResult = policy.DKIMNone
+			emailCtx.DMARCResult = policy.DMARCNone
+
+			// TODO: Populate IP reputation
+			emailCtx.IPReputation = policy.ReputationScore{Score: 50, Source: "internal"}
+
+			// Evaluate policies
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			action, err := s.policyManager.Evaluate(ctx, emailCtx)
+			if err != nil {
+				s.logger.Error("Policy evaluation failed",
+					zap.String("from", s.msg.From),
+					zap.Strings("to", s.msg.To),
+					zap.Error(err))
+				// Continue with default action
+			} else if action != nil {
+				// Handle policy action
+				switch action.Type {
+				case policy.ActionReject:
+					s.logger.Info("Policy rejected message",
+						zap.String("from", s.msg.From),
+						zap.String("reason", action.Reason))
+					return &smtp.SMTPError{
+						Code:         550,
+						EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+						Message:      action.Reason,
+					}
+
+				case policy.ActionDefer:
+					s.logger.Info("Policy deferred message",
+						zap.String("from", s.msg.From),
+						zap.String("reason", action.Reason))
+					return &smtp.SMTPError{
+						Code:         451,
+						EnhancedCode: smtp.EnhancedCode{4, 7, 1},
+						Message:      action.Reason,
+					}
+
+				case policy.ActionDiscard:
+					s.logger.Info("Policy discarded message",
+						zap.String("from", s.msg.From))
+					// Silently discard - return success but don't queue
+					s.msg = nil
+					return nil
+
+				case policy.ActionRedirect:
+					s.logger.Info("Policy redirected message",
+						zap.String("from", s.msg.From),
+						zap.String("original_to", strings.Join(s.msg.To, ",")),
+						zap.String("redirect_to", action.Target))
+					s.msg.To = []string{action.Target}
+
+				case policy.ActionFileinto:
+					// Store folder in message for later processing
+					s.logger.Info("Policy filed message",
+						zap.String("folder", action.Target))
+					// TODO: Add folder metadata to message
+
+				case policy.ActionAccept, policy.ActionKeep:
+					// Continue normal processing
+					s.logger.Debug("Policy accepted message")
+
+				default:
+					s.logger.Warn("Unknown policy action",
+						zap.String("action", string(action.Type)))
+				}
+
+				// Apply header modifications
+				// TODO: Implement header modifications on message data
+			}
+		}
 	}
 
 	// Fast dispatch to queue manager

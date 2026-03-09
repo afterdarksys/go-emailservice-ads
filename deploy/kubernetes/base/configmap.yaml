@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smtp-config
+  namespace: mail-system
+data:
+  config.yaml: |
+    server:
+      addr: ":25"
+      domain: "mail.example.com"
+      max_message_bytes: 52428800  # 50MB
+      max_recipients: 100
+      allow_insecure_auth: false
+      require_auth: false  # Depends on deployment mode
+      require_tls: true
+      mode: "production"
+
+      # TLS configuration
+      tls:
+        cert: "/etc/tls/tls.crt"
+        key: "/etc/tls/tls.key"
+
+    # IMAP configuration
+    imap:
+      addr: ":1143"
+      require_tls: true
+      tls:
+        cert: "/etc/tls/tls.crt"
+        key: "/etc/tls/tls.key"
+
+    # API configuration
+    api:
+      rest_addr: ":8080"
+      grpc_addr: ":50051"
+
+    # Authentication
+    auth:
+      default_users: []  # Configured via Secrets
+
+    # Logging
+    logging:
+      level: "info"
+      format: "json"
+
+    # Kubernetes integration
+    kubernetes:
+      enabled: true
+      service_discovery: true
+      endpoint_watching: true
+
+    # State store for global coordination
+    state_store:
+      type: "etcd"
+      endpoints:
+        - "etcd-0.etcd.mail-system.svc.cluster.local:2379"
+        - "etcd-1.etcd.mail-system.svc.cluster.local:2379"
+        - "etcd-2.etcd.mail-system.svc.cluster.local:2379"
+      prefix: "/mail-system"
+
+  policies.yaml: |
+    policies:
+      - name: "Rate Limiting"
+        type: starlark
+        enabled: true
+        priority: 5
+        scope:
+          type: global

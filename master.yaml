@@ -1,0 +1,116 @@
+# Master control configuration for go-emailservice-ads
+# Similar to Postfix master.cf but with modern YAML syntax
+# This file controls which services run and their configurations
+
+version: "1.0"
+
+# Service definitions
+services:
+  # Public SMTP (port 25) - Receive mail from external servers
+  smtp-public:
+    type: smtp
+    enabled: true
+    listen: "0.0.0.0:25"
+    workers: 100
+    settings:
+      require_auth: false
+      require_tls: false
+      allow_relay: false
+      max_message_size: 10485760  # 10MB
+      max_connections: 500
+      read_timeout: 30
+      write_timeout: 30
+      filters:
+        - greylisting
+        - spf-check
+        - dkim-verify
+        - divert-check
+        - screen-check
+
+  # Submission port (587) - Authenticated mail submission
+  smtp-submission:
+    type: smtp
+    enabled: true
+    listen: "0.0.0.0:587"
+    workers: 200
+    tls_mode: required
+    settings:
+      require_auth: true
+      require_tls: true
+      allow_relay: true
+      max_message_size: 52428800  # 50MB
+      max_connections: 1000
+      read_timeout: 60
+      write_timeout: 60
+      filters:
+        - auth-check
+        - divert-check
+        - screen-check
+
+  # SMTPS (465) - Implicit TLS submission
+  smtp-tls:
+    type: smtp
+    enabled: true
+    listen: "0.0.0.0:465"
+    tls_mode: implicit
+    workers: 200
+    settings:
+      require_auth: true
+      allow_relay: true
+      max_message_size: 52428800  # 50MB
+      max_connections: 1000
+      filters:
+        - auth-check
+        - divert-check
+        - screen-check
+
+  # IMAP (143) - Mail retrieval
+  imap:
+    type: imap
+    enabled: true
+    listen: "0.0.0.0:143"
+    workers: 50
+    tls_mode: optional
+    settings:
+      require_auth: true
+      max_connections: 500
+      read_timeout: 300
+      write_timeout: 300
+
+  # IMAPS (993) - Secure IMAP
+  imaps:
+    type: imap
+    enabled: true
+    listen: "0.0.0.0:993"
+    tls_mode: implicit
+    workers: 50
+    settings:
+      require_auth: true
+      max_connections: 500
+      read_timeout: 300
+      write_timeout: 300
+
+  # JMAP (8443) - Modern mail API
+  jmap:
+    type: jmap
+    enabled: false  # Disabled by default
+    listen: "0.0.0.0:8443"
+    tls_mode: required
+    workers: 30
+    settings:
+      require_auth: true
+      max_connections: 300
+
+# Global resource limits
+resource_limits:
+  max_memory_mb: 2048
+  max_cpu_percent: 80
+  max_connections: 10000
+  max_file_descriptors: 65536
+
+# Hot reload settings
+hot_reload:
+  enabled: true
+  check_interval: 5s
+  validate_before_apply: true
+  backup_on_change: true

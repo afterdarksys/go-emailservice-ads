@@ -1,0 +1,98 @@
+# Policy Engine Configuration
+# Policies are evaluated in order of priority (lower number = higher priority)
+
+policies:
+  # === Global Policies (Priority 0-25) ===
+
+  - name: "Global IP Reputation Check"
+    type: starlark
+    enabled: true
+    priority: 10
+    scope:
+      type: global
+    script_path: examples/policies/starlark/ip-reputation.star
+
+  # === SMTP Transaction Policies (Priority 26-50) ===
+
+  - name: "SPF/DKIM/DMARC Enforcement"
+    type: starlark
+    enabled: true
+    priority: 30
+    scope:
+      type: direction
+      direction: inbound
+    script_path: examples/policies/starlark/security-checks.star
+
+  # === Content Policies (Priority 51-75) ===
+
+  - name: "Anti-Spam Filter"
+    type: starlark
+    enabled: true
+    priority: 60
+    scope:
+      type: global
+    script_path: examples/policies/starlark/antispam.star
+
+  - name: "DLP - Outbound Sensitive Data"
+    type: starlark
+    enabled: true
+    priority: 65
+    scope:
+      type: direction
+      direction: outbound
+    script_path: examples/policies/starlark/dlp.star
+
+  # === User/Group Policies (Priority 76-100) ===
+
+  - name: "CEO Vacation Responder"
+    type: sieve
+    enabled: false  # Disabled by default
+    priority: 80
+    scope:
+      type: user
+      users:
+        - ceo@company.com
+    script_path: examples/policies/sieve/vacation.sieve
+
+  - name: "Sales Team Auto-Filing"
+    type: sieve
+    enabled: true
+    priority: 85
+    scope:
+      type: group
+      groups:
+        - sales-team
+    script_path: examples/policies/sieve/sales-filter.sieve
+
+  - name: "Finance Department Compliance"
+    type: starlark
+    enabled: true
+    priority: 90
+    scope:
+      type: group
+      groups:
+        - finance-team
+    script_path: examples/policies/starlark/finance-compliance.star
+
+  # === Special Purpose (Priority 101+) ===
+
+  - name: "Archive All External Email"
+    type: starlark
+    enabled: true
+    priority: 110
+    scope:
+      type: direction
+      direction: inbound
+    script: |
+      # Simple inline policy
+      def evaluate():
+          add_header("X-Archived", "true")
+          accept()
+      evaluate()
+
+# Global policy engine settings
+settings:
+  max_execution_time: 10s
+  max_memory: 128MB
+  cache_compiled: true
+  metrics_enabled: true

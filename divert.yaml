@@ -1,0 +1,82 @@
+# Divert proxy configuration
+# Mail diversion intercepts messages to specific recipients and redirects them
+# The original recipient never receives the message (no bounce)
+
+divert_rules:
+  # Example: User under legal hold
+  - name: "Bob Legal Hold"
+    enabled: true
+    match:
+      type: recipient
+      value: bob@company.com
+    action:
+      divert_to: compliance@company.com
+      reason: "Legal hold - Case #12345"
+      notify_sender: false
+      encrypt: true
+      attach_original: true
+
+  # Example: Group-based diversion
+  - name: "Executive Monitoring"
+    enabled: false  # Disabled by default
+    match:
+      type: group
+      value: executives
+    action:
+      divert_to: executive-monitor@company.com
+      reason: "Executive communication monitoring"
+      notify_sender: false
+      encrypt: true
+
+  # Example: Content-based diversion
+  - name: "Sensitive Keywords"
+    enabled: false
+    match:
+      type: content
+      pattern: "(confidential|secret|proprietary)"
+      case_insensitive: true
+    action:
+      divert_to: security@company.com
+      reason: "Sensitive content detected"
+      attach_original: true
+      encrypt: true
+
+  # Example: Time-based diversion
+  - name: "After Hours Support Routing"
+    enabled: false
+    match:
+      type: recipient
+      value: support@company.com
+      schedule:
+        days: [saturday, sunday]
+        hours: all
+    action:
+      divert_to: oncall@company.com
+      reason: "After-hours support routing"
+      notify_sender: false
+
+  # Example: Domain-based diversion
+  - name: "Legal Department Oversight"
+    enabled: false
+    match:
+      type: domain
+      value: legal.company.com
+    action:
+      divert_to: legal-archive@company.com
+      reason: "Legal department message archiving"
+      encrypt: true
+
+# Global diversion settings
+settings:
+  audit_log: /var/log/mail/divert-audit.log
+  attachment_format: message/rfc822
+  include_headers: true
+  hash_algorithm: sha256
+  max_message_size: 52428800  # 50MB
+
+# IMPORTANT NOTES:
+# - Diverted messages are NEVER delivered to the original recipient
+# - No bounce message is sent to the sender (silent diversion)
+# - All diversions are logged in the audit log
+# - Encryption is strongly recommended for compliance
+# - Test carefully before enabling in production

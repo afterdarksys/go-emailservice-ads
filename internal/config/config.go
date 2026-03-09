@@ -28,6 +28,9 @@ type Config struct {
 
 		// Local domains for delivery
 		LocalDomains      []string `yaml:"local_domains"`   // Domains handled locally
+
+		// DANE Configuration (RFC 6698, RFC 7672)
+		DANE              DANEConfig `yaml:"dane"`
 	} `yaml:"server"`
 
 	IMAP struct {
@@ -61,6 +64,16 @@ type UserConfig struct {
 	Email    string `yaml:"email"`
 }
 
+// DANEConfig configures DANE (DNS-Based Authentication of Named Entities)
+// RFC 6698, RFC 7672 - SMTP Security via DANE
+type DANEConfig struct {
+	Enabled      bool     `yaml:"enabled"`        // Enable DANE validation
+	StrictMode   bool     `yaml:"strict_mode"`    // Reject delivery if DANE validation fails
+	DNSServers   []string `yaml:"dns_servers"`    // DNS servers for DNSSEC queries (empty = use system defaults)
+	CacheTTL     int      `yaml:"cache_ttl"`      // TLSA cache TTL in seconds (0 = use DNS TTL)
+	Timeout      int      `yaml:"timeout"`        // DANE validation timeout in seconds
+}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -83,6 +96,11 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DisableVRFY = true        // SECURITY: Disable user enumeration
 	cfg.Server.DisableEXPN = true        // SECURITY: Disable mailing list expansion
 	cfg.Server.LocalDomains = []string{"localhost", "localhost.local"}
+	cfg.Server.DANE.Enabled = true       // SECURITY: Enable DANE by default
+	cfg.Server.DANE.StrictMode = false   // Default to opportunistic DANE
+	cfg.Server.DANE.DNSServers = []string{} // Use system defaults
+	cfg.Server.DANE.CacheTTL = 3600      // 1 hour cache
+	cfg.Server.DANE.Timeout = 10         // 10 second timeout
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS for IMAP
 	cfg.Logging.Level = "info"

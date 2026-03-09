@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smtp-internal
+  namespace: mail-system
+  labels:
+    app: smtp
+    component: internal-hub
+    tier: backend
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: smtp
+      component: internal-hub
+  template:
+    metadata:
+      labels:
+        app: smtp
+        component: internal-hub
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: smtp-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+      - name: smtp
+        image: goemailservices:latest
+        imagePullPolicy: IfNotPresent
+
+        env:
+        # Deployment mode
+        - name: DEPLOYMENT_MODE
+          value: "internal"
+
+        # Pod information
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+
+        # Internal hub settings
+        - name: REQUIRE_AUTH
+          value: "true"
+        - name: TRUSTED_NETWORKS
+          value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        - name: ENABLE_LDAP
+          value: "false"
+        - name: SKIP_SPF_DKIM
+          value: "true"
+
+        # Kubernetes integration
+        - name: ENABLE_SERVICE_DISCOVERY
+          value: "true"
+        - name: ENABLE_GLOBAL_ROUTING
+          value: "true"
+
+        ports:
+        - name: internal-smtp
+          containerPort: 2525
+          protocol: TCP
+        - name: submission
+          containerPort: 587
+          protocol: TCP
+        - name: http-metrics
+          containerPort: 8080
+          protocol: TCP
+
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/smtp
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+
+      volumes:
+      - name: config
+        configMap:
+          name: smtp-config
+      - name: tmp
+        emptyDir: {}

@@ -1,0 +1,45 @@
+[Unit]
+Description=Go Email Service - Advanced Delivery System
+Documentation=https://github.com/afterdarksys/go-emailservice-ads
+After=network-online.target
+Wants=network-online.target
+Requires=goemailservices-prestart.service
+
+[Service]
+Type=simple
+User=mailservice
+Group=mailservice
+WorkingDirectory=/opt/goemailservices
+ExecStartPre=/opt/goemailservices/scripts/prestart-check.sh
+ExecStart=/opt/goemailservices/bin/goemailservices --config /etc/goemailservices/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/goemailservices /var/log/goemailservices
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryLimit=2G
+TasksMax=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=goemailservices
+
+# Environment
+Environment="GOMAXPROCS=4"
+EnvironmentFile=-/etc/goemailservices/environment
+
+[Install]
+WantedBy=multi-user.target

@@ -19,11 +19,12 @@ Built for msgs.global internal mail infrastructure - handles millions of message
 
 ### Security Features ✅
 
+- **DANE/TLSA Validation** ⭐ **NEW!** - RFC 7672 compliant, DNS-based certificate authentication with DNSSEC
 - **SPF Verification** - RFC 7208 compliant, ENFORCED (rejects spoofed mail)
 - **DKIM Verification** - RFC 6376 compliant, ACTIVE (logging results)
 - **DMARC Support** - RFC 7489 compliant (code exists, ready to enable)
 - **Greylisting** - Triplet-based anti-spam (50-90% spam reduction, disabled by default)
-- **DNS Caching** - 5-minute TTL cache for MX/TXT/A/AAAA records (200-500x speedup)
+- **DNS Caching** - 5-minute TTL cache for MX/TXT/A/AAAA/TLSA records (200-500x speedup)
 - **Enhanced Auth** - Account lockout protection, IP tracking, rate limiting
 - **Modern TLS** - TLS 1.2/1.3, ECDHE, AES-GCM, ChaCha20-Poly1305
 
@@ -256,11 +257,12 @@ export MAILCTL_PASSWORD=changeme
 ## Security Features
 
 ### Active and Enforced ✅
-1. **SPF Verification** - Rejects mail from unauthorized IPs (RFC 7208)
-2. **Enhanced Authentication** - Account lockout after failed attempts
-3. **DNS Caching** - All lookups cached (5min TTL)
-4. **Modern TLS** - TLS 1.2/1.3, ECDHE, PFS
-5. **IMAP Auth** - Shared authentication with SMTP
+1. **DANE/TLSA Validation** ⭐ **NEW!** - Certificate authentication via DNS with DNSSEC (RFC 7672)
+2. **SPF Verification** - Rejects mail from unauthorized IPs (RFC 7208)
+3. **Enhanced Authentication** - Account lockout after failed attempts
+4. **DNS Caching** - All lookups cached (5min TTL)
+5. **Modern TLS** - TLS 1.2/1.3, ECDHE, PFS
+6. **IMAP Auth** - Shared authentication with SMTP
 
 ### Active but Not Enforced ✅
 1. **DKIM Verification** - Verifies signatures, logs results (RFC 6376)
@@ -272,6 +274,7 @@ export MAILCTL_PASSWORD=changeme
 3. **Directory Service** - Client exists (needs endpoint config)
 
 **See:** `SECURITY_FEATURES.md` for detailed documentation
+**NEW:** `docs/DANE_IMPLEMENTATION.md` for complete DANE guide
 
 ---
 

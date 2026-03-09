@@ -1,0 +1,13 @@
+[Unit]
+Description=Go Email Service Pre-Start Checks
+Before=goemailservices.service
+
+[Service]
+Type=oneshot
+User=mailservice
+Group=mailservice
+ExecStart=/opt/goemailservices/scripts/prestart-check.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

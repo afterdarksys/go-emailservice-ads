@@ -1,0 +1,183 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smtp-perimeter
+  namespace: mail-system
+  labels:
+    app: smtp
+    component: perimeter-mta
+    tier: edge
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: smtp
+      component: perimeter-mta
+  template:
+    metadata:
+      labels:
+        app: smtp
+        component: perimeter-mta
+        tier: edge
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: smtp-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      affinity:
+        # Spread pods across zones for HA
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: smtp
+                  component: perimeter-mta
+              topologyKey: topology.kubernetes.io/zone
+
+      containers:
+      - name: smtp
+        image: goemailservices:latest
+        imagePullPolicy: IfNotPresent
+
+        env:
+        # Deployment mode
+        - name: DEPLOYMENT_MODE
+          value: "perimeter"
+
+        # Pod information
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_REGION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['topology.kubernetes.io/region']
+        - name: POD_ZONE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['topology.kubernetes.io/zone']
+
+        # Perimeter-specific settings
+        - name: ENABLE_GREYLISTING
+          value: "true"
+        - name: REQUIRE_TLS
+          value: "true"
+        - name: RATE_LIMIT_PER_IP
+          value: "100"
+        - name: MAX_CONNECTIONS_PER_IP
+          value: "10"
+        - name: ENABLE_RBL
+          value: "true"
+        - name: ENABLE_REPUTATION
+          value: "true"
+
+        # Kubernetes integration
+        - name: ENABLE_SERVICE_DISCOVERY
+          value: "true"
+        - name: ENABLE_ENDPOINT_WATCHING
+          value: "true"
+        - name: ENABLE_GLOBAL_ROUTING
+          value: "true"
+
+        # State store
+        - name: STATE_STORE_TYPE
+          value: "etcd"
+        - name: STATE_STORE_ENDPOINTS
+          value: "etcd-0.etcd.mail-system.svc.cluster.local:2379,etcd-1.etcd.mail-system.svc.cluster.local:2379"
+
+        ports:
+        - name: smtp
+          containerPort: 25
+          protocol: TCP
+        - name: submission
+          containerPort: 587
+          protocol: TCP
+        - name: smtps
+          containerPort: 465
+          protocol: TCP
+        - name: http-metrics
+          containerPort: 8080
+          protocol: TCP
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE  # For port 25
+          readOnlyRootFilesystem: true
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/smtp
+          readOnly: true
+        - name: tls
+          mountPath: /etc/tls
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: data
+          mountPath: /data
+
+      volumes:
+      - name: config
+        configMap:
+          name: smtp-config
+      - name: tls
+        secret:
+          secretName: smtp-tls
+      - name: tmp
+        emptyDir: {}
+      - name: data
+        emptyDir: {}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"net"
 
+	"github.com/emersion/go-imap/server"
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
@@ -29,12 +29,14 @@ type MessageSummary struct {
 }
 
 // Server implements secure IMAP4rev1 server with TLS and authentication
+// RFC 3501 - INTERNET MESSAGE ACCESS PROTOCOL - VERSION 4rev1
+// RFC 2595 - Using TLS with IMAP, POP3 and ACAP
 type Server struct {
-	logger    *zap.Logger
-	store     Store
-	config    *config.Config
-	validator *auth.Validator
-	listener  net.Listener
+	logger     *zap.Logger
+	store      Store
+	config     *config.Config
+	validator  *auth.Validator
+	imapServer *server.Server
 }
 
 // NewServer initializes a secure IMAP server
@@ -51,16 +53,19 @@ func NewServer(logger *zap.Logger, store Store, cfg *config.Config, validator *a
 // Implements IMAP4rev1 (RFC 3501) with STARTTLS (RFC 2595)
 func (s *Server) Start() error {
 	addr := s.config.IMAP.Addr
-	s.logger.Info("Starting IMAP4rev1 server", zap.String("addr", addr))
+	s.logger.Info("Starting IMAP4rev1 server (go-imap)", zap.String("addr", addr))
 
-	// Create listener
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-	s.listener = listener
+	// Create backend
+	backend := NewBackend(s.logger, s.store, s.validator)
 
-	// If TLS is configured and required, use TLS listener
+	// Create IMAP server
+	s.imapServer = server.New(backend)
+	s.imapServer.Addr = addr
+
+	// Server allows authentication over unencrypted connections (set to false in production)
+	s.imapServer.AllowInsecureAuth = false
+
+	// Configure TLS if available
 	if s.config.IMAP.TLS != nil && s.config.IMAP.TLS.Cert != "" && s.config.IMAP.TLS.Key != "" {
 		cert, err := tls.LoadX509KeyPair(s.config.IMAP.TLS.Cert, s.config.IMAP.TLS.Key)
 		if err != nil {
@@ -86,62 +91,49 @@ func (s *Server) Start() error {
 			},
 		}
 
+		s.imapServer.TLSConfig = tlsConfig
+
 		if s.config.IMAP.RequireTLS {
-			// Wrap listener with TLS for implicit TLS (port 993)
-			listener = tls.NewListener(listener, tlsConfig)
-			s.logger.Info("IMAP server started with TLS (implicit)", zap.String("addr", addr))
+			s.logger.Info("IMAP server configured with mandatory TLS (IMAPS mode)")
+			// For implicit TLS (port 993), use ListenAndServeTLS
+			go func() {
+				s.logger.Info("IMAP server listening (implicit TLS)", zap.String("addr", addr))
+				if err := s.imapServer.ListenAndServeTLS(); err != nil {
+					s.logger.Error("IMAP server error", zap.Error(err))
+				}
+			}()
 		} else {
-			s.logger.Info("IMAP server started with STARTTLS support", zap.String("addr", addr))
+			s.logger.Info("IMAP server configured with STARTTLS support")
+			go func() {
+				s.logger.Info("IMAP server listening (STARTTLS)", zap.String("addr", addr))
+				if err := s.imapServer.ListenAndServe(); err != nil {
+					s.logger.Error("IMAP server error", zap.Error(err))
+				}
+			}()
 		}
-	} else if s.config.IMAP.RequireTLS {
-		return fmt.Errorf("IMAP RequireTLS is enabled but no TLS certificates configured")
+	} else {
+		if s.config.IMAP.RequireTLS {
+			return fmt.Errorf("IMAP RequireTLS is enabled but no TLS certificates configured")
+		}
+
+		// No TLS configured - run insecure (only for testing)
+		s.logger.Warn("IMAP server running WITHOUT TLS - NOT RECOMMENDED FOR PRODUCTION")
+		go func() {
+			if err := s.imapServer.ListenAndServe(); err != nil {
+				s.logger.Error("IMAP server error", zap.Error(err))
+			}
+		}()
 	}
 
-	// Accept connections (basic implementation)
-	// In production, this would integrate with github.com/emersion/go-imap/v2
-	go s.acceptConnections()
-
+	s.logger.Info("IMAP4rev1 server started successfully", zap.String("addr", addr))
 	return nil
-}
-
-// acceptConnections handles incoming IMAP connections
-func (s *Server) acceptConnections() {
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			s.logger.Error("Failed to accept IMAP connection", zap.Error(err))
-			return
-		}
-
-		go s.handleConnection(conn)
-	}
-}
-
-// handleConnection processes a single IMAP connection
-func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	remoteAddr := conn.RemoteAddr().String()
-	s.logger.Info("New IMAP connection", zap.String("remote_addr", remoteAddr))
-
-	// Send greeting
-	greeting := "* OK [CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN AUTH=LOGIN] IMAP4rev1 Service Ready\r\n"
-	if _, err := conn.Write([]byte(greeting)); err != nil {
-		s.logger.Error("Failed to send IMAP greeting", zap.Error(err))
-		return
-	}
-
-	// TODO: Implement full IMAP4rev1 protocol handler
-	// This would parse commands, handle authentication, manage mailboxes, etc.
-	// For now, this is a framework that enforces TLS and authentication requirements
-	s.logger.Info("IMAP connection established - awaiting commands", zap.String("remote_addr", remoteAddr))
 }
 
 // Shutdown gracefully stops the IMAP server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Stopping IMAP server...")
-	if s.listener != nil {
-		return s.listener.Close()
+	if s.imapServer != nil {
+		return s.imapServer.Close()
 	}
 	return nil
 }

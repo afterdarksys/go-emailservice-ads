@@ -1,0 +1,101 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: smtp-perimeter-netpol
+  namespace: mail-system
+spec:
+  podSelector:
+    matchLabels:
+      component: perimeter-mta
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow SMTP traffic from internet
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 25
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 465
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow traffic to internal hub
+  - to:
+    - podSelector:
+        matchLabels:
+          component: internal-hub
+    ports:
+    - protocol: TCP
+      port: 2525
+  # Allow traffic to etcd
+  - to:
+    - podSelector:
+        matchLabels:
+          component: etcd
+    ports:
+    - protocol: TCP
+      port: 2379
+  # Allow external SMTP for relay
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 25
+    - protocol: TCP
+      port: 587
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: smtp-internal-netpol
+  namespace: mail-system
+spec:
+  podSelector:
+    matchLabels:
+      component: internal-hub
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow from perimeter MTAs
+  - from:
+    - podSelector:
+        matchLabels:
+          component: perimeter-mta
+    ports:
+    - protocol: TCP
+      port: 2525
+  # Allow from any pod in the cluster (authenticated submission)
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 587
+  # Allow metrics scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080

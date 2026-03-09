@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: goemailservices-smtp
+  namespace: email-system
+  labels:
+    app: goemailservices
+    service: smtp
+spec:
+  type: LoadBalancer
+  ports:
+  - name: smtp
+    port: 25
+    targetPort: 25
+    protocol: TCP
+  - name: submission
+    port: 587
+    targetPort: 587
+    protocol: TCP
+  selector:
+    app: goemailservices
+  sessionAffinity: ClientIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: goemailservices-imap
+  namespace: email-system
+  labels:
+    app: goemailservices
+    service: imap
+spec:
+  type: LoadBalancer
+  ports:
+  - name: imaps
+    port: 993
+    targetPort: 993
+    protocol: TCP
+  selector:
+    app: goemailservices
+  sessionAffinity: ClientIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: goemailservices-api
+  namespace: email-system
+  labels:
+    app: goemailservices
+    service: api
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP
+  selector:
+    app: goemailservices

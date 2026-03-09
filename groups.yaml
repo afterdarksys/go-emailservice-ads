@@ -1,0 +1,100 @@
+# Mail groups configuration
+# Groups can be used in divert and screen rules
+
+groups:
+  # Static group - manually defined members
+  executives:
+    type: static
+    members:
+      - ceo@company.com
+      - cfo@company.com
+      - cto@company.com
+      - coo@company.com
+    metadata:
+      owner: admin@company.com
+      purpose: "Executive team"
+      created: "2026-03-08"
+
+  # Static group - sales team
+  sales-team:
+    type: static
+    members:
+      - alice@company.com
+      - bob@company.com
+      - charlie@company.com
+    metadata:
+      owner: sales-manager@company.com
+      purpose: "Sales team members"
+
+  # Static group - finance team
+  finance-team:
+    type: static
+    members:
+      - finance1@company.com
+      - finance2@company.com
+    metadata:
+      owner: cfo@company.com
+      purpose: "Finance department"
+
+  # Static group - support team
+  support-team:
+    type: static
+    members:
+      - support1@company.com
+      - support2@company.com
+      - support3@company.com
+    metadata:
+      owner: support-manager@company.com
+      purpose: "Customer support team"
+
+  # Static group - compliance watchers
+  compliance-watchers:
+    type: static
+    members:
+      - compliance@company.com
+      - legal@company.com
+      - audit@company.com
+    metadata:
+      purpose: "Compliance monitoring team"
+
+  # LDAP group - all employees (example, requires LDAP setup)
+  all-employees:
+    type: ldap
+    ldap_query: "(&(ou=employees)(objectClass=user)(mail=*))"
+    ldap_server: "ldap://ldap.company.com"
+    metadata:
+      purpose: "All company employees from LDAP"
+
+  # Dynamic group - active users (example, requires database setup)
+  active-users:
+    type: dynamic
+    query: "SELECT email FROM users WHERE active=true AND email IS NOT NULL"
+    database: "users_db"
+    metadata:
+      purpose: "Dynamically updated active users"
+
+# GROUP USAGE NOTES:
+#
+# Static Groups:
+# - Manually maintained list of email addresses
+# - Best for small, stable groups
+# - Edit this file and reload to update membership
+#
+# LDAP Groups:
+# - Automatically synchronized with LDAP/Active Directory
+# - Requires LDAP server configuration
+# - Members are queried in real-time (with caching)
+#
+# Dynamic Groups:
+# - Based on database queries
+# - Requires database connection configuration
+# - Updated automatically based on query results
+#
+# Using Groups in Rules:
+# - Reference group by name in divert.yaml or screen.yaml
+# - Example: match.type: group, match.value: executives
+# - Groups are cached for 5 minutes for performance
+#
+# Group Expansion:
+# - Use @groupname in email addresses to expand to all members
+# - Example: sending to @executives expands to all executive emails

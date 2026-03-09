@@ -1,0 +1,99 @@
+# Screen proxy configuration
+# Mail screening sends copies to watchers while still delivering to original recipient
+# This is transparent to both sender and recipient
+
+screen_rules:
+  # Example: CEO email monitoring (bidirectional)
+  - name: "CEO Email Monitoring"
+    enabled: false  # Disabled by default
+    match:
+      type: user
+      value: ceo@company.com
+      direction: both  # Monitor both sent and received
+    action:
+      screen_to:
+        - board-compliance@company.com
+        - legal@company.com
+      add_header: true
+      header_name: X-Screened-Rule
+      encrypt: true
+      retention_days: 2555  # 7 years for compliance
+
+  # Example: Sales team monitoring (outbound only)
+  - name: "Sales Team Monitoring"
+    enabled: false
+    match:
+      type: group
+      value: sales-team
+      direction: outbound
+    action:
+      screen_to:
+        - sales-manager@company.com
+      add_header: false  # Completely transparent
+      retention_days: 365
+
+  # Example: Compliance keywords screening
+  - name: "Compliance Keywords"
+    enabled: false
+    match:
+      type: content
+      keywords:
+        - merger
+        - acquisition
+        - insider
+        - material non-public
+      case_insensitive: true
+    action:
+      screen_to:
+        - compliance-alerts@company.com
+      priority: high
+      alert: true
+      encrypt: true
+      retention_days: 2555  # 7 years
+
+  # Example: Customer service quality monitoring
+  - name: "Support Quality Monitoring"
+    enabled: false
+    match:
+      type: sender
+      domain: company.com
+      recipient_domain: external  # Messages to external domains
+      group: support-team
+    action:
+      screen_to:
+        - quality@company.com
+      sample_rate: 0.1  # Screen 10% of messages
+      add_header: true
+      retention_days: 90
+
+  # Example: Financial department oversight
+  - name: "Finance Department Screening"
+    enabled: false
+    match:
+      type: group
+      value: finance-team
+      direction: both
+    action:
+      screen_to:
+        - cfo@company.com
+        - audit@company.com
+      encrypt: true
+      retention_days: 2555
+
+# Global screening settings
+settings:
+  audit_log: /var/log/mail/screen-audit.log
+  max_watchers: 5
+  encryption_required: true
+  default_retention_days: 90
+  preserve_original: true
+  notify_watchers: false  # Don't add screening headers
+
+# IMPORTANT NOTES:
+# - Screened messages ARE delivered to the original recipient
+# - Watchers receive exact copies (optionally with X-Screened headers)
+# - All screening is logged in the audit log
+# - Encryption is strongly recommended for watcher copies
+# - Sample rate (0.0 to 1.0) can reduce monitoring overhead
+# - Retention days control how long copies are kept
+# - Test carefully before enabling in production

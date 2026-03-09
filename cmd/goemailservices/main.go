@@ -17,6 +17,8 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
+	"github.com/afterdarksys/go-emailservice-ads/internal/netutil"
+	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/replication"
 	"github.com/afterdarksys/go-emailservice-ads/internal/smtpd"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
@@ -57,6 +59,22 @@ func main() {
 
 	logger.Info("Starting go-emailservice-ads module")
 
+	// Check port availability before starting services
+	portChecker := netutil.NewPortChecker()
+	portChecker.Check("SMTP", cfg.Server.Addr)
+	portChecker.Check("IMAP", cfg.IMAP.Addr)
+	portChecker.Check("REST API", cfg.API.RESTAddr)
+	portChecker.Check("gRPC API", cfg.API.GRPCAddr)
+
+	if !portChecker.AllAvailable() {
+		logger.Error("Port conflict detected:\n" + portChecker.FormatReport())
+		failures := portChecker.GetFailures()
+		if len(failures) > 0 {
+			logger.Fatal("Cannot start server due to port conflicts. Please resolve the conflicts and try again.")
+		}
+	}
+	logger.Info("Port availability check passed", zap.String("report", portChecker.FormatReport()))
+
 	// Initialize metrics collector
 	metricsCollector := metrics.NewMetrics(logger)
 
@@ -88,12 +106,27 @@ func main() {
 	// }
 	// defer replicator.Shutdown()
 
+	// Initialize policy manager (shared between SMTP and API servers)
+	var policyMgr *policy.Manager
+	policyConfig := &policy.ManagerConfig{
+		ConfigPath: "policies.yaml",
+		Logger:     logger,
+	}
+	policyMgr, err = policy.NewManager(policyConfig)
+	if err != nil {
+		logger.Warn("Failed to initialize policy manager", zap.Error(err))
+		// Continue without policies
+		policyMgr = nil
+	} else {
+		logger.Info("Policy manager initialized")
+	}
+
 	// Start API Servers with full dependencies
-	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector)
+	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr)
 	apiServer.Start()
 
-	// Start ESMTP Server with queue manager
-	smtpServer := smtpd.NewServer(cfg, logger, queueManager)
+	// Start ESMTP Server with queue manager and policy manager
+	smtpServer := smtpd.NewServer(cfg, logger, queueManager, policyMgr)
 	go func() {
 		if err := smtpServer.ListenAndServe(); err != nil {
 			logger.Fatal("SMTP server failed", zap.Error(err))

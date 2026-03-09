@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: goemailservices-config
+  namespace: email-system
+data:
+  config.yaml: |
+    server:
+      addr: ":25"
+      domain: "mail.example.com"
+      max_message_bytes: 52428800  # 50MB
+      max_recipients: 100
+      allow_insecure_auth: false
+      require_auth: true
+      require_tls: true
+      mode: "production"
+      max_connections: 5000
+      max_per_ip: 50
+      rate_limit_per_ip: 500
+      enable_greylist: true
+      disable_vrfy: true
+      disable_expn: true
+      local_domains:
+        - "example.com"
+        - "mail.example.com"
+      tls:
+        cert: "/etc/goemailservices/certs/tls.crt"
+        key: "/etc/goemailservices/certs/tls.key"
+
+    imap:
+      addr: ":993"
+      require_tls: true
+      tls:
+        cert: "/etc/goemailservices/certs/tls.crt"
+        key: "/etc/goemailservices/certs/tls.key"
+
+    api:
+      rest_addr: ":8080"
+      grpc_addr: ":50051"
+
+    logging:
+      level: "info"

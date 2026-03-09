@@ -14,6 +14,7 @@ import (
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
+	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/replication"
 	"github.com/afterdarksys/go-emailservice-ads/internal/smtpd"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
@@ -27,6 +28,7 @@ type Server struct {
 	qm         *smtpd.QueueManager
 	replicator *replication.Replicator
 	metrics    *metrics.Metrics
+	policyMgr  *policy.Manager
 
 	httpServer *http.Server
 	startTime  time.Time
@@ -36,7 +38,7 @@ type Server struct {
 }
 
 // NewServer initializes the API layer
-func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageStore, qm *smtpd.QueueManager, replicator *replication.Replicator, metricsCollector *metrics.Metrics) *Server {
+func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageStore, qm *smtpd.QueueManager, replicator *replication.Replicator, metricsCollector *metrics.Metrics, policyMgr *policy.Manager) *Server {
 	return &Server{
 		config:     cfg,
 		logger:     logger,
@@ -44,6 +46,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageSto
 		qm:         qm,
 		replicator: replicator,
 		metrics:    metricsCollector,
+		policyMgr:  policyMgr,
 		startTime:  time.Now(),
 	}
 }
@@ -67,12 +70,18 @@ func (s *Server) startREST() {
 
 	// Metrics endpoint (public - for Prometheus)
 	if s.metrics != nil {
-		mux.HandleFunc("/metrics", s.metrics.Handler())
+		mux.Handle("/metrics", s.metrics.Handler())
 	}
 
 	// Queue management (requires auth)
 	mux.HandleFunc("/api/v1/queue/stats", s.authMiddleware(s.handleQueueStats))
 	mux.HandleFunc("/api/v1/queue/pending", s.authMiddleware(s.handleQueuePending))
+
+	// Policy management (requires auth)
+	mux.HandleFunc("/api/v1/policies", s.authMiddleware(s.handlePolicyList))
+	mux.HandleFunc("/api/v1/policies/", s.authMiddleware(s.handlePolicyRouter))
+	mux.HandleFunc("/api/v1/policies/stats", s.authMiddleware(s.handlePolicyStats))
+	mux.HandleFunc("/api/v1/policies/reload", s.authMiddleware(s.handlePolicyReload))
 
 	// DLQ management
 	mux.HandleFunc("/api/v1/dlq/list", s.authMiddleware(s.handleDLQList))
@@ -167,7 +176,6 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 		"checks": checks,
 	}
 
-	w.WriteHeader(httpStatus)
 	s.jsonResponse(w, httpStatus, response)
 }
 

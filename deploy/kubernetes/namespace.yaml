@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: email-system
+  labels:
+    name: email-system
+    environment: production

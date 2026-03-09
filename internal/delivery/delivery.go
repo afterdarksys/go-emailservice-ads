@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
+	"github.com/afterdarksys/go-emailservice-ads/internal/security/dane"
 )
 
 // DeliveryResult represents the outcome of a delivery attempt
@@ -23,6 +24,8 @@ type DeliveryResult struct {
 	IsPermanent  bool
 	RemoteHost   string
 	DeliveredAt  time.Time
+	DANEUsed     bool   // Whether DANE was available and used
+	DANEValid    bool   // Whether DANE validation succeeded
 }
 
 // MailDelivery handles outbound SMTP mail delivery
@@ -38,6 +41,10 @@ type MailDelivery struct {
 
 	// TLS configuration for outbound STARTTLS (RFC 3207)
 	tlsConfig   *tls.Config
+
+	// DANE validator for DNS-Based Authentication (RFC 7672)
+	daneValidator *dane.DANEValidator
+	daneEnabled   bool
 
 	// Timeouts
 	connectTimeout time.Duration
@@ -74,8 +81,19 @@ func NewMailDelivery(logger *zap.Logger, resolver *dns.Resolver, hostname string
 			InsecureSkipVerify: false, // SECURITY: Always verify certificates
 			ServerName:         "", // Will be set per connection
 		},
+		daneEnabled:    false, // Will be enabled via SetDANEValidator
 		connectTimeout: 30 * time.Second,
 		dataTimeout:    5 * time.Minute,
+	}
+}
+
+// SetDANEValidator configures DANE validation for outbound connections
+func (d *MailDelivery) SetDANEValidator(validator *dane.DANEValidator) {
+	d.daneValidator = validator
+	d.daneEnabled = validator != nil
+
+	if d.daneEnabled {
+		d.logger.Info("DANE validation enabled for outbound SMTP")
 	}
 }
 
@@ -328,6 +346,7 @@ func (d *MailDelivery) getConnection(ctx context.Context, mxHost string) (*smtpC
 
 // dialSMTP establishes an SMTP connection with STARTTLS support
 // RFC 3207 - SMTP Service Extension for Secure SMTP over Transport Layer Security
+// RFC 7672 - SMTP Security via Opportunistic DANE TLS Authentication
 func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnection, error) {
 	// Connect to SMTP port 25
 	dialer := &net.Dialer{
@@ -356,6 +375,32 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 	if ok, _ := client.Extension("STARTTLS"); ok {
 		tlsConfig := d.tlsConfig.Clone()
 		tlsConfig.ServerName = mxHost
+
+		// RFC 7672: Check for DANE TLSA records before STARTTLS
+		if d.daneEnabled && d.daneValidator != nil {
+			d.logger.Debug("Checking DANE availability",
+				zap.String("mx_host", mxHost))
+
+			// Pre-flight DANE check (opportunistic)
+			tlsaResult, err := d.daneValidator.CheckDANEAvailability(ctx, mxHost, 25)
+			if err == nil && len(tlsaResult.Records) > 0 {
+				// DANE available - configure TLS with DANE verification
+				d.logger.Info("DANE records found, enabling DANE validation",
+					zap.String("mx_host", mxHost),
+					zap.Int("tlsa_records", len(tlsaResult.Records)),
+					zap.Bool("dnssec_valid", tlsaResult.DNSSECValid))
+
+				// Use DANE-enabled TLS config
+				tlsConfig = d.daneValidator.GetTLSConfig(mxHost, 25)
+			} else if err != nil {
+				d.logger.Debug("DANE lookup failed, using standard TLS",
+					zap.String("mx_host", mxHost),
+					zap.Error(err))
+			} else {
+				d.logger.Debug("No DANE records found, using standard TLS",
+					zap.String("mx_host", mxHost))
+			}
+		}
 
 		if err := client.StartTLS(tlsConfig); err != nil {
 			d.logger.Warn("STARTTLS failed, continuing without TLS",
