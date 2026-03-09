@@ -1,8 +1,12 @@
 # go-emailservice-ads
 
-**Enterprise email service with disaster recovery, anti-spam protection, and high-volume message processing.**
+**Kubernetes-native enterprise email service with disaster recovery, anti-spam protection, and global routing.**
 
-Built for msgs.global internal mail infrastructure - handles millions of messages per day with Postfix-grade security features.
+Built for msgs.global internal mail infrastructure - handles millions of messages per day with Postfix-grade security features and enterprise-scale multi-region deployment capabilities.
+
+## Version 2.0.0 - Major Release
+
+This release transforms the email service into a **Kubernetes-aware enterprise platform** with global routing, Postfix-style access control, and comprehensive admin tooling.
 
 ---
 
