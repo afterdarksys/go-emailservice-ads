@@ -48,9 +48,86 @@ type Config struct {
 		DefaultUsers []UserConfig `yaml:"default_users"`
 	} `yaml:"auth"`
 
+	// SSO Configuration for external authentication providers
+	SSO struct {
+		Enabled      bool   `yaml:"enabled"`       // Enable SSO authentication
+		Provider     string `yaml:"provider"`      // Provider name (e.g., "afterdarksystems", "oidc", "oauth2")
+		ClientID     string `yaml:"client_id"`     // OAuth2 client ID
+		ClientSecret string `yaml:"client_secret"` // OAuth2 client secret
+		AuthURL      string `yaml:"auth_url"`      // Authorization endpoint
+		TokenURL     string `yaml:"token_url"`     // Token endpoint
+		UserInfoURL  string `yaml:"userinfo_url"`  // UserInfo endpoint
+		RedirectURL  string `yaml:"redirect_url"`  // OAuth2 redirect URL
+		Scopes       []string `yaml:"scopes"`      // OAuth2 scopes
+		// AfterDark Systems specific
+		DirectoryURL string `yaml:"directory_url"` // Directory service URL (e.g., https://directory.afterdarksystems.com)
+	} `yaml:"sso"`
+
+	// AfterSMTP AMTP Next-Gen Protocol Integration
+	AfterSMTP struct {
+		Enabled     bool   `yaml:"enabled"`
+		LedgerURL   string `yaml:"ledger_url"`
+		QUICAddr    string `yaml:"quic_addr"`
+		GRPCAddr    string `yaml:"grpc_addr"`
+		FallbackDB  string `yaml:"fallback_db"`
+	} `yaml:"aftersmtp"`
+
 	Logging struct {
 		Level string `yaml:"level"` // debug, info, warn, error
 	} `yaml:"logging"`
+
+	// Elasticsearch Configuration for mail event logging and search
+	Elasticsearch struct {
+		Enabled       bool     `yaml:"enabled"`        // Enable Elasticsearch integration
+		Endpoints     []string `yaml:"endpoints"`      // ES cluster endpoints
+		IndexPrefix   string   `yaml:"index_prefix"`   // Index name prefix (e.g., "mail-events")
+		BulkSize      int      `yaml:"bulk_size"`      // Bulk indexer batch size
+		FlushInterval string   `yaml:"flush_interval"` // How often to flush bulk indexer (e.g., "5s")
+
+		// Authentication
+		APIKey       string `yaml:"api_key"`       // Elasticsearch API key
+		Username     string `yaml:"username"`      // Basic auth username
+		Password     string `yaml:"password"`      // Basic auth password
+
+		// Index Lifecycle Management
+		RetentionDays int `yaml:"retention_days"` // How long to keep indices
+		Replicas      int `yaml:"replicas"`       // Number of replicas
+		Shards        int `yaml:"shards"`         // Number of shards
+
+		// Performance
+		Workers       int     `yaml:"workers"`        // Number of bulk indexer workers
+		SamplingRate  float64 `yaml:"sampling_rate"`  // Sample rate (0.0-1.0, 1.0 = all events)
+
+		// Header Logging Configuration
+		HeaderLogging HeaderLoggingConfig `yaml:"header_logging"`
+	} `yaml:"elasticsearch"`
+}
+
+// HeaderLoggingConfig controls which message headers are logged to Elasticsearch
+type HeaderLoggingConfig struct {
+	Enabled       bool     `yaml:"enabled"`        // Global enable/disable for header logging
+	LogAllHeaders bool     `yaml:"log_all_headers"` // Log all headers or only specific ones
+
+	// Allowlist/Denylist by domain
+	AllowDomains  []string `yaml:"allow_domains"`  // Domains to log headers for (empty = all)
+	DenyDomains   []string `yaml:"deny_domains"`   // Domains to never log headers for
+
+	// Allowlist/Denylist by IP
+	AllowIPs      []string `yaml:"allow_ips"`      // IPs to log headers for (supports CIDR)
+	DenyIPs       []string `yaml:"deny_ips"`       // IPs to never log headers for (supports CIDR)
+
+	// Allowlist/Denylist by MX record
+	AllowMXs      []string `yaml:"allow_mxs"`      // MX records to log headers for
+	DenyMXs       []string `yaml:"deny_mxs"`       // MX records to never log headers for
+
+	// Specific headers to include (if log_all_headers = false)
+	IncludeHeaders []string `yaml:"include_headers"` // e.g., ["From", "To", "Subject", "Message-ID"]
+
+	// Headers to always exclude (even if log_all_headers = true)
+	ExcludeHeaders []string `yaml:"exclude_headers"` // e.g., ["Authorization", "X-Secret"]
+
+	// Redaction patterns
+	RedactPatterns []string `yaml:"redact_patterns"` // Regex patterns to redact from header values
 }
 
 type TLSConfig struct {
@@ -103,7 +180,40 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DANE.Timeout = 10         // 10 second timeout
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS for IMAP
+	
+	// AfterSMTP Defaults
+	cfg.AfterSMTP.Enabled = false
+	cfg.AfterSMTP.LedgerURL = "ws://127.0.0.1:9944"
+	cfg.AfterSMTP.QUICAddr = ":4434"
+	cfg.AfterSMTP.GRPCAddr = ":4433"
+	cfg.AfterSMTP.FallbackDB = "fallback_ledger.db"
+
 	cfg.Logging.Level = "info"
+
+	// Elasticsearch defaults
+	cfg.Elasticsearch.Enabled = false // Default off
+	cfg.Elasticsearch.Endpoints = []string{"http://localhost:9200"}
+	cfg.Elasticsearch.IndexPrefix = "mail-events"
+	cfg.Elasticsearch.BulkSize = 1000
+	cfg.Elasticsearch.FlushInterval = "5s"
+	cfg.Elasticsearch.RetentionDays = 90
+	cfg.Elasticsearch.Replicas = 1
+	cfg.Elasticsearch.Shards = 3
+	cfg.Elasticsearch.Workers = 4
+	cfg.Elasticsearch.SamplingRate = 1.0 // Log all events by default
+
+	// Header logging defaults
+	cfg.Elasticsearch.HeaderLogging.Enabled = false // Default off for privacy
+	cfg.Elasticsearch.HeaderLogging.LogAllHeaders = false
+	cfg.Elasticsearch.HeaderLogging.AllowDomains = []string{}
+	cfg.Elasticsearch.HeaderLogging.DenyDomains = []string{}
+	cfg.Elasticsearch.HeaderLogging.AllowIPs = []string{}
+	cfg.Elasticsearch.HeaderLogging.DenyIPs = []string{}
+	cfg.Elasticsearch.HeaderLogging.AllowMXs = []string{}
+	cfg.Elasticsearch.HeaderLogging.DenyMXs = []string{}
+	cfg.Elasticsearch.HeaderLogging.IncludeHeaders = []string{"From", "To", "Subject", "Message-ID", "Date"}
+	cfg.Elasticsearch.HeaderLogging.ExcludeHeaders = []string{"Authorization", "X-API-Key", "X-Auth-Token"}
+	cfg.Elasticsearch.HeaderLogging.RedactPatterns = []string{}
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err

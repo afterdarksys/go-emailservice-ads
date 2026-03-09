@@ -2,7 +2,10 @@ package smtpd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/bounce"
 	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
+	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -29,12 +33,18 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
-	ID        string
-	From      string
-	To        []string
-	Data      []byte
-	CreatedAt time.Time
-	Tier      QueueTier
+	ID            string
+	TraceID       string    // Global correlation ID for tracking across instances
+	ParentTraceID string    // Parent trace ID for related messages (bounces, retries)
+	InstanceID    string    // Pod/instance identifier for Kubernetes deployments
+	From          string
+	To            []string
+	Data          []byte
+	CreatedAt     time.Time
+	Tier          QueueTier
+	ContentHash   string    // SHA256 hash of message content
+	ClientIP      string    // Client IP address
+	HeloHostname  string    // HELO/EHLO hostname
 }
 
 // QueueManager handles the multi-tier queuing system
@@ -61,6 +71,10 @@ type QueueManager struct {
 	bounceGenerator *bounce.BounceGenerator
 	hostname        string
 	localDomains    map[string]bool
+
+	// Elasticsearch integration (optional)
+	esIndexer  *elasticsearch.Indexer
+	instanceID string // Instance/pod identifier
 
 	// Metrics
 	metrics *QueueMetrics
@@ -119,6 +133,7 @@ func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, hostname s
 		bounceGenerator: bounceGen,
 		hostname:        hostname,
 		localDomains:    localDomainsMap,
+		instanceID:      getInstanceID(),
 
 		metrics: &QueueMetrics{
 			Enqueued:  make(map[QueueTier]int64),
@@ -181,6 +196,9 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 		zap.String("from", msg.From),
 		zap.Int("recipients", len(msg.To)))
 
+	// Publish processing event to Elasticsearch
+	qm.publishEvent(elasticsearch.EventProcessing, msg, nil)
+
 	// Separate local and remote recipients
 	localRecipients := make([]string, 0)
 	remoteRecipients := make([]string, 0)
@@ -229,12 +247,32 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
 	ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
 	defer cancel()
 
+	startTime := time.Now()
 	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, msg.Data)
+	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
 		qm.logger.Error("Remote delivery failed",
 			zap.String("msg_id", msg.ID),
 			zap.Error(err))
+
+		// Publish failure event to Elasticsearch
+		extra := map[string]interface{}{
+			"delivery": elasticsearch.DeliveryInfo{
+				RemoteHost:    getRemoteHost(result),
+				RemoteIP:      "", // Not available in DeliveryResult
+				SMTPCode:      getSMTPCode(result),
+				LatencyMs:     latencyMs,
+				AttemptNumber: getAttemptNumber(msg),
+				IsPermanent:   result != nil && result.IsPermanent,
+			},
+			"error": elasticsearch.ErrorInfo{
+				Message:   getErrorMessage(err, result),
+				Category:  "delivery",
+				Retryable: result == nil || !result.IsPermanent,
+			},
+		}
+		qm.publishEvent(elasticsearch.EventFailed, msg, extra)
 
 		// Generate bounce message if permanent failure
 		if result != nil && result.IsPermanent {
@@ -249,6 +287,19 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
 		qm.store.UpdateStatus(msg.ID, "pending", errorMsg)
 		return
 	}
+
+	// Publish success event to Elasticsearch
+	extra := map[string]interface{}{
+		"delivery": elasticsearch.DeliveryInfo{
+			RemoteHost:    result.RemoteHost,
+			RemoteIP:      "", // Not available in DeliveryResult
+			SMTPCode:      result.SMTPCode,
+			LatencyMs:     latencyMs,
+			AttemptNumber: getAttemptNumber(msg),
+			IsPermanent:   false,
+		},
+	}
+	qm.publishEvent(elasticsearch.EventDelivered, msg, extra)
 
 	qm.logger.Info("Remote delivery successful",
 		zap.String("msg_id", msg.ID),
@@ -279,11 +330,12 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 
 		// Enqueue bounce message (send to original sender)
 		bounceEnvelope := &Message{
-			From:      fmt.Sprintf("postmaster@%s", qm.hostname),
-			To:        []string{msg.From},
-			Data:      bounceMsg,
-			CreatedAt: time.Now(),
-			Tier:      TierEmergency, // High priority for bounces
+			From:          fmt.Sprintf("postmaster@%s", qm.hostname),
+			To:            []string{msg.From},
+			Data:          bounceMsg,
+			CreatedAt:     time.Now(),
+			Tier:          TierEmergency, // High priority for bounces
+			ParentTraceID: msg.TraceID,   // Link to original message
 		}
 
 		if err := qm.Enqueue(bounceEnvelope); err != nil {
@@ -294,6 +346,18 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 			qm.logger.Info("Bounce message generated",
 				zap.String("original_msg_id", msg.ID),
 				zap.String("recipient", rcpt))
+
+			// Publish bounce event to Elasticsearch
+			extra := map[string]interface{}{
+				"parent_trace_id": msg.TraceID,
+				"delivery": elasticsearch.DeliveryInfo{
+					RemoteHost:  result.RemoteHost,
+					RemoteIP:    "", // Not available in DeliveryResult
+					SMTPCode:    result.SMTPCode,
+					IsPermanent: result.IsPermanent,
+				},
+			}
+			qm.publishEvent(elasticsearch.EventBounce, msg, extra)
 		}
 	}
 }
@@ -343,6 +407,16 @@ func (qm *QueueManager) updateMetrics(tier QueueTier, metricType string) {
 
 // Enqueue submits a message to the appropriate tier without blocking the SMTP session
 func (qm *QueueManager) Enqueue(msg *Message) error {
+	// Generate trace ID if not set
+	if msg.TraceID == "" {
+		msg.TraceID = generateTraceID()
+	}
+
+	// Compute content hash if not set
+	if msg.ContentHash == "" {
+		msg.ContentHash = qm.computeContentHash(msg.Data)
+	}
+
 	// Store message persistently first (disaster recovery)
 	entry := &storage.JournalEntry{
 		MessageID: msg.ID,
@@ -367,6 +441,9 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 
 	msg.ID = messageID
 	qm.updateMetrics(msg.Tier, "enqueued")
+
+	// Publish enqueued event to Elasticsearch
+	qm.publishEvent(elasticsearch.EventEnqueued, msg, nil)
 
 	// Enqueue to in-memory channel for processing
 	switch msg.Tier {
@@ -416,6 +493,65 @@ func (qm *QueueManager) GetMetrics() *QueueMetrics {
 	return metrics
 }
 
+// SetElasticsearchIndexer sets the Elasticsearch indexer for event publishing
+func (qm *QueueManager) SetElasticsearchIndexer(indexer *elasticsearch.Indexer) {
+	qm.esIndexer = indexer
+	qm.logger.Info("Elasticsearch indexer attached to queue manager",
+		zap.String("instance_id", qm.instanceID))
+}
+
+// publishEvent publishes an event to Elasticsearch if indexer is configured
+func (qm *QueueManager) publishEvent(eventType elasticsearch.EventType, msg *Message, extra map[string]interface{}) {
+	if qm.esIndexer == nil {
+		return
+	}
+
+	// Build event
+	event := elasticsearch.BuildEvent(
+		eventType,
+		msg.ID,
+		msg.TraceID,
+		qm.instanceID,
+		msg.From,
+		msg.To,
+		string(msg.Tier),
+	)
+
+	// Set envelope
+	event.SetEnvelope(msg.From, msg.To, len(msg.Data))
+
+	// Set metadata
+	event.SetMetadata(msg.ContentHash, msg.ClientIP, "", msg.HeloHostname)
+
+	// Add any extra fields from the map
+	if extra != nil {
+		if security, ok := extra["security"].(elasticsearch.SecurityInfo); ok {
+			event.Security = security
+		}
+		if delivery, ok := extra["delivery"].(elasticsearch.DeliveryInfo); ok {
+			event.Delivery = delivery
+		}
+		if policy, ok := extra["policy"].(elasticsearch.PolicyInfo); ok {
+			event.Policy = policy
+		}
+		if errInfo, ok := extra["error"].(elasticsearch.ErrorInfo); ok {
+			event.Error = errInfo
+		}
+		if parentTraceID, ok := extra["parent_trace_id"].(string); ok {
+			event.SetParentTrace(parentTraceID)
+		}
+	}
+
+	// Publish event (non-blocking)
+	qm.esIndexer.PublishEvent(event)
+}
+
+// computeContentHash computes SHA256 hash of message data
+func (qm *QueueManager) computeContentHash(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
 // Shutdown gracefully stops the queue manager, ensuring workers drain or stop
 func (qm *QueueManager) Shutdown() {
 	qm.logger.Info("Shutting down QueueManager...")
@@ -427,5 +563,83 @@ func (qm *QueueManager) Shutdown() {
 		qm.logger.Error("Error shutting down mail delivery", zap.Error(err))
 	}
 
+	// Shutdown Elasticsearch indexer if configured
+	if qm.esIndexer != nil {
+		qm.logger.Info("Closing Elasticsearch indexer...")
+		if err := qm.esIndexer.Close(); err != nil {
+			qm.logger.Error("Error closing Elasticsearch indexer", zap.Error(err))
+		}
+	}
+
 	qm.logger.Info("QueueManager stopped gracefully")
+}
+
+// generateTraceID generates a unique trace ID for message correlation
+func generateTraceID() string {
+	// Use timestamp + random UUID for trace ID
+	// Format: trace_<timestamp>_<uuid>
+	return fmt.Sprintf("trace_%d_%s", time.Now().UnixNano(), generateShortID())
+}
+
+// generateShortID generates a short random ID
+func generateShortID() string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 12)
+	for i := range b {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		time.Sleep(1 * time.Nanosecond) // Ensure uniqueness
+	}
+	return string(b)
+}
+
+// getInstanceID returns the instance/pod identifier
+func getInstanceID() string {
+	// Try to get from environment (Kubernetes sets this)
+	if hostname := os.Getenv("HOSTNAME"); hostname != "" {
+		return hostname
+	}
+
+	// Try to get from POD_NAME env var
+	if podName := os.Getenv("POD_NAME"); podName != "" {
+		return podName
+	}
+
+	// Fall back to system hostname
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return hostname
+}
+
+// Helper functions for delivery result extraction
+
+func getRemoteHost(result *delivery.DeliveryResult) string {
+	if result != nil {
+		return result.RemoteHost
+	}
+	return ""
+}
+
+func getSMTPCode(result *delivery.DeliveryResult) int {
+	if result != nil {
+		return result.SMTPCode
+	}
+	return 0
+}
+
+func getAttemptNumber(msg *Message) int {
+	// This should be tracked in the Message struct or retrieved from storage
+	// For now, return 1 as default
+	return 1
+}
+
+func getErrorMessage(err error, result *delivery.DeliveryResult) string {
+	if result != nil && result.Message != "" {
+		return result.Message
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "unknown error"
 }

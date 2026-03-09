@@ -32,15 +32,19 @@ type UserInfo struct {
 
 // NewClient initializes the directory client
 func NewClient(cfg *config.Config, logger *zap.Logger) *Client {
-	// In a complete implementation, baseURL would come from `cfg.Directory.BaseURL`
-	// For now we set a default placeholder
+	// Use SSO directory URL if configured, otherwise use placeholder
+	baseURL := "http://gomailservices/directory/"
+	if cfg.SSO.Enabled && cfg.SSO.DirectoryURL != "" {
+		baseURL = cfg.SSO.DirectoryURL + "/v1/"
+	}
+
 	return &Client{
 		logger: logger,
 		config: cfg,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 10 * time.Second,
 		},
-		baseURL: "http://gomailservices/directory/",
+		baseURL: baseURL,
 	}
 }
 

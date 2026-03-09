@@ -12,9 +12,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/aftersmtp"
 	"github.com/afterdarksys/go-emailservice-ads/internal/api"
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
+	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
 	"github.com/afterdarksys/go-emailservice-ads/internal/netutil"
@@ -90,6 +92,43 @@ func main() {
 	queueManager := smtpd.NewQueueManager(logger, store, cfg.Server.Domain, cfg.Server.LocalDomains)
 	defer queueManager.Shutdown()
 
+	// Initialize Elasticsearch integration (optional)
+	if cfg.Elasticsearch.Enabled {
+		logger.Info("Initializing Elasticsearch integration")
+
+		esClient, err := elasticsearch.NewClient(cfg, logger)
+		if err != nil {
+			logger.Error("Failed to initialize Elasticsearch client",
+				zap.Error(err))
+			logger.Warn("Continuing without Elasticsearch integration")
+		} else {
+			// Create index template and ILM policy
+			ctx := context.Background()
+			if err := esClient.CreateIndexTemplate(ctx); err != nil {
+				logger.Error("Failed to create index template", zap.Error(err))
+			}
+			if err := esClient.CreateILMPolicy(ctx); err != nil {
+				logger.Error("Failed to create ILM policy", zap.Error(err))
+			}
+			if err := esClient.EnsureIndex(ctx); err != nil {
+				logger.Error("Failed to ensure index exists", zap.Error(err))
+			}
+
+			// Create indexer
+			esIndexer, err := elasticsearch.NewIndexer(esClient, logger)
+			if err != nil {
+				logger.Error("Failed to initialize Elasticsearch indexer",
+					zap.Error(err))
+			} else {
+				// Attach indexer to queue manager
+				queueManager.SetElasticsearchIndexer(esIndexer)
+				logger.Info("Elasticsearch integration enabled",
+					zap.String("index_prefix", cfg.Elasticsearch.IndexPrefix),
+					zap.Float64("sampling_rate", cfg.Elasticsearch.SamplingRate))
+			}
+		}
+	}
+
 	// Initialize retry scheduler
 	retryPolicy := smtpd.DefaultRetryPolicy()
 	retryScheduler := smtpd.NewRetryScheduler(store, queueManager, retryPolicy, logger)
@@ -125,6 +164,17 @@ func main() {
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr)
 	apiServer.Start()
 
+	// Start AfterSMTP Bridge Service (if enabled)
+	var amtpSrv *aftersmtp.Service
+	if cfg.AfterSMTP.Enabled {
+		amSrv, err := aftersmtp.NewService(cfg, logger, queueManager)
+		if err != nil {
+			logger.Fatal("Failed to initialize AfterSMTP Bridge", zap.Error(err))
+		}
+		amtpSrv = amSrv
+		amtpSrv.Start()
+	}
+
 	// Start ESMTP Server with queue manager and policy manager
 	smtpServer := smtpd.NewServer(cfg, logger, queueManager, policyMgr)
 	go func() {
@@ -136,9 +186,20 @@ func main() {
 	// Start IMAP Server (if enabled)
 	// Create a validator for IMAP authentication (could share with SMTP in production)
 	imapValidator := auth.NewValidator(logger)
+	imapUserStore := imapValidator.GetUserStore()
+	imapUserStore.SetLogger(logger)
+
+	// Initialize SSO for IMAP if enabled
+	if cfg.SSO.Enabled {
+		ssoProvider := auth.NewSSOProvider(cfg, logger)
+		if ssoProvider != nil {
+			imapUserStore.SetSSOProvider(ssoProvider)
+		}
+	}
+
 	// Load default users for IMAP as well
 	for _, userCfg := range cfg.Auth.DefaultUsers {
-		if err := imapValidator.GetUserStore().AddUser(userCfg.Username, userCfg.Password, userCfg.Email); err != nil {
+		if err := imapUserStore.AddUser(userCfg.Username, userCfg.Password, userCfg.Email); err != nil {
 			logger.Error("Failed to add IMAP user", zap.String("username", userCfg.Username), zap.Error(err))
 		}
 	}
@@ -171,6 +232,9 @@ func main() {
 	if err := apiServer.Shutdown(ctx); err != nil {
 		logger.Error("Error during API server shutdown", zap.Error(err))
 	}
+	if amtpSrv != nil {
+		amtpSrv.Shutdown()
+	}
 
 	logger.Info("Shutdown complete.")
 }
@@ -202,6 +266,12 @@ auth:
     - username: "testuser"
       password: "testpass123"
       email: "testuser@localhost.local"
+aftersmtp:
+  enabled: false
+  ledger_url: "ws://127.0.0.1:9944"
+  quic_addr: ":4434"
+  grpc_addr: ":4433"
+  fallback_db: "fallback_ledger.db"
 logging:
   level: "debug"
 `)

@@ -1,25 +1,25 @@
 server:
   addr: ":2525"
   domain: "localhost.local"
-  max_message_bytes: 10485760  # 10MB
+  max_message_bytes: 10485760 # 10MB
   max_recipients: 50
-  allow_insecure_auth: false    # SECURITY: Disable auth over non-TLS (set to true for testing only)
-  require_auth: true             # SECURITY: Require authentication for sending mail
-  require_tls: true              # SECURITY: Require STARTTLS before allowing AUTH
+  allow_insecure_auth: false # SECURITY: Disable auth over non-TLS (set to true for testing only)
+  require_auth: true # SECURITY: Require authentication for sending mail
+  require_tls: true # SECURITY: Require STARTTLS before allowing AUTH
   mode: "test"
 
   # Connection and Rate Limiting
-  max_connections: 1000          # Total concurrent connections
-  max_per_ip: 10                 # Connections per IP
-  rate_limit_per_ip: 100         # Messages per hour per IP
-  enable_greylist: false         # Greylisting (can cause delays)
-  disable_vrfy: true             # Disable VRFY (prevents user enumeration)
-  disable_expn: true             # Disable EXPN (prevents list expansion)
+  max_connections: 1000 # Total concurrent connections
+  max_per_ip: 10 # Connections per IP
+  rate_limit_per_ip: 100 # Messages per hour per IP
+  enable_greylist: false # Greylisting (can cause delays)
+  disable_vrfy: true # Disable VRFY (prevents user enumeration)
+  disable_expn: true # Disable EXPN (prevents list expansion)
 
   # Local domains
   local_domains:
-    - "localhost"
-    - "localhost.local"
+  - "localhost"
+  - "localhost.local"
 
   tls:
     cert: "./data/certs/server.crt"
@@ -27,7 +27,7 @@ server:
 
 imap:
   addr: ":1143"
-  require_tls: true              # SECURITY: Require TLS for IMAP (use implicit TLS on port 993 or STARTTLS)
+  require_tls: true # SECURITY: Require TLS for IMAP (use implicit TLS on port 993 or STARTTLS)
   tls:
     cert: "./data/certs/server.crt"
     key: "./data/certs/server.key"
@@ -38,12 +38,113 @@ api:
 
 auth:
   default_users:
-    - username: "testuser"
-      password: "testpass123"     # WARNING: Change in production! Use strong passwords.
-      email: "testuser@localhost.local"
-    - username: "admin"
-      password: "admin123"        # WARNING: Change in production!
-      email: "admin@localhost.local"
+  - username: "testuser"
+    password: "testpass123" # WARNING: Change in production! Use strong passwords.
+    email: "testuser@localhost.local"
+  - username: "admin"
+    password: "admin123" # WARNING: Change in production!
+    email: "admin@localhost.local"
+
+# SSO Configuration for After Dark Systems
+sso:
+  enabled: false # DISABLED - Set to true only when directory service is ready
+  provider: "afterdarksystems"
+  directory_url: "https://directory.msgs.global" # After Dark Systems Directory Service
+  # OAuth2/OIDC endpoints (if using OAuth flow)
+  auth_url: "https://sso.afterdarksystems.com/oauth2/authorize"
+  token_url: "https://sso.afterdarksystems.com/oauth2/token"
+  userinfo_url: "https://sso.afterdarksystems.com/oauth2/userinfo"
+  client_id: "${ADS_CLIENT_ID}" # Set via environment variable
+  client_secret: "${ADS_CLIENT_SECRET}" # Set via environment variable
+  redirect_url: "https://msgs.global/oauth/callback"
+  scopes:
+  - "openid"
+  - "email"
+  - "profile"
+
+# AfterSMTP Next-Generation Protocol (AMP)
+aftersmtp:
+  enabled: true # Set to true to start AMP/QUIC/gRPC native listeners
+  ledger_url: "ws://127.0.0.1:9944" # Substrate blockchain node WS endpoint
+  quic_addr: ":4434" # Port for QUIC (HTTP/3) transport
+  grpc_addr: ":4433" # Port for native gRPC stream
+  fallback_db: "./data/fallback_ledger.db"
 
 logging:
   level: "debug"
+
+# Elasticsearch Integration for mail event logging and search
+elasticsearch:
+  enabled: false # Set to true to enable ES integration
+  endpoints:
+  - "http://localhost:9200" # Elasticsearch cluster endpoints
+  index_prefix: "mail-events" # Index name prefix (creates mail-events-YYYY.MM.DD)
+  bulk_size: 1000 # Bulk indexer batch size
+  flush_interval: "5s" # How often to flush events
+
+  # Authentication (use API key OR username/password)
+  api_key: "${ES_API_KEY}" # Preferred: Elasticsearch API key
+  # username: "elastic"
+  # password: "${ES_PASSWORD}"
+
+  # Index Lifecycle Management
+  retention_days: 90 # Keep indices for 90 days
+  replicas: 1 # Number of replicas
+  shards: 3 # Number of shards
+
+  # Performance tuning
+  workers: 4 # Number of bulk indexer workers
+  sampling_rate: 1.0 # Sample rate (0.0-1.0, use 0.1 for 10% sampling on high volume)
+
+  # Header Logging Configuration (for debugging and analysis)
+  header_logging:
+    enabled: false # Global toggle for header logging (default: false for privacy)
+    log_all_headers: false # Log all headers or only specific ones
+
+    # Per-domain control (empty lists = apply to all)
+    allow_domains:
+      # Only log headers for these domains
+      # - "example.com"
+      # - "test.org"
+    deny_domains:
+      # Never log headers for these domains
+      # - "privacy-sensitive.com"
+
+    # Per-IP control (supports CIDR notation)
+    allow_ips:
+      # Only log headers from these IPs
+      # - "192.168.1.0/24"
+      # - "10.0.0.5"
+    deny_ips:
+      # Never log headers from these IPs
+      # - "1.2.3.4"
+
+    # Per-MX record control
+    allow_mxs:
+      # Only log headers for mail from these MX records
+      # - "mail.example.com"
+    deny_mxs:
+      # Never log headers for mail from these MX records
+      # - "spammer-mx.bad"
+
+    # Header selection (if log_all_headers = false)
+    include_headers:
+    # Specific headers to log
+    - "From"
+    - "To"
+    - "Subject"
+    - "Message-ID"
+    - "Date"
+    - "X-Mailer"
+
+    exclude_headers:
+    # Headers to NEVER log (even if log_all_headers = true)
+    - "Authorization"
+    - "X-API-Key"
+    - "X-Auth-Token"
+    - "X-Secret"
+
+    redact_patterns:
+      # Regex patterns to redact from header values
+      # - "password=\\S+"             # Redact password parameters
+      # - "token=\\S+"                # Redact token parameters

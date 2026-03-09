@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package client;
+
+option go_package = "github.com/afterdarksys/go-emailservice-ads/internal/aftersmtplib/protocol/client";
+
+import "amp.proto";
+
+// ClientAPI provides authenticated management and inbox access for AfterSMTP DIDs
+service ClientAPI {
+    // 1. Authentication
+    // Step A: Request a cryptographic challenge for a specific DID
+    rpc RequestChallenge(ChallengeRequest) returns (ChallengeResponse);
+    // Step B: Submit the challenge signed by the DID's Ed25519 private key to receive a JWT session token
+    rpc Authenticate(AuthRequest) returns (AuthResponse);
+
+    // 2. Messaging
+    // Securely dispatch a message via the server (the client still encrypts and signs the payload locally)
+    rpc DispatchMessage(amp.AMPMessage) returns (amp.DeliveryResponse);
+    // Fetch inbox messages intended for this DID
+    rpc FetchInbox(InboxRequest) returns (stream amp.AMPMessage);
+
+    // 3. Management
+    // Register a new alias or identity linking onto the ledger
+    rpc RegisterIdentity(IdentityRequest) returns (IdentityResponse);
+}
+
+// Authentication Messages
+message ChallengeRequest {
+    string did = 1; // The DID requesting access (e.g. did:aftersmtp:msgs.global:ryan)
+}
+
+message ChallengeResponse {
+    string challenge_hex = 1; // A random 32-byte nonce to be signed
+    int64 expires_at = 2;
+}
+
+message AuthRequest {
+    string did = 1;
+    string challenge_hex = 2;
+    bytes signature = 3; // The Ed25519 signature over the challenge string
+}
+
+message AuthResponse {
+    bool success = 1;
+    string token = 2; // JWT token to be placed in `authorization: Bearer <token>` gRPC headers
+    string error_message = 3;
+}
+
+// Inbox Messages
+message InboxRequest {
+    int32 limit = 1;
+    int64 since_timestamp = 2;
+}
+
+// Management Messages
+message IdentityRequest {
+    string desired_did = 1;
+    bytes signing_public_key = 2;    // Ed25519
+    bytes encryption_public_key = 3; // X25519
+}
+
+message IdentityResponse {
+    bool success = 1;
+    string error_message = 2;
+}

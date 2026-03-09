@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,6 +58,10 @@ type UserStore struct {
 	maxFailures      int           // Max failures before lockout (default 5)
 	lockoutDuration  time.Duration // How long to lock account (default 15 minutes)
 	failureWindow    time.Duration // Time window for failure tracking (default 1 hour)
+
+	// SSO Provider for external authentication
+	ssoProvider *SSOProvider
+	logger      *zap.Logger
 }
 
 // NewUserStore creates a new user store with account lockout protection
@@ -68,7 +73,19 @@ func NewUserStore() *UserStore {
 		maxFailures:        5,
 		lockoutDuration:    15 * time.Minute,
 		failureWindow:      1 * time.Hour,
+		ssoProvider:        nil, // Set via SetSSOProvider
+		logger:             nil, // Set via SetLogger
 	}
+}
+
+// SetSSOProvider sets the SSO provider for external authentication
+func (s *UserStore) SetSSOProvider(provider *SSOProvider) {
+	s.ssoProvider = provider
+}
+
+// SetLogger sets the logger for the user store
+func (s *UserStore) SetLogger(logger *zap.Logger) {
+	s.logger = logger
 }
 
 // AddUser adds a user with a plaintext password (will be hashed)
@@ -113,7 +130,42 @@ func (s *UserStore) AuthenticateWithIP(username, password, ip string) (*User, er
 		}
 	}
 
-	// Perform authentication
+	// Try SSO authentication first for @msgs.global users
+	if s.ssoProvider != nil && strings.HasSuffix(strings.ToLower(username), "@msgs.global") {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		ssoUser, err := s.ssoProvider.AuthenticateWithPassword(ctx, username, password)
+		if err != nil {
+			// SSO authentication failed
+			if s.logger != nil {
+				s.logger.Warn("SSO authentication failed",
+					zap.String("username", username),
+					zap.Error(err))
+			}
+			s.recordFailure(username, ip, now)
+			return nil, err
+		}
+
+		// SSO authentication successful - create or update local user
+		if s.logger != nil {
+			s.logger.Info("SSO authentication successful",
+				zap.String("email", ssoUser.Email),
+				zap.String("name", ssoUser.Name))
+		}
+
+		// Clear any previous failures
+		s.clearFailures(username, ip)
+
+		// Return a User object (SSO users don't have local password hashes)
+		return &User{
+			Username: username,
+			Email:    ssoUser.Email,
+			Enabled:  true,
+		}, nil
+	}
+
+	// Perform local authentication
 	s.mu.RLock()
 	user, exists := s.users[username]
 	s.mu.RUnlock()

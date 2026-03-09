@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package amp;
+
+option go_package = "github.com/afterdarksys/go-emailservice-ads/internal/aftersmtplib/protocol/amp";
+
+// AMF (ADS Mail Format) is the inner, encrypted structure
+message AMFPayload {
+    string subject = 1;
+    string text_body = 2;
+    string html_body = 3;
+    repeated Attachment attachments = 4;
+    map<string, string> extended_headers = 5;
+}
+
+message Attachment {
+    string filename = 1;
+    string content_type = 2;
+    bytes data = 3;
+    string hash = 4;
+}
+
+// AMP Headers are unencrypted metadata for routing
+message AMPHeaders {
+    string sender_did = 1;      // e.g., did:aftersmtp:domain:sender
+    string recipient_did = 2;   // e.g., did:aftersmtp:domain:recipient
+    int64 timestamp = 3;        // Unix epoch
+    string message_id = 4;      // UUID or Hash
+    string previous_hop = 5;    // DID of the previous relay (for tracking)
+}
+
+// The actual structure sent over the wire (QUIC/gRPC)
+message AMPMessage {
+    AMPHeaders headers = 1;
+    
+    // The AMFPayload encrypted with the recipient's public key (e.g., X25519 + AES-GCM)
+    bytes encrypted_payload = 2; 
+    
+    // Ephemeral public key used by the sender for this specific encryption
+    bytes ephemeral_public_key = 3;
+    
+    // Ed25519 signature of the headers + encrypted_payload, signed by sender_did's private key
+    bytes signature = 4; 
+    
+    // Optional blockchain proof or transaction ID anchoring this message's transit
+    string blockchain_proof = 5; 
+}
+
+// Service definition for Server-to-Server and Client-to-Server
+service AMPServer {
+    // Deliver a message. If the signature is invalid, it is rejected immediately.
+    rpc DeliverMessage(AMPMessage) returns (DeliveryResponse);
+}
+
+message DeliveryResponse {
+    bool success = 1;
+    string error_message = 2;
+    string receipt_hash = 3; // Cryptographic proof of receipt
+}

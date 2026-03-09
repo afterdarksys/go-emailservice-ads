@@ -50,6 +50,21 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 
 	// Load default users from config
 	userStore := v.GetUserStore()
+
+	// Set logger on user store
+	userStore.SetLogger(logger)
+
+	// Initialize SSO provider if enabled
+	if cfg.SSO.Enabled {
+		ssoProvider := auth.NewSSOProvider(cfg, logger)
+		if ssoProvider != nil {
+			userStore.SetSSOProvider(ssoProvider)
+			logger.Info("SSO authentication enabled",
+				zap.String("provider", cfg.SSO.Provider),
+				zap.String("directory_url", cfg.SSO.DirectoryURL))
+		}
+	}
+
 	for _, userCfg := range cfg.Auth.DefaultUsers {
 		if err := userStore.AddUser(userCfg.Username, userCfg.Password, userCfg.Email); err != nil {
 			logger.Error("Failed to add default user",

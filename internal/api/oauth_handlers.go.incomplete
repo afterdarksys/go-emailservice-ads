@@ -1,0 +1,359 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
+)
+
+// Session represents an authenticated web session
+type Session struct {
+	ID        string
+	UserEmail string
+	UserName  string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// SessionManager manages web sessions
+type SessionManager struct {
+	sessions map[string]*Session
+	mu       sync.RWMutex
+}
+
+// NewSessionManager creates a new session manager
+func NewSessionManager() *SessionManager {
+	return &SessionManager{
+		sessions: make(map[string]*Session),
+	}
+}
+
+// CreateSession creates a new session for a user
+func (sm *SessionManager) CreateSession(email, name string) *Session {
+	sessionID := generateSessionID()
+	session := &Session{
+		ID:        sessionID,
+		UserEmail: email,
+		UserName:  name,
+		ExpiresAt: time.Now().Add(24 * time.Hour), // 24 hour sessions
+		CreatedAt: time.Now(),
+	}
+
+	sm.mu.Lock()
+	sm.sessions[sessionID] = session
+	sm.mu.Unlock()
+
+	return session
+}
+
+// GetSession retrieves a session by ID
+func (sm *SessionManager) GetSession(sessionID string) (*Session, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return nil, false
+	}
+
+	// Check if expired
+	if time.Now().After(session.ExpiresAt) {
+		return nil, false
+	}
+
+	return session, true
+}
+
+// DeleteSession removes a session
+func (sm *SessionManager) DeleteSession(sessionID string) {
+	sm.mu.Lock()
+	delete(sm.sessions, sessionID)
+	sm.mu.Unlock()
+}
+
+// CleanupExpired removes expired sessions
+func (sm *SessionManager) CleanupExpired() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	now := time.Now()
+	for id, session := range sm.sessions {
+		if now.After(session.ExpiresAt) {
+			delete(sm.sessions, id)
+		}
+	}
+}
+
+// generateSessionID generates a cryptographically secure session ID
+func generateSessionID() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// OAuth state management for CSRF protection
+var oauthStates = struct {
+	sync.RWMutex
+	states map[string]time.Time
+}{
+	states: make(map[string]time.Time),
+}
+
+// generateState generates a random state parameter for OAuth
+func generateState() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	state := base64.URLEncoding.EncodeToString(b)
+
+	// Store state with expiration
+	oauthStates.Lock()
+	oauthStates.states[state] = time.Now().Add(10 * time.Minute)
+	oauthStates.Unlock()
+
+	return state
+}
+
+// validateState checks if a state parameter is valid
+func validateState(state string) bool {
+	oauthStates.RLock()
+	expiry, exists := oauthStates.states[state]
+	oauthStates.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	// Check if expired
+	if time.Now().After(expiry) {
+		oauthStates.Lock()
+		delete(oauthStates.states, state)
+		oauthStates.Unlock()
+		return false
+	}
+
+	// Delete used state
+	oauthStates.Lock()
+	delete(oauthStates.states, state)
+	oauthStates.Unlock()
+
+	return true
+}
+
+// handleOAuthLogin initiates the OAuth login flow
+func (s *Server) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.config.SSO.Enabled {
+		http.Error(w, "SSO is not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Initialize SSO provider
+	ssoProvider := auth.NewSSOProvider(s.config, s.logger)
+	if ssoProvider == nil {
+		s.logger.Error("Failed to initialize SSO provider")
+		http.Error(w, "SSO provider unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate state for CSRF protection
+	state := generateState()
+
+	// Store state in cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		Path:     "/",
+		MaxAge:   600, // 10 minutes
+		HttpOnly: true,
+		Secure:   true, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Get authorization URL
+	authURL := ssoProvider.GetAuthorizationURL(state)
+
+	s.logger.Info("Redirecting to SSO provider",
+		zap.String("provider", s.config.SSO.Provider),
+		zap.String("auth_url", s.config.SSO.AuthURL))
+
+	// Redirect to SSO provider
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// handleOAuthCallback handles the OAuth callback
+func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.config.SSO.Enabled {
+		http.Error(w, "SSO is not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Verify state parameter
+	stateCookie, err := r.Cookie("oauth_state")
+	if err != nil {
+		s.logger.Warn("Missing oauth_state cookie")
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	stateParam := r.URL.Query().Get("state")
+	if stateParam == "" || stateParam != stateCookie.Value || !validateState(stateParam) {
+		s.logger.Warn("Invalid OAuth state parameter")
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+
+	// Get authorization code
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		errorMsg := r.URL.Query().Get("error")
+		errorDesc := r.URL.Query().Get("error_description")
+		s.logger.Warn("OAuth authorization failed",
+			zap.String("error", errorMsg),
+			zap.String("error_description", errorDesc))
+		http.Error(w, fmt.Sprintf("Authorization failed: %s", errorDesc), http.StatusUnauthorized)
+		return
+	}
+
+	// Initialize SSO provider
+	ssoProvider := auth.NewSSOProvider(s.config, s.logger)
+	if ssoProvider == nil {
+		s.logger.Error("Failed to initialize SSO provider")
+		http.Error(w, "SSO provider unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	// Exchange code for token
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	token, err := ssoProvider.ExchangeCode(ctx, code)
+	if err != nil {
+		s.logger.Error("Failed to exchange authorization code",
+			zap.Error(err))
+		http.Error(w, "Failed to exchange authorization code", http.StatusInternalServerError)
+		return
+	}
+
+	// Get user info
+	user, err := ssoProvider.AuthenticateWithToken(ctx, token.AccessToken)
+	if err != nil {
+		s.logger.Error("Failed to get user info",
+			zap.Error(err))
+		http.Error(w, "Failed to get user information", http.StatusInternalServerError)
+		return
+	}
+
+	// Verify email is verified
+	if !user.EmailVerified {
+		s.logger.Warn("User email not verified",
+			zap.String("email", user.Email))
+		http.Error(w, "Email address not verified", http.StatusForbidden)
+		return
+	}
+
+	// Create session
+	session := s.sessionMgr.CreateSession(user.Email, user.Name)
+
+	// Set session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    session.ID,
+		Path:     "/",
+		MaxAge:   86400, // 24 hours
+		HttpOnly: true,
+		Secure:   true, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	s.logger.Info("User logged in successfully",
+		zap.String("email", user.Email),
+		zap.String("name", user.Name))
+
+	// Redirect to dashboard/webmail
+	http.Redirect(w, r, "/webmail", http.StatusTemporaryRedirect)
+}
+
+// handleLogout logs out the user
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Get session cookie
+	sessionCookie, err := r.Cookie("session_id")
+	if err == nil {
+		s.sessionMgr.DeleteSession(sessionCookie.Value)
+	}
+
+	// Clear session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+
+	s.logger.Info("User logged out")
+
+	// Redirect to login page
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+}
+
+// sessionMiddleware checks if user is authenticated
+func (s *Server) sessionMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionCookie, err := r.Cookie("session_id")
+		if err != nil {
+			http.Redirect(w, r, "/auth/login", http.StatusTemporaryRedirect)
+			return
+		}
+
+		session, exists := s.sessionMgr.GetSession(sessionCookie.Value)
+		if !exists {
+			http.Redirect(w, r, "/auth/login", http.StatusTemporaryRedirect)
+			return
+		}
+
+		// Add session to context
+		ctx := context.WithValue(r.Context(), "session", session)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
+// handleWebmailAPI returns webmail data via API
+func (s *Server) handleWebmailAPI(w http.ResponseWriter, r *http.Request) {
+	session, ok := r.Context().Value("session").(*Session)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Return user info and mailbox stats
+	response := map[string]interface{}{
+		"user": map[string]string{
+			"email": session.UserEmail,
+			"name":  session.UserName,
+		},
+		"stats": map[string]int{
+			"total_messages": 0, // TODO: Get from store
+			"unread_messages": 0,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}

@@ -5,6 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-03-09
+
+### Added - Elasticsearch Integration for Mail Event Logging
+
+#### Complete Mail Event Logging to Elasticsearch
+- **Async Bulk Indexing** - Non-blocking event publishing with buffered channels and bulk indexer
+- **Message Correlation** - Track messages across instances with TraceID, InstanceID, ParentTraceID
+- **Content Deduplication** - SHA256 content hash for identifying duplicate messages
+- **Event Tracking** - Log events at every lifecycle point (enqueue, processing, delivered, failed, bounce, retry, DLQ)
+- **Time-Based Indices** - Daily indices with format `mail-events-YYYY.MM.DD`
+- **Index Lifecycle Management** - Automatic hot/warm/delete transitions with configurable retention
+
+#### Smart Header Logging with Privacy Controls
+- **Per-Domain Control** - Allow/deny lists for specific email domains
+- **Per-IP Control** - Allow/deny lists with CIDR notation support
+- **Per-MX Control** - Filter by remote MX records
+- **Selective Headers** - Choose specific headers to log or log all
+- **Redaction Patterns** - Regex-based sensitive data redaction
+- **Privacy First** - Disabled by default, opt-in per domain/IP/MX
+
+#### Advanced Search and Analytics
+- **Rich Event Data** - Envelope, metadata, security checks, delivery info, policy results, errors
+- **Security Tracking** - SPF, DKIM, DMARC, DANE results logged per message
+- **Delivery Metrics** - Latency, SMTP codes, attempt numbers, retry tracking
+- **Policy Integration** - Log policy decisions, scores, and applied policies
+- **Cross-Instance Tracking** - Follow messages through multi-region Kubernetes deployments
+
+#### Optimized Index Mappings
+- Email-specific analyzer for address fields
+- IP type for proper IP address indexing
+- Keyword fields for IDs, domains, and exact matching
+- Dynamic object mapping for message headers
+- Best compression codec for storage efficiency
+
+#### Performance Features
+- **Sampling** - Configurable sampling rate (0.0-1.0) for high-volume tiers
+- **Bulk Indexing** - Configurable bulk size (default: 1000) and flush interval (default: 5s)
+- **Worker Pools** - Configurable number of bulk indexer workers (default: 4)
+- **Statistics** - Track events indexed, failed, dropped, and bytes indexed
+- **Graceful Shutdown** - Flush all pending events on shutdown
+
+#### Documentation
+- Complete `ELASTICSEARCH_INTEGRATION.md` with setup, configuration, and query examples
+- Kibana dashboard templates (operations, security, performance, troubleshooting)
+- Sample queries for common use cases (correlation, analytics, debugging)
+
+### Added - AfterSMTP Next-Generation Protocol
+
+#### AMP (AfterSMTP Messaging Protocol)
+- **QUIC Transport** - HTTP/3 based messaging with multiplexing and zero-RTT
+- **gRPC Streaming** - Native gRPC bidirectional streaming for real-time message flow
+- **Blockchain Ledger** - Substrate-based distributed ledger for audit trails and message verification
+- **Fallback Database** - SQLite fallback when blockchain is unavailable
+
+#### AfterSMTP Service Features
+- **Bridge Service** - Converts legacy SMTP to modern AMP protocol
+- **Protocol Translation** - Seamless legacy SMTP ↔ AMP/QUIC/gRPC translation
+- **Identity Management** - Substrate-based identity verification
+- **Cryptographic Verification** - Message signing and verification
+- **Audit Trail** - Immutable blockchain records of all messages
+
+#### Security Enhancements
+- **MTA-STS Support** - Mail Transfer Agent Strict Transport Security
+- **TLS Reporting** - SMTP TLS reporting (RFC 8460)
+- **Enhanced DANE** - Extended DANE/TLSA verification
+- **ARC Support** - Authenticated Received Chain (RFC 8617)
+
+### Added - Single Sign-On (SSO) Integration
+
+#### After Dark Systems SSO
+- **OAuth2/OIDC** - Full OAuth2 and OpenID Connect support
+- **Directory Integration** - Connect to After Dark Systems Directory Service
+- **Token Management** - Secure token storage and refresh
+- **User Provisioning** - Automatic user creation from SSO
+- **Multi-Provider Support** - Pluggable provider architecture
+
+#### SSO Features
+- Configurable OAuth2 endpoints (auth, token, userinfo)
+- Custom scopes support
+- Environment variable expansion for secrets
+- Integrated with both SMTP and IMAP authentication
+- Fallback to local authentication when SSO unavailable
+- Complete `SSO_SETUP.md` documentation
+
+### Enhanced - Message Correlation and Tracking
+
+#### Global Message Tracking
+- **TraceID** - Unique global identifier for message correlation across instances
+- **ParentTraceID** - Link bounces and retries to original messages
+- **InstanceID** - Track which pod/instance handled the message
+- **ContentHash** - SHA256 hash for deduplication across the system
+- **Client Metadata** - Track client IP, HELO hostname, authenticated user
+
+#### Instance Identification
+- Kubernetes pod name detection (`HOSTNAME`, `POD_NAME` env vars)
+- Fallback to system hostname
+- Consistent instance tracking across multi-region deployments
+
+### Dependencies Added
+- `github.com/elastic/go-elasticsearch/v8` v8.12.0 - Elasticsearch client
+- `github.com/elastic/elastic-transport-go/v8` v8.4.0 - Elasticsearch transport
+- OpenTelemetry dependencies for Elasticsearch observability
+
+### Configuration Enhancements
+- **Elasticsearch Configuration Block** - Complete ES config with header logging controls
+- **AfterSMTP Configuration Block** - QUIC, gRPC, ledger URL configuration
+- **SSO Configuration Block** - OAuth2/OIDC provider settings
+- Environment variable expansion for all secret fields
+
 ## [2.0.0] - 2026-03-09
 
 ### Added - Kubernetes Enterprise Platform
