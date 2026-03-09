@@ -1,0 +1,221 @@
+{
+  "version": "1.0",
+  "type": "message",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "encoding": "utf-8",
+  "compression": "none",
+  "encrypted": false,
+
+  "envelope": {
+    "message_id": "<complete-example@msgs.global>",
+    "in_reply_to": "<parent-message@msgs.global>",
+    "references": [
+      "<original@msgs.global>",
+      "<parent-message@msgs.global>"
+    ],
+    "thread_id": "thread-550e8400-e29b-41d4-a716-446655440000",
+
+    "from": {
+      "address": "alice@msgs.global",
+      "name": "Alice Johnson",
+      "route": "alice@origin.msgs.global"
+    },
+
+    "to": [
+      {
+        "address": "bob@msgs.global",
+        "name": "Bob Smith"
+      },
+      {
+        "address": "charlie@msgs.global",
+        "name": "Charlie Brown"
+      }
+    ],
+
+    "cc": [
+      {
+        "address": "team@msgs.global",
+        "name": "Team Mailing List"
+      }
+    ],
+
+    "bcc": [],
+    "reply_to": [
+      {
+        "address": "alice@msgs.global",
+        "name": "Alice Johnson"
+      }
+    ],
+
+    "date": "2026-03-09T10:30:00Z",
+    "received_date": "2026-03-09T10:30:05Z",
+    "sent_date": "2026-03-09T10:30:00Z",
+
+    "subject": "Q1 2026 Project Status - Complete Example",
+    "priority": "high",
+    "sensitivity": "confidential"
+  },
+
+  "headers": {
+    "standard": {
+      "From": "Alice Johnson <alice@msgs.global>",
+      "To": "bob@msgs.global, charlie@msgs.global",
+      "Cc": "team@msgs.global",
+      "Subject": "Q1 2026 Project Status - Complete Example",
+      "Date": "Sun, 09 Mar 2026 10:30:00 +0000",
+      "Message-ID": "<complete-example@msgs.global>",
+      "MIME-Version": "1.0",
+      "Content-Type": "multipart/mixed"
+    },
+
+    "extended": {
+      "X-Mailer": "ADS Mail Service v1.0",
+      "X-Priority": "1",
+      "X-Original-IP": "203.0.113.42",
+      "X-Spam-Score": "0.0",
+      "X-Thread-ID": "thread-550e8400"
+    },
+
+    "authentication": {
+      "SPF": "pass",
+      "DKIM": "pass",
+      "DMARC": "pass",
+      "ARC": "pass"
+    }
+  },
+
+  "body": {
+    "text": "Hi Team,\n\nHere's our Q1 2026 project status update:\n\n- Phase 1: Complete ✓\n- Phase 2: In progress (80%)\n- Phase 3: Planning\n\nPlease review the attached report and provide feedback by EOD.\n\nBest regards,\nAlice",
+
+    "html": "<html><body><p>Hi Team,</p><p>Here's our Q1 2026 project status update:</p><ul><li>Phase 1: Complete ✓</li><li>Phase 2: In progress (80%)</li><li>Phase 3: Planning</li></ul><p>Please review the attached report and provide feedback by EOD.</p><p>Best regards,<br>Alice</p></body></html>",
+
+    "encoding": "utf-8",
+    "charset": "utf-8",
+    "format": "flowed",
+    "delsp": "yes",
+
+    "size": 1842,
+    "hash": "sha256:abc123def456...",
+
+    "compressed": false,
+    "compressed_size": 0
+  },
+
+  "attachments": [
+    {
+      "id": "att-001-550e8400",
+      "filename": "Q1_Status_Report.pdf",
+      "content_type": "application/pdf",
+      "size": 524288,
+      "hash": "sha256:def456abc789...",
+      "encoding": "base64",
+      "disposition": "attachment",
+      "content_id": null,
+      "storage": "reference",
+
+      "reference": {
+        "type": "content-addressable",
+        "uri": "sha256:def456abc789...",
+        "store": "local"
+      },
+
+      "compressed": true,
+      "compressed_size": 425984,
+      "compression_algorithm": "gzip"
+    },
+    {
+      "id": "att-002-550e8400",
+      "filename": "company_logo.png",
+      "content_type": "image/png",
+      "size": 8192,
+      "hash": "sha256:789abc456def...",
+      "encoding": "base64",
+      "disposition": "inline",
+      "content_id": "logo@msgs.global",
+      "storage": "inline",
+
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+
+      "compressed": false,
+      "compressed_size": 0
+    }
+  ],
+
+  "metadata": {
+    "labels": ["work", "important", "project-alpha", "q1-2026"],
+    "tags": ["status-report", "quarterly", "team"],
+    "categories": ["business", "project-management"],
+    "flags": ["seen", "answered", "flagged", "important"],
+
+    "folder": "INBOX/Projects/Alpha",
+    "mailbox": "alice@msgs.global",
+
+    "thread": {
+      "id": "thread-550e8400-e29b-41d4-a716-446655440000",
+      "position": 3,
+      "depth": 2,
+      "root": "<original@msgs.global>"
+    },
+
+    "importance": 0.95,
+    "spam_score": 0.0,
+    "classification": "ham",
+
+    "retention": {
+      "expires": "2033-03-09T10:30:00Z",
+      "policy": "7-year-retention",
+      "legal_hold": false
+    },
+
+    "custom": {
+      "project_id": "proj-alpha-001",
+      "ticket_number": "PROJ-1234",
+      "cost_center": "engineering",
+      "department": "product"
+    }
+  },
+
+  "security": {
+    "encrypted": false,
+    "signed": true,
+
+    "signature": {
+      "algorithm": "ed25519",
+      "signer": "alice@msgs.global",
+      "key_id": "ed25519-abc123",
+      "timestamp": "2026-03-09T10:29:55Z",
+      "signature_data": "base64-encoded-signature-data-here...",
+      "valid": true
+    },
+
+    "authentication": {
+      "spf": {
+        "result": "pass",
+        "domain": "msgs.global",
+        "ip": "203.0.113.42"
+      },
+      "dkim": {
+        "result": "pass",
+        "domain": "msgs.global",
+        "selector": "default",
+        "signature": "v=1; a=rsa-sha256; c=relaxed/relaxed; d=msgs.global..."
+      },
+      "dmarc": {
+        "result": "pass",
+        "policy": "reject",
+        "alignment": "strict"
+      },
+      "arc": {
+        "result": "pass",
+        "chain": []
+      }
+    },
+
+    "quarantine": {
+      "quarantined": false,
+      "reason": "",
+      "score": 0.0,
+      "released": false
+    }
+  }
+}

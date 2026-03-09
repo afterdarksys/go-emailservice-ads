@@ -1,0 +1,364 @@
+{
+  "version": "1.0",
+  "type": "message",
+  "id": "extended-550e8400-e29b-41d4-a716-446655440000",
+
+  "envelope": {
+    "message_id": "<extended-example@msgs.global>",
+    "from": {
+      "address": "alice@msgs.global",
+      "name": "Alice Johnson"
+    },
+    "to": [
+      {
+        "address": "bob@msgs.global",
+        "name": "Bob Smith"
+      }
+    ],
+    "date": "2026-03-09T10:30:00Z",
+    "subject": "Team Meeting - Extended Features Demo",
+    "priority": "high"
+  },
+
+  "body": {
+    "text": "Hi Bob,\n\nLet's schedule a team meeting for tomorrow at 2 PM to discuss the Q2 roadmap. I've sent a calendar invite.\n\nBest,\nAlice",
+    "html": "<html><body><p>Hi Bob,</p><p>Let's schedule a team meeting for tomorrow at 2 PM to discuss the Q2 roadmap. I've sent a calendar invite.</p><p>Best,<br>Alice</p></body></html>",
+    "size": 512
+  },
+
+  "calendar_event": {
+    "method": "REQUEST",
+    "uid": "meeting-20260310-1400",
+    "summary": "Q2 Roadmap Planning",
+    "description": "Quarterly planning session to discuss Q2 2026 objectives and key results.",
+    "location": "Conference Room A / Zoom: https://zoom.us/j/123456789",
+    "start": "2026-03-10T14:00:00Z",
+    "end": "2026-03-10T15:30:00Z",
+    "all_day": false,
+
+    "organizer": {
+      "address": "alice@msgs.global",
+      "name": "Alice Johnson"
+    },
+
+    "attendees": [
+      {
+        "address": "bob@msgs.global",
+        "name": "Bob Smith",
+        "role": "REQ-PARTICIPANT",
+        "status": "NEEDS-ACTION",
+        "rsvp": true
+      },
+      {
+        "address": "charlie@msgs.global",
+        "name": "Charlie Brown",
+        "role": "OPT-PARTICIPANT",
+        "status": "ACCEPTED",
+        "rsvp": true
+      }
+    ],
+
+    "recurrence": {
+      "frequency": "WEEKLY",
+      "interval": 1,
+      "by_day": ["TU", "TH"],
+      "count": 10
+    },
+
+    "status": "CONFIRMED",
+    "sequence": 0
+  },
+
+  "collaboration": {
+    "enabled": true,
+    "collaboration_id": "collab-550e8400",
+
+    "shared_with": [
+      {
+        "address": "bob@msgs.global",
+        "name": "Bob Smith"
+      },
+      {
+        "address": "charlie@msgs.global",
+        "name": "Charlie Brown"
+      }
+    ],
+
+    "permissions": {
+      "bob@msgs.global": "write",
+      "charlie@msgs.global": "read"
+    },
+
+    "comments": [
+      {
+        "id": "comment-001",
+        "author": {
+          "address": "bob@msgs.global",
+          "name": "Bob Smith"
+        },
+        "text": "Looks good! I'll prepare the Q2 metrics.",
+        "timestamp": "2026-03-09T11:15:00Z",
+        "resolved": false
+      }
+    ],
+
+    "versions": [
+      {
+        "id": "version-001",
+        "author": {
+          "address": "alice@msgs.global",
+          "name": "Alice"
+        },
+        "timestamp": "2026-03-09T10:30:00Z",
+        "changes": "Initial version",
+        "hash": "sha256:abc123..."
+      }
+    ],
+
+    "activity": [
+      {
+        "id": "activity-001",
+        "user": {
+          "address": "bob@msgs.global",
+          "name": "Bob"
+        },
+        "action": "viewed",
+        "timestamp": "2026-03-09T10:45:00Z"
+      },
+      {
+        "id": "activity-002",
+        "user": {
+          "address": "bob@msgs.global",
+          "name": "Bob"
+        },
+        "action": "commented",
+        "timestamp": "2026-03-09T11:15:00Z"
+      }
+    ]
+  },
+
+  "ai": {
+    "analyzed": true,
+    "analysis_date": "2026-03-09T10:30:10Z",
+    "model_version": "claude-sonnet-4.5",
+
+    "sentiment": {
+      "overall": "positive",
+      "score": 0.82,
+      "positive": 0.85,
+      "negative": 0.02,
+      "neutral": 0.13,
+      "confidence": 0.94
+    },
+
+    "classification": {
+      "category": "business",
+      "subcategory": "meeting-request",
+      "confidence": 0.97,
+      "tags": ["meeting", "calendar", "planning", "q2"]
+    },
+
+    "entities": [
+      {
+        "type": "person",
+        "text": "Bob",
+        "value": "Bob Smith",
+        "confidence": 0.99,
+        "position": {
+          "start": 3,
+          "end": 6
+        }
+      },
+      {
+        "type": "date",
+        "text": "tomorrow at 2 PM",
+        "value": "2026-03-10T14:00:00Z",
+        "confidence": 0.98,
+        "position": {
+          "start": 42,
+          "end": 58
+        }
+      },
+      {
+        "type": "location",
+        "text": "Conference Room A",
+        "confidence": 0.96
+      }
+    ],
+
+    "topics": [
+      "quarterly-planning",
+      "roadmap",
+      "team-meeting",
+      "q2-2026"
+    ],
+
+    "summary": "Alice is inviting Bob to a team meeting tomorrow at 2 PM to discuss the Q2 roadmap and has sent a calendar invite.",
+
+    "key_phrases": [
+      "team meeting",
+      "Q2 roadmap",
+      "calendar invite",
+      "tomorrow at 2 PM"
+    ],
+
+    "language": {
+      "primary": "en",
+      "confidence": 0.99,
+      "alternatives": []
+    },
+
+    "intent": {
+      "primary": "request",
+      "confidence": 0.96,
+      "intents": [
+        {
+          "intent": "request",
+          "score": 0.96
+        },
+        {
+          "intent": "inform",
+          "score": 0.72
+        }
+      ]
+    },
+
+    "priority": {
+      "level": "high",
+      "score": 0.88,
+      "confidence": 0.91,
+      "factors": [
+        "meeting-request",
+        "next-day-deadline",
+        "executive-sender",
+        "quarterly-planning"
+      ]
+    },
+
+    "suggested_actions": [
+      {
+        "type": "reply",
+        "description": "Accept meeting invitation",
+        "confidence": 0.94,
+        "parameters": {
+          "suggested_reply": "Thanks Alice! I'll be there."
+        }
+      },
+      {
+        "type": "calendar",
+        "description": "Add to calendar",
+        "confidence": 0.99,
+        "parameters": {
+          "event_id": "meeting-20260310-1400"
+        }
+      },
+      {
+        "type": "label",
+        "description": "Apply 'important' and 'meeting' labels",
+        "confidence": 0.87,
+        "parameters": {
+          "labels": ["important", "meeting", "q2-planning"]
+        }
+      }
+    ]
+  },
+
+  "blockchain": {
+    "enabled": true,
+    "chain_id": "ethereum",
+    "transaction_id": "0xabc123def456...",
+    "block_number": 12345678,
+    "timestamp": "2026-03-09T10:30:15Z",
+    "hash": "sha256:message-content-hash...",
+    "proof_type": "merkle",
+    "proof": "merkle-proof-data...",
+    "verified": true,
+    "verified_at": "2026-03-09T10:30:15Z",
+
+    "certificate": {
+      "id": "cert-550e8400",
+      "issuer": "msgs.global Certificate Authority",
+      "subject": "alice@msgs.global",
+      "issued_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2027-01-01T00:00:00Z",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----",
+      "signature": "base64-cert-signature..."
+    },
+
+    "audit_trail": [
+      {
+        "id": "audit-001",
+        "action": "created",
+        "actor": {
+          "address": "alice@msgs.global",
+          "name": "Alice Johnson"
+        },
+        "timestamp": "2026-03-09T10:30:00Z",
+        "hash": "sha256:state-hash-001...",
+        "signature": "base64-signature-001..."
+      },
+      {
+        "id": "audit-002",
+        "action": "sent",
+        "actor": {
+          "address": "system@msgs.global",
+          "name": "ADS Mail Service"
+        },
+        "timestamp": "2026-03-09T10:30:05Z",
+        "hash": "sha256:state-hash-002...",
+        "signature": "base64-signature-002...",
+        "prev_hash": "sha256:state-hash-001..."
+      },
+      {
+        "id": "audit-003",
+        "action": "delivered",
+        "actor": {
+          "address": "system@msgs.global",
+          "name": "ADS Mail Service"
+        },
+        "timestamp": "2026-03-09T10:30:08Z",
+        "hash": "sha256:state-hash-003...",
+        "signature": "base64-signature-003...",
+        "prev_hash": "sha256:state-hash-002..."
+      }
+    ],
+
+    "immutable": true
+  },
+
+  "metadata": {
+    "labels": ["important", "meeting", "q2-planning"],
+    "tags": ["calendar", "roadmap"],
+    "importance": 0.88,
+    "spam_score": 0.0,
+    "classification": "ham"
+  },
+
+  "security": {
+    "signed": true,
+    "signature": {
+      "algorithm": "ed25519",
+      "signer": "alice@msgs.global",
+      "key_id": "ed25519-abc123",
+      "timestamp": "2026-03-09T10:29:55Z",
+      "signature_data": "base64-signature...",
+      "valid": true
+    },
+    "authentication": {
+      "spf": {
+        "result": "pass",
+        "domain": "msgs.global",
+        "ip": "203.0.113.42"
+      },
+      "dkim": {
+        "result": "pass",
+        "domain": "msgs.global",
+        "selector": "default"
+      },
+      "dmarc": {
+        "result": "pass",
+        "policy": "reject"
+      }
+    }
+  }
+}
