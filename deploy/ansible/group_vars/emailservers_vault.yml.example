@@ -1,0 +1,27 @@
+---
+# Ansible Vault Example
+# Copy this file to emailservers_vault.yml and encrypt it with:
+# ansible-vault create group_vars/emailservers_vault.yml
+#
+# Or encrypt an existing file:
+# ansible-vault encrypt group_vars/emailservers_vault.yml
+#
+# Edit encrypted file:
+# ansible-vault edit group_vars/emailservers_vault.yml
+
+# Admin credentials
+vault_admin_password: "your-secure-admin-password-here"
+
+# Database credentials
+vault_postgres_password: "your-secure-postgres-password-here"
+
+# SSO credentials (if using SSO)
+vault_ads_client_id: "your-sso-client-id"
+vault_ads_client_secret: "your-sso-client-secret"
+
+# Elasticsearch credentials (if using Elasticsearch)
+vault_es_api_key: "your-elasticsearch-api-key"
+
+# Additional secrets as needed
+# vault_redis_password: "your-redis-password"
+# vault_smtp_relay_password: "your-smtp-relay-password"

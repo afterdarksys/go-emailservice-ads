@@ -1,0 +1,69 @@
+---
+- name: Deploy Go Email Service to apps.afterdarksys.com
+  hosts: emailservers
+  become: yes
+  gather_facts: yes
+
+  vars_prompt:
+    - name: confirm_deployment
+      prompt: "Deploy to production? (yes/no)"
+      private: no
+      default: "no"
+
+  pre_tasks:
+    - name: Verify deployment confirmation
+      fail:
+        msg: "Deployment cancelled by user"
+      when: confirm_deployment != "yes"
+
+    - name: Display deployment information
+      debug:
+        msg:
+          - "Deploying to: apps.afterdarksys.com"
+          - "Domain: {{ domain_name }}"
+          - "Environment: {{ deployment_env }}"
+          - "SMTP Port: {{ smtp_port }}"
+          - "Submission Port: {{ submission_port }}"
+          - "API Port: {{ api_port }}"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+  roles:
+    - role: common
+      tags: ['common', 'setup']
+
+    - role: docker
+      tags: ['docker', 'setup']
+
+    - role: emailservice
+      tags: ['emailservice', 'deploy']
+
+  post_tasks:
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== Deployment Complete ==="
+          - "Email Service: https://{{ email_domain }}"
+          - "SMTP: {{ email_domain }}:{{ smtp_port }}"
+          - "Submission: {{ email_domain }}:{{ submission_port }}"
+          - "API: http://{{ email_domain }}:{{ api_port }}"
+          - "Grafana: http://{{ email_domain }}:{{ grafana_port }}"
+          - "==========================="
+
+    - name: Run health check
+      uri:
+        url: "http://localhost:{{ api_port }}/health"
+        method: GET
+        status_code: 200
+      retries: 5
+      delay: 10
+      register: health_check
+      ignore_errors: yes
+
+    - name: Display health check result
+      debug:
+        msg: "Health check {{ 'PASSED' if health_check.status == 200 else 'FAILED' }}"

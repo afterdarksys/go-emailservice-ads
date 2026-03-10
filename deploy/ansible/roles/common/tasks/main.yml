@@ -1,0 +1,101 @@
+---
+# Common system setup tasks
+
+- name: Install required system packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - python3-pip
+      - git
+      - ufw
+      - certbot
+      - jq
+      - htop
+      - net-tools
+      - vim
+    state: present
+    update_cache: yes
+
+- name: Install Docker Python library
+  pip:
+    name:
+      - docker
+      - docker-compose
+    state: present
+
+- name: Create application user
+  user:
+    name: "{{ app_user }}"
+    group: "{{ app_group }}"
+    create_home: yes
+    shell: /bin/bash
+    system: yes
+    state: present
+
+- name: Create application directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: '0755'
+  loop:
+    - "{{ app_dir }}"
+    - "{{ data_dir }}"
+    - "{{ log_dir }}"
+    - "{{ certs_dir }}"
+    - "{{ app_dir }}/backup"
+
+- name: Configure firewall (UFW)
+  ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Allow SSH
+  ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+
+- name: Allow email service ports
+  ufw:
+    rule: allow
+    port: "{{ item.split('/')[0] }}"
+    proto: "{{ item.split('/')[1] }}"
+  loop: "{{ firewall_allowed_ports }}"
+  when: firewall_allowed_ports is defined
+
+- name: Set timezone to UTC
+  timezone:
+    name: UTC
+
+- name: Configure system limits for email service
+  pam_limits:
+    domain: "{{ app_user }}"
+    limit_type: "{{ item.limit_type }}"
+    limit_item: "{{ item.limit_item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { limit_type: 'soft', limit_item: 'nofile', value: '65536' }
+    - { limit_type: 'hard', limit_item: 'nofile', value: '65536' }
+    - { limit_type: 'soft', limit_item: 'nproc', value: '32768' }
+    - { limit_type: 'hard', limit_item: 'nproc', value: '32768' }
+
+- name: Configure sysctl for email service
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { name: 'net.core.somaxconn', value: '4096' }
+    - { name: 'net.ipv4.tcp_max_syn_backlog', value: '8192' }
+    - { name: 'net.ipv4.tcp_tw_reuse', value: '1' }
+    - { name: 'net.ipv4.ip_local_port_range', value: '10000 65535' }
+    - { name: 'fs.file-max', value: '2097152' }

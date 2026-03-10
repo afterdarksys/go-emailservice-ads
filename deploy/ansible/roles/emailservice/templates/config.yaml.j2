@@ -1,0 +1,102 @@
+server:
+  addr: ":{{ smtp_port }}"
+  domain: "{{ email_domain }}"
+  max_message_bytes: 10485760 # 10MB
+  max_recipients: 50
+  allow_insecure_auth: false
+  require_auth: {{ require_tls | lower }}
+  require_tls: {{ require_tls | lower }}
+  mode: "production"
+
+  # Connection and Rate Limiting
+  max_connections: {{ max_connections }}
+  max_per_ip: {{ max_per_ip }}
+  rate_limit_per_ip: {{ rate_limit_per_ip }}
+  enable_greylist: {{ enable_greylist | lower }}
+  disable_vrfy: true
+  disable_expn: true
+
+  # Local domains
+  local_domains:
+  - "{{ email_domain }}"
+  - "localhost"
+
+  tls:
+    cert: "{{ certs_dir }}/server.crt"
+    key: "{{ certs_dir }}/server.key"
+
+imap:
+  addr: ":{{ imap_port }}"
+  require_tls: {{ require_tls | lower }}
+  tls:
+    cert: "{{ certs_dir }}/server.crt"
+    key: "{{ certs_dir }}/server.key"
+
+api:
+  rest_addr: ":{{ api_port }}"
+  grpc_addr: ":{{ grpc_port }}"
+
+auth:
+  default_users:
+  - username: "{{ admin_username }}"
+    password: "{{ admin_password }}"
+    email: "admin@{{ email_domain }}"
+
+# SSO Configuration for After Dark Systems
+sso:
+  enabled: {{ sso_enabled | lower }}
+  provider: "{{ sso_provider }}"
+{% if sso_enabled %}
+  directory_url: "https://directory.msgs.global"
+  auth_url: "https://sso.afterdarksystems.com/oauth2/authorize"
+  token_url: "https://sso.afterdarksystems.com/oauth2/token"
+  userinfo_url: "https://sso.afterdarksystems.com/oauth2/userinfo"
+  client_id: "${ADS_CLIENT_ID}"
+  client_secret: "${ADS_CLIENT_SECRET}"
+  redirect_url: "https://{{ email_domain }}/oauth/callback"
+  scopes:
+  - "openid"
+  - "email"
+  - "profile"
+{% endif %}
+
+# AfterSMTP Next-Generation Protocol (AMP)
+aftersmtp:
+  enabled: {{ aftersmtp_enabled | lower }}
+  ledger_url: "ws://127.0.0.1:9944"
+  quic_addr: ":{{ aftersmtp_quic_port }}"
+  grpc_addr: ":{{ aftersmtp_grpc_port }}"
+  fallback_db: "{{ data_dir }}/fallback_ledger.db"
+
+logging:
+  level: "info"
+
+# Elasticsearch Integration for mail event logging and search
+elasticsearch:
+  enabled: {{ elasticsearch_enabled | lower }}
+{% if elasticsearch_enabled %}
+  endpoints:
+{% for endpoint in elasticsearch_endpoints %}
+  - "{{ endpoint }}"
+{% endfor %}
+  index_prefix: "mail-events"
+  bulk_size: 1000
+  flush_interval: "5s"
+  api_key: "${ES_API_KEY}"
+  retention_days: 90
+  replicas: 1
+  shards: 3
+  workers: 4
+  sampling_rate: 1.0
+  header_logging:
+    enabled: false
+    log_all_headers: false
+    include_headers:
+    - "From"
+    - "To"
+    - "Subject"
+    - "Message-ID"
+    exclude_headers:
+    - "Authorization"
+    - "X-API-Key"
+{% endif %}

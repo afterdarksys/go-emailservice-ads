@@ -1,0 +1,88 @@
+---
+# Email Service Deployment Variables for apps.afterdarksys.com
+
+# Application
+app_name: go-emailservice-ads
+app_user: mailservice
+app_group: mailservice
+app_dir: /opt/{{ app_name }}
+data_dir: /var/lib/mail-storage
+log_dir: /var/log/mail
+certs_dir: /etc/ssl/emailservice
+
+# Docker
+docker_compose_version: "2.23.0"
+registry: afterdarksys
+image_version: latest
+
+# Email Service Configuration
+email_domain: "{{ domain_name }}"
+smtp_port: 25
+submission_port: 587
+smtps_port: 465
+imap_port: 143
+imaps_port: 993
+api_port: 8080
+grpc_port: 50051
+replication_port: 9090
+
+# AfterSMTP Protocol Ports
+aftersmtp_quic_port: 4434
+aftersmtp_grpc_port: 4433
+
+# Monitoring
+prometheus_port: 9091
+grafana_port: 3000
+
+# Database
+postgres_port: 5432
+postgres_db: maildb
+postgres_user: mailuser
+postgres_password: "P0stgr3s!Secure2026"
+
+# Redis
+redis_port: 6379
+
+# TLS/SSL
+tls_enabled: true
+require_tls: true
+letsencrypt_enabled: false  # Set to true after DNS is configured
+letsencrypt_email: "admin@{{ domain_name }}"
+
+# Security
+max_connections: 2000
+max_per_ip: 20
+rate_limit_per_ip: 200
+enable_greylist: false
+
+# Authentication - Define in vault or override
+admin_username: admin
+admin_password: "Admin!Secure2026"
+
+# Elasticsearch (optional)
+elasticsearch_enabled: false
+elasticsearch_endpoints:
+  - "http://localhost:9200"
+
+# SSO (optional)
+sso_enabled: false
+sso_provider: "afterdarksystems"
+
+# AfterSMTP Protocol
+aftersmtp_enabled: true
+
+# Firewall
+firewall_allowed_ports:
+  - "{{ smtp_port }}/tcp"
+  - "{{ submission_port }}/tcp"
+  - "{{ smtps_port }}/tcp"
+  - "{{ imap_port }}/tcp"
+  - "{{ imaps_port }}/tcp"
+  - "{{ api_port }}/tcp"
+  - "{{ prometheus_port }}/tcp"
+  - "{{ grafana_port }}/tcp"
+  - "{{ aftersmtp_quic_port }}/udp"
+  - "{{ aftersmtp_grpc_port }}/tcp"
+  - "22/tcp"  # SSH
+  - "80/tcp"  # HTTP (for Let's Encrypt)
+  - "443/tcp" # HTTPS

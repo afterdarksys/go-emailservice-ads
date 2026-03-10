@@ -1,0 +1,48 @@
+[Unit]
+Description=Go Email Service
+Documentation=https://github.com/afterdarksystems/go-emailservice-ads
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ app_dir }}
+User={{ app_user }}
+Group={{ app_group }}
+
+# Environment
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile={{ app_dir }}/.env
+
+# Start service
+ExecStart=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml up -d
+
+# Stop service
+ExecStop=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml down
+
+# Reload configuration
+ExecReload=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml restart
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ app_dir }} {{ data_dir }} {{ log_dir }}
+
+# Limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=emailservice
+
+[Install]
+WantedBy=multi-user.target

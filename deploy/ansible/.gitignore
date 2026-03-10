@@ -1,0 +1,20 @@
+# Ansible
+*.retry
+.ansible/
+*.log
+
+# Vault files (keep example, ignore actual vault)
+emailservers_vault.yml
+
+# Local backups
+backups/
+
+# Temporary files
+/tmp/
+*.tmp
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

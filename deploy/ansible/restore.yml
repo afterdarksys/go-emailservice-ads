@@ -1,0 +1,138 @@
+---
+- name: Restore Go Email Service from Backup
+  hosts: emailservers
+  become: yes
+  gather_facts: yes
+
+  vars_prompt:
+    - name: backup_file
+      prompt: "Enter backup file path (e.g., /opt/go-emailservice-ads/backup/emailservice_backup_20260309_120000.tar.gz)"
+      private: no
+
+    - name: confirm_restore
+      prompt: "⚠️  WARNING: This will overwrite current data. Continue? (yes/no)"
+      private: no
+      default: "no"
+
+  pre_tasks:
+    - name: Verify restore confirmation
+      fail:
+        msg: "Restore cancelled by user"
+      when: confirm_restore != "yes"
+
+    - name: Check if backup file exists
+      stat:
+        path: "{{ backup_file }}"
+      register: backup_stat
+
+    - name: Fail if backup file does not exist
+      fail:
+        msg: "Backup file {{ backup_file }} does not exist"
+      when: not backup_stat.stat.exists
+
+  tasks:
+    - name: Stop email service
+      systemd:
+        name: emailservice
+        state: stopped
+
+    - name: Create restore directory
+      file:
+        path: "{{ app_dir }}/restore"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0755'
+
+    - name: Extract backup
+      unarchive:
+        src: "{{ backup_file }}"
+        dest: "{{ app_dir }}/restore"
+        remote_src: yes
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+
+    - name: Find extracted backup directory
+      find:
+        paths: "{{ app_dir }}/restore"
+        patterns: "emailservice_backup_*"
+        file_type: directory
+      register: backup_dir
+
+    - name: Set backup directory variable
+      set_fact:
+        restore_dir: "{{ backup_dir.files | map(attribute='path') | list | first }}"
+
+    - name: Restore mail storage
+      unarchive:
+        src: "{{ restore_dir }}/mail-storage.tar.gz"
+        dest: "{{ data_dir }}"
+        remote_src: yes
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+
+    - name: Restore configuration files
+      copy:
+        src: "{{ restore_dir }}/{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        remote_src: yes
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0640'
+      loop:
+        - config.yaml
+        - docker-compose.yml
+        - .env
+      ignore_errors: yes
+
+    - name: Restore PostgreSQL database
+      shell: |
+        gunzip < {{ restore_dir }}/postgres_dump.sql.gz | \
+        docker exec -i mail-postgres psql -U {{ postgres_user }} {{ postgres_db }}
+      become_user: "{{ app_user }}"
+
+    - name: Restore Redis data
+      block:
+        - name: Stop Redis container
+          command: docker stop mail-redis
+
+        - name: Copy Redis dump file
+          copy:
+            src: "{{ restore_dir }}/redis_dump.rdb"
+            dest: /var/lib/docker/volumes/go-emailservice-ads_redis-data/_data/dump.rdb
+            remote_src: yes
+            owner: "999"
+            group: "999"
+            mode: '0644'
+
+        - name: Start Redis container
+          command: docker start mail-redis
+
+    - name: Start email service
+      systemd:
+        name: emailservice
+        state: started
+
+    - name: Wait for service to be healthy
+      uri:
+        url: "http://localhost:{{ api_port }}/health"
+        method: GET
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Cleanup restore directory
+      file:
+        path: "{{ app_dir }}/restore"
+        state: absent
+
+  post_tasks:
+    - name: Display restore summary
+      debug:
+        msg:
+          - "=== Restore Complete ==="
+          - "Restored from: {{ backup_file }}"
+          - "Health check: {{ 'PASSED' if result.status == 200 else 'FAILED' }}"
+          - "===================="

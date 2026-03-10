@@ -1,0 +1,36 @@
+---
+- name: Backup Go Email Service
+  hosts: emailservers
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Run backup script
+      command: "{{ app_dir }}/backup/backup.sh"
+      become_user: "{{ app_user }}"
+      register: backup_result
+
+    - name: Display backup output
+      debug:
+        msg: "{{ backup_result.stdout_lines }}"
+
+    - name: Get latest backup file
+      find:
+        paths: "{{ app_dir }}/backup"
+        patterns: "emailservice_backup_*.tar.gz"
+        age: -1d
+      register: backup_files
+
+    - name: Display backup location
+      debug:
+        msg: "Latest backup: {{ backup_files.files | map(attribute='path') | list | first }}"
+      when: backup_files.files | length > 0
+
+    - name: Copy backup to local machine (optional)
+      fetch:
+        src: "{{ backup_files.files | map(attribute='path') | list | first }}"
+        dest: "./backups/{{ inventory_hostname }}/"
+        flat: yes
+      when:
+        - backup_files.files | length > 0
+        - download_backup | default(false)

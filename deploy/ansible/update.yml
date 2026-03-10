@@ -1,0 +1,85 @@
+---
+- name: Update Go Email Service
+  hosts: emailservers
+  become: yes
+  gather_facts: yes
+
+  vars_prompt:
+    - name: confirm_update
+      prompt: "Update email service on {{ inventory_hostname }}? (yes/no)"
+      private: no
+      default: "no"
+
+  pre_tasks:
+    - name: Verify update confirmation
+      fail:
+        msg: "Update cancelled by user"
+      when: confirm_update != "yes"
+
+    - name: Create pre-update backup
+      include_role:
+        name: emailservice
+        tasks_from: backup
+      tags: ['backup']
+
+  tasks:
+    - name: Pull latest source code
+      git:
+        repo: https://github.com/afterdarksystems/go-emailservice-ads.git
+        dest: "{{ app_dir }}/source"
+        version: main
+        force: yes
+      become_user: "{{ app_user }}"
+      when: deploy_from_git | default(false)
+
+    - name: Sync local source to server
+      synchronize:
+        src: "{{ playbook_dir }}/../../"
+        dest: "{{ app_dir }}/source/"
+        delete: yes
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=data"
+          - "--exclude=bin"
+          - "--exclude=*.log"
+          - "--exclude=deploy/ansible"
+      become_user: "{{ app_user }}"
+      when: not (deploy_from_git | default(false))
+
+    - name: Rebuild Docker image
+      community.docker.docker_image:
+        name: "{{ registry }}/{{ app_name }}"
+        tag: "{{ image_version }}"
+        source: build
+        build:
+          path: "{{ app_dir }}/source"
+          dockerfile: Dockerfile
+          pull: yes
+        state: present
+        force_source: yes
+      become_user: "{{ app_user }}"
+
+    - name: Restart email service
+      systemd:
+        name: emailservice
+        state: restarted
+        daemon_reload: yes
+
+    - name: Wait for service to be healthy
+      uri:
+        url: "http://localhost:{{ api_port }}/health"
+        method: GET
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 30
+      delay: 5
+
+  post_tasks:
+    - name: Display update summary
+      debug:
+        msg:
+          - "=== Update Complete ==="
+          - "Email Service updated successfully"
+          - "Health check: {{ 'PASSED' if result.status == 200 else 'FAILED' }}"
+          - "===================="

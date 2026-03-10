@@ -35,6 +35,18 @@ imap:
 api:
   rest_addr: ":8080"
   grpc_addr: ":50051"
+  api_keys:
+  - name: "Web Platform"
+    key: "1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH"
+    description: "API key for web platform integration"
+    permissions: ["read", "write"]
+  # IP Whitelist - Only these IPs can access the API (even with valid API key)
+  allowed_ips:
+    - "127.0.0.1"              # Localhost
+    - "::1"                    # Localhost IPv6
+    - "66.228.40.180"          # mx.nerdycupid.com
+    - "108.165.123.229"        # apps.afterdarksys.com (Oracle mail server)
+  require_ip_auth: true        # Enforce IP whitelist
 
 auth:
   default_users:

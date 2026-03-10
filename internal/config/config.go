@@ -40,8 +40,11 @@ type Config struct {
 	} `yaml:"imap"`
 
 	API struct {
-		RESTAddr string `yaml:"rest_addr"`
-		GRPCAddr string `yaml:"grpc_addr"`
+		RESTAddr      string   `yaml:"rest_addr"`
+		GRPCAddr      string   `yaml:"grpc_addr"`
+		APIKeys       []APIKeyConfig `yaml:"api_keys"` // API keys for programmatic access
+		AllowedIPs    []string `yaml:"allowed_ips"`    // IP whitelist for API access
+		RequireIPAuth bool     `yaml:"require_ip_auth"` // Require IP whitelist in addition to API key
 	} `yaml:"api"`
 
 	Auth struct {
@@ -139,6 +142,13 @@ type UserConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	Email    string `yaml:"email"`
+}
+
+type APIKeyConfig struct {
+	Name        string   `yaml:"name"`        // Friendly name for the key (e.g., "Web Platform", "Mobile App")
+	Key         string   `yaml:"key"`         // The actual API key
+	Permissions []string `yaml:"permissions"` // Optional permissions (for future RBAC)
+	Description string   `yaml:"description"` // Optional description
 }
 
 // DANEConfig configures DANE (DNS-Based Authentication of Named Entities)

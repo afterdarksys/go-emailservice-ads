@@ -1,0 +1,86 @@
+---
+# Docker installation and configuration
+
+- name: Remove old Docker versions
+  apt:
+    name:
+      - docker
+      - docker-engine
+      - docker.io
+      - containerd
+      - runc
+    state: absent
+
+- name: Add Docker GPG key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    update_cache: yes
+
+- name: Install Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+
+- name: Ensure Docker service is started and enabled
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Add application user to docker group
+  user:
+    name: "{{ app_user }}"
+    groups: docker
+    append: yes
+
+- name: Create Docker daemon configuration
+  copy:
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m",
+          "max-file": "5"
+        },
+        "storage-driver": "overlay2",
+        "live-restore": true
+      }
+    dest: /etc/docker/daemon.json
+    mode: '0644'
+  notify: restart docker
+
+- name: Configure Docker log rotation
+  copy:
+    content: |
+      /var/lib/docker/containers/*/*.log {
+        rotate 7
+        daily
+        compress
+        size=100M
+        missingok
+        delaycompress
+        copytruncate
+      }
+    dest: /etc/logrotate.d/docker-container
+    mode: '0644'
+
+- name: Verify Docker is working
+  command: docker --version
+  register: docker_version
+  changed_when: false
+
+- name: Display Docker version
+  debug:
+    msg: "Installed {{ docker_version.stdout }}"

@@ -106,31 +106,126 @@ func (s *Server) startREST() {
 	}
 }
 
-// authMiddleware provides SASL-style authentication
+// authMiddleware provides authentication via API key (Bearer token) or Basic Auth
+// with optional IP whitelist enforcement
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Check IP whitelist first if enabled
+		if s.config.API.RequireIPAuth {
+			clientIP := s.getClientIP(r)
+			if !s.isIPAllowed(clientIP) {
+				s.logger.Warn("API access denied - IP not whitelisted",
+					zap.String("ip", clientIP),
+					zap.String("path", r.URL.Path))
+				http.Error(w, "Access denied - IP not authorized", http.StatusForbidden)
+				return
+			}
+		}
+
+		// Try API key authentication first (Bearer token)
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+			if s.validateAPIKey(apiKey) {
+				next(w, r)
+				return
+			}
+			// Invalid API key
+			http.Error(w, "Invalid API key", http.StatusUnauthorized)
+			return
+		}
+
+		// Fall back to Basic Auth
 		username, password, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Mail Service API"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			w.Header().Set("WWW-Authenticate", `Basic realm="Mail Service API", Bearer realm="Mail Service API"`)
+			http.Error(w, "Unauthorized - provide API key or Basic Auth", http.StatusUnauthorized)
 			return
 		}
 
-		// TODO: Integrate with actual auth backend
-		// For now, use simple constant-time comparison
-		validUsername := "admin"
-		validPassword := "changeme"
-
-		usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(validUsername)) == 1
-		passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(validPassword)) == 1
-
-		if !usernameMatch || !passwordMatch {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		// Validate against config users
+		if s.validateBasicAuth(username, password) {
+			next(w, r)
 			return
 		}
 
-		next(w, r)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	}
+}
+
+// getClientIP extracts the client IP from the request
+func (s *Server) getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (for proxied requests)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		// Return the first IP (original client)
+		return strings.TrimSpace(ips[0])
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr
+	ip := r.RemoteAddr
+	// Strip port if present
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	return ip
+}
+
+// isIPAllowed checks if an IP is in the whitelist
+func (s *Server) isIPAllowed(clientIP string) bool {
+	// If no whitelist configured, allow all
+	if len(s.config.API.AllowedIPs) == 0 {
+		return true
+	}
+
+	// Normalize IP (strip brackets from IPv6)
+	clientIP = strings.Trim(clientIP, "[]")
+
+	for _, allowedIP := range s.config.API.AllowedIPs {
+		if clientIP == allowedIP {
+			return true
+		}
+	}
+
+	return false
+}
+
+// validateAPIKey checks if the provided API key is valid
+func (s *Server) validateAPIKey(apiKey string) bool {
+	if s.config.API.APIKeys == nil || len(s.config.API.APIKeys) == 0 {
+		return false
+	}
+
+	for _, key := range s.config.API.APIKeys {
+		if subtle.ConstantTimeCompare([]byte(apiKey), []byte(key.Key)) == 1 {
+			s.logger.Debug("API key authenticated", zap.String("name", key.Name))
+			return true
+		}
+	}
+	return false
+}
+
+// validateBasicAuth checks username/password against config users
+func (s *Server) validateBasicAuth(username, password string) bool {
+	if s.config.Auth.DefaultUsers == nil || len(s.config.Auth.DefaultUsers) == 0 {
+		return false
+	}
+
+	for _, user := range s.config.Auth.DefaultUsers {
+		usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(user.Username)) == 1
+		passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(user.Password)) == 1
+
+		if usernameMatch && passwordMatch {
+			s.logger.Debug("Basic auth authenticated", zap.String("username", username))
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

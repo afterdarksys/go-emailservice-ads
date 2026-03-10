@@ -1,0 +1,30 @@
+---
+# Bootstrap playbook to upgrade Python on Debian 10
+- name: Bootstrap Python on Debian 10
+  hosts: emailservers
+  gather_facts: no
+
+  tasks:
+    - name: Check if Python 3.9 is already installed
+      raw: python3.9 --version
+      register: python39_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Install Python 3.9 from Debian backports
+      raw: |
+        echo "deb http://deb.debian.org/debian buster-backports main" > /etc/apt/sources.list.d/backports.list
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -t buster-backports python3.9 python3.9-venv python3.9-dev python3-pip
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+      when: python39_check.rc != 0
+      changed_when: true
+
+    - name: Test Python 3.9
+      raw: python3 --version
+      register: python_version
+      changed_when: false
+
+    - name: Display Python version
+      debug:
+        msg: "{{ python_version.stdout }}"

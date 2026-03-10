@@ -1,0 +1,21 @@
+---
+# Email service handlers
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: restart emailservice
+  systemd:
+    name: emailservice
+    state: restarted
+
+- name: stop emailservice
+  systemd:
+    name: emailservice
+    state: stopped
+
+- name: start emailservice
+  systemd:
+    name: emailservice
+    state: started
