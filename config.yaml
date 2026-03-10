@@ -1,6 +1,6 @@
 server:
   addr: ":2525"
-  domain: "localhost.local"
+  domain: "apps.afterdarksys.com"
   max_message_bytes: 10485760 # 10MB
   max_recipients: 50
   allow_insecure_auth: false # SECURITY: Disable auth over non-TLS (set to true for testing only)
@@ -18,19 +18,21 @@ server:
 
   # Local domains
   local_domains:
+  - "apps.afterdarksys.com"
+  - "afterdarksys.com"
   - "localhost"
   - "localhost.local"
 
   tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
+    cert: "/var/lib/mail-storage/certs/server.crt"
+    key: "/var/lib/mail-storage/certs/server.key"
 
 imap:
   addr: ":1143"
   require_tls: true # SECURITY: Require TLS for IMAP (use implicit TLS on port 993 or STARTTLS)
   tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
+    cert: "/var/lib/mail-storage/certs/server.crt"
+    key: "/var/lib/mail-storage/certs/server.key"
 
 api:
   rest_addr: ":8080"
@@ -80,7 +82,7 @@ aftersmtp:
   ledger_url: "ws://127.0.0.1:9944" # Substrate blockchain node WS endpoint
   quic_addr: ":4434" # Port for QUIC (HTTP/3) transport
   grpc_addr: ":4433" # Port for native gRPC stream
-  fallback_db: "./data/fallback_ledger.db"
+  fallback_db: "/var/lib/mail-storage/fallback_ledger.db"
 
 logging:
   level: "debug"
