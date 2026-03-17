@@ -204,16 +204,6 @@ func (m *Manager) Evaluate(ctx context.Context, emailCtx *EmailContext) (*Action
 			m.errors++
 			m.metricsMu.Unlock()
 
-			continue
-		}
-
-		// If policy returned an action, use it
-		if action != nil && action.Type != "" {
-			m.logger.Info("Policy matched",
-				zap.String("policy", policy.Name),
-				zap.String("action", string(action.Type)),
-				zap.String("from", emailCtx.From),
-				zap.Strings("to", emailCtx.To))
 
 			return action, nil
 		}

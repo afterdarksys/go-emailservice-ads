@@ -23,13 +23,26 @@ const (
 	ActionModify      ActionType = "modify"       // Modify message
 	ActionNotify      ActionType = "notify"       // Send notification
 	ActionVacation    ActionType = "vacation"     // Vacation responder
+
+	// MailScript actions
+	ActionDrop         ActionType = "drop"          // Forcefully drop message
+	ActionBounce       ActionType = "bounce"        // Bounce back to sender
+	ActionAutoReply    ActionType = "auto_reply"    // Send automated reply
+	ActionAddToDigest  ActionType = "add_to_digest" // Add to digest queue
+	ActionDivertTo     ActionType = "divert_to"     // Divert to different address
+	ActionScreenTo     ActionType = "screen_to"     // Screen/copy to address
+	ActionSMTPError    ActionType = "smtp_error"    // Reply with SMTP error code
+	ActionSMTPDSN      ActionType = "smtp_dsn"      // Reply with SMTP DSN
+	ActionForceSecondPass ActionType = "force_second_pass" // Route to another server
+	ActionSkipCheck    ActionType = "skip_check"    // Skip security checks
+	ActionSetDLP       ActionType = "set_dlp"       // Set DLP policy
 )
 
 // Action represents the result of policy evaluation
 type Action struct {
 	Type     ActionType // Action to take
 	Reason   string     // Human-readable reason (for reject/defer)
-	Target   string     // Target for redirect/fileinto
+	Target   string     // Target for redirect/fileinto/divert/screen
 	Headers  []Header   // Headers to add/modify
 	Tags     []string   // Tags/flags to add
 	Priority int        // Action priority (higher = more important)
@@ -38,6 +51,15 @@ type Action struct {
 	RetryAfter int        // Seconds to wait before retry (for defer)
 	Vacation   *Vacation  // Vacation responder details
 	Notify     *Notify    // Notification details
+
+	// MailScript-specific fields
+	SMTPCode       int    // SMTP error code (for smtp_error)
+	SMTPDSN        string // SMTP DSN string (for smtp_dsn)
+	AutoReplyText  string // Auto-reply message text
+	CheckToSkip    string // Type of check to skip (malware/spam/whitelist)
+	DLPMode        string // DLP policy mode
+	DLPTarget      string // DLP target (user/domain)
+	ForceSecondServer string // Server for second pass
 }
 
 // Header represents an email header modification

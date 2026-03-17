@@ -63,12 +63,11 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 		return nil, fmt.Errorf("invalid compiled script type")
 	}
 
-	// Reset global action state
-	globalAction = nil
-	globalHeaders = nil
+	// Reset global action state (defined in parent package)
+	policy.ResetGlobalAction()
 
 	// Create built-in functions specific to this email context
-	builtins := createBuiltins(emailCtx)
+	builtins := policy.CreateStarlarkBuiltins(emailCtx)
 
 	// Create thread with execution limits
 	thread := &starlark.Thread{
@@ -77,7 +76,7 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 
 	// Set step limit to prevent infinite loops
 	if e.maxSteps > 0 {
-		thread.SetMaxExecutionSteps(e.maxSteps)
+		thread.SetMaxExecutionSteps(uint64(e.maxSteps))
 	}
 
 	// Execute the program
@@ -96,15 +95,15 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 	_ = globals // Script may not define any globals, that's ok
 
 	// Return the action set by the script
-	if globalAction == nil {
+	action := policy.GetGlobalAction()
+	if action == nil {
 		// No explicit action - default to keep
 		return &policy.Action{
-			Type:    policy.ActionKeep,
-			Headers: globalHeaders,
+			Type: policy.ActionKeep,
 		}, nil
 	}
 
-	return globalAction, nil
+	return action, nil
 }
 
 // Validate checks if a Starlark script is syntactically correct

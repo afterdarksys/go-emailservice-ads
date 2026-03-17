@@ -36,6 +36,7 @@ type Server struct {
 	dkimVerifier  *security.Verifier
 	greylisting   *greylisting.Greylisting
 	policyManager *policy.Manager
+	spreadPrev    *security.SpreadPrevention
 
 	// Connection tracking for limits
 	connections   map[string]int // IP -> connection count
@@ -89,6 +90,8 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 		logger.Info("Greylisting enabled")
 	}
 
+	spreadPrev := security.NewSpreadPrevention(logger, 5*time.Minute, 50)
+
 	be := &Backend{
 		logger:        logger,
 		qManager:      qm,
@@ -99,6 +102,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 		dkimVerifier:  dkimVerifier,
 		greylisting:   greylist,
 		policyManager: policyMgr,
+		spreadPrev:    spreadPrev,
 	}
 	s := smtp.NewServer(be)
 
@@ -156,6 +160,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 		policyEngine: policyEngine,
 		dkimVerifier: dkimVerifier,
 		greylisting:  greylist,
+		spreadPrev:   spreadPrev,
 		connections:  make(map[string]int),
 	}
 }
@@ -187,6 +192,7 @@ type Backend struct {
 	dkimVerifier  *security.Verifier
 	greylisting   *greylisting.Greylisting
 	policyManager *policy.Manager
+	spreadPrev    *security.SpreadPrevention
 }
 
 // NewSession is called after client greeting (EHLO/HELO)
@@ -212,6 +218,7 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		dkimVerifier:  bkd.dkimVerifier,
 		greylisting:   bkd.greylisting,
 		policyManager: bkd.policyManager,
+		spreadPrev:    bkd.spreadPrev,
 		ip:            ip,
 		ehlo:          c.Hostname(),
 		authenticated: false,
@@ -229,6 +236,7 @@ type Session struct {
 	dkimVerifier  *security.Verifier
 	greylisting   *greylisting.Greylisting
 	policyManager *policy.Manager
+	spreadPrev    *security.SpreadPrevention
 	msg           *Message // active message state
 	ip            string
 	ehlo          string
@@ -387,6 +395,17 @@ func (s *Session) Data(r io.Reader) error {
 	}
 	s.logger.Debug("Received message data", zap.Int("length", len(b)))
 	s.msg.Data = b
+
+	// Spread Prevention Check
+	if s.spreadPrev != nil && s.spreadPrev.Evaluate(b) {
+		s.logger.Warn("Message quarantined by Spread Prevention (Outbreak detected)", zap.String("from", s.msg.From))
+		// Quarantine or Reject
+		return &smtp.SMTPError{
+			Code:         550,
+			EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message:      "Message rejected by Spread Prevention Outbreak filters",
+		}
+	}
 
 	// Perform DKIM verification for incoming messages (unauthenticated)
 	if !s.authenticated && s.dkimVerifier != nil {

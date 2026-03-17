@@ -54,6 +54,21 @@ type EmailContext struct {
 	// === Group Membership (if available) ===
 	SenderGroups    []string // Groups the sender belongs to
 	RecipientGroups []string // Groups the recipients belong to
+
+	// === Additional Metadata for MailScript ===
+	SpamScore        float64  // Spam score (0.0 to 10.0)
+	VirusStatus      string   // Virus scan status: "clean", "infected", "unknown"
+	MimeType         string   // MIME type of the message
+	EnvelopeSenders  []string // List of envelope senders for multi-sender detection
+	ReceivedHeaders  []string // Received headers in order (for relay analysis)
+	ContentFilter    string   // Current content filter ID
+	ContentFilterName string  // Content filter name
+	Instance         string   // Processing instance ID
+	InstanceName     string   // Processing instance name
+	SenderDID        string   // Web3 DID of sender (for AfterSMTP)
+	RecipientDID     string   // Web3 DID of recipient (for AfterSMTP)
+	HeaderSize       int64    // Size of headers in bytes
+	BodySize         int64    // Size of body in bytes
 }
 
 // NewEmailContext creates an EmailContext from message components
