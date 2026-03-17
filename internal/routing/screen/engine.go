@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"

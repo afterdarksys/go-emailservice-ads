@@ -8,6 +8,7 @@ data:
     server:
       addr: ":2525"
       domain: "mail.example.com"
+      banner: "mail.example.com ESMTP Mail Service"
       max_message_bytes: 52428800  # 50MB
       max_recipients: 100
       mode: "production"

@@ -3,6 +3,8 @@ package access
 import (
 	"context"
 	"time"
+
+	"github.com/afterdarksys/go-emailservice-ads/internal/access/maps"
 )
 
 // AccessResult represents the result of an access check
@@ -78,19 +80,5 @@ type RestrictionClass struct {
 	Restrictions []Restriction
 }
 
-// Map represents a lookup table interface
-type Map interface {
-	// Lookup performs a lookup and returns the result
-	Lookup(ctx context.Context, key string) (string, error)
-
-	// Type returns the map type
-	Type() string
-
-	// Close closes the map
-	Close() error
-}
-
-// MapFactory creates maps from configuration
-type MapFactory interface {
-	Create(mapType string, params map[string]string) (Map, error)
-}
+// Map is an alias to avoid import cycle - actual interface in maps package
+type Map = maps.Map

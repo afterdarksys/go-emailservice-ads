@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // hotReloadWatcher watches for config file changes and triggers reload

@@ -62,6 +62,9 @@ type UserStore struct {
 	// SSO Provider for external authentication
 	ssoProvider *SSOProvider
 	logger      *zap.Logger
+
+	// Persistence layer (optional)
+	repository *UserRepository
 }
 
 // NewUserStore creates a new user store with account lockout protection
@@ -88,6 +91,48 @@ func (s *UserStore) SetLogger(logger *zap.Logger) {
 	s.logger = logger
 }
 
+// SetRepository sets the persistence repository and loads existing users
+func (s *UserStore) SetRepository(repo *UserRepository) error {
+	s.repository = repo
+
+	// Load existing users from database
+	ctx := context.Background()
+	users, err := repo.LoadAllUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load users from repository: %w", err)
+	}
+
+	s.mu.Lock()
+	s.users = users
+	s.mu.Unlock()
+
+	if s.logger != nil {
+		s.logger.Info("Loaded users from repository", zap.Int("count", len(users)))
+	}
+
+	return nil
+}
+
+// LoadDomainEntitlements loads domain entitlements from repository for the Validator
+func (v *Validator) LoadDomainEntitlements() error {
+	if v.userStore.repository == nil {
+		return fmt.Errorf("no repository configured")
+	}
+
+	ctx := context.Background()
+	domainMap, err := v.userStore.repository.LoadAllDomainEntitlements(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load domain entitlements: %w", err)
+	}
+
+	v.domainOwnershipMu.Lock()
+	v.domainOwnership = domainMap
+	v.domainOwnershipMu.Unlock()
+
+	v.logger.Info("Loaded domain entitlements from repository", zap.Int("users", len(domainMap)))
+	return nil
+}
+
 // AddUser adds a user with a plaintext password (will be hashed)
 func (s *UserStore) AddUser(username, password, email string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -95,15 +140,30 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.users[username] = &User{
+	user := &User{
 		Username:     username,
 		PasswordHash: string(hash),
 		Email:        email,
 		Enabled:      true,
 	}
+
+	s.mu.Lock()
+	s.users[username] = user
+	s.mu.Unlock()
+
+	// Persist to database if repository is configured
+	if s.repository != nil {
+		ctx := context.Background()
+		if err := s.repository.SaveUser(ctx, user); err != nil {
+			if s.logger != nil {
+				s.logger.Error("Failed to persist user to database",
+					zap.String("username", username),
+					zap.Error(err))
+			}
+			return fmt.Errorf("failed to persist user: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -521,7 +581,7 @@ func (v *Validator) AuthorizedToSendAs(username, fromAddress string) bool {
 }
 
 // GrantDomainAccess allows a user to send from any address in the specified domain
-func (v *Validator) GrantDomainAccess(username, domain string) {
+func (v *Validator) GrantDomainAccess(username, domain string) error {
 	v.domainOwnershipMu.Lock()
 	defer v.domainOwnershipMu.Unlock()
 
@@ -530,7 +590,7 @@ func (v *Validator) GrantDomainAccess(username, domain string) {
 		// Check if already granted
 		for _, d := range domains {
 			if d == domain {
-				return
+				return nil
 			}
 		}
 		v.domainOwnership[username] = append(domains, domain)
@@ -538,13 +598,27 @@ func (v *Validator) GrantDomainAccess(username, domain string) {
 		v.domainOwnership[username] = []string{domain}
 	}
 
+	// Persist to database if repository is configured
+	if v.userStore.repository != nil {
+		ctx := context.Background()
+		if err := v.userStore.repository.GrantDomainEntitlement(ctx, username, domain, "", ""); err != nil {
+			v.logger.Error("Failed to persist domain entitlement",
+				zap.String("username", username),
+				zap.String("domain", domain),
+				zap.Error(err))
+			return fmt.Errorf("failed to persist domain entitlement: %w", err)
+		}
+	}
+
 	v.logger.Info("Granted domain access",
 		zap.String("username", username),
 		zap.String("domain", domain))
+
+	return nil
 }
 
 // RevokeDomainAccess removes a user's permission to send from a domain
-func (v *Validator) RevokeDomainAccess(username, domain string) {
+func (v *Validator) RevokeDomainAccess(username, domain string) error {
 	v.domainOwnershipMu.Lock()
 	defer v.domainOwnershipMu.Unlock()
 
@@ -559,7 +633,21 @@ func (v *Validator) RevokeDomainAccess(username, domain string) {
 		v.domainOwnership[username] = newDomains
 	}
 
+	// Persist to database if repository is configured
+	if v.userStore.repository != nil {
+		ctx := context.Background()
+		if err := v.userStore.repository.RevokeDomainEntitlement(ctx, username, domain); err != nil {
+			v.logger.Error("Failed to revoke domain entitlement",
+				zap.String("username", username),
+				zap.String("domain", domain),
+				zap.Error(err))
+			return fmt.Errorf("failed to revoke domain entitlement: %w", err)
+		}
+	}
+
 	v.logger.Info("Revoked domain access",
 		zap.String("username", username),
 		zap.String("domain", domain))
+
+	return nil
 }

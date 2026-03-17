@@ -20,8 +20,11 @@ require (
 require (
 	github.com/centrifuge/go-substrate-rpc-client/v4 v4.2.1
 	github.com/elastic/go-elasticsearch/v8 v8.12.0
+	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/lib/pq v1.11.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
 	golang.org/x/oauth2 v0.34.0
@@ -34,6 +37,7 @@ require (
 )
 
 require (
+	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/ChainSafe/go-schnorrkel v1.0.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -48,6 +52,7 @@ require (
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
 	github.com/ethereum/go-ethereum v1.10.20 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect

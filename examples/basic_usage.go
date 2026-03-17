@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"go-emailservice-ads/msgfmt"
+	"github.com/afterdarksys/go-emailservice-ads/msgfmt"
 )
 
 func main() {

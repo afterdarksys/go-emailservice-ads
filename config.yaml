@@ -1,6 +1,7 @@
 server:
   addr: ":2525"
   domain: "apps.afterdarksys.com"
+  banner: "apps.afterdarksys.com ESMTP AfterDark Mail Service" # SMTP 220 banner (legacy server only; main server uses domain)
   max_message_bytes: 10485760 # 10MB
   max_recipients: 50
   allow_insecure_auth: false # SECURITY: Disable auth over non-TLS (set to true for testing only)
@@ -15,6 +16,49 @@ server:
   enable_greylist: false # Greylisting (can cause delays)
   disable_vrfy: true # Disable VRFY (prevents user enumeration)
   disable_expn: true # Disable EXPN (prevents list expansion)
+
+  # Timeout Configuration (Postfix-style granular timeouts)
+  timeouts:
+    connect: "30s"       # Connection timeout
+    helo: "300s"         # HELO/EHLO command timeout
+    mail: "300s"         # MAIL FROM timeout
+    rcpt: "300s"         # RCPT TO timeout
+    data_init: "120s"    # DATA command timeout
+    data_block: "180s"   # Data transfer timeout per block
+    data_done: "600s"    # Final "." timeout
+    rset: "20s"          # RSET command timeout
+    quit: "300s"         # QUIT command timeout
+    starttls: "300s"     # STARTTLS negotiation timeout
+    command: "300s"      # Generic command timeout
+
+  # Error Handling
+  soft_error_limit: 10              # Errors before logging warning
+  hard_error_limit: 20              # Errors before disconnecting
+  junk_command_limit: 100           # Unknown commands before disconnect
+  error_sleep_time: "1s"            # Delay after error
+
+  # Command Restrictions
+  forbidden_commands:                # Commands to reject
+    - "CONNECT"
+    - "GET"
+    - "POST"
+  helo_required: false               # Require HELO/EHLO before other commands
+
+  # Client Behavior Limits
+  client_message_rate_limit: 0       # Messages per hour per client (0 = unlimited)
+  client_recipient_rate_limit: 0     # Recipients per hour per client
+  client_new_tls_session_rate: 0     # New TLS sessions per hour per client
+  recipient_overshoot_limit: 1000    # Allow RCPT beyond max_recipients before rejecting
+
+  # Proxy Protocol Support (for HAProxy/nginx)
+  proxy_protocol:
+    enabled: false
+    timeout: "5s"
+    trusted_networks: []             # CIDR format, e.g., ["10.0.0.0/8"]
+
+  # Restrictions and Policies
+  delay_reject: true                 # Delay rejection until RCPT TO
+  delay_open_until_valid_rcpt: true  # Don't open queue file until valid RCPT
 
   # Local domains
   local_domains:

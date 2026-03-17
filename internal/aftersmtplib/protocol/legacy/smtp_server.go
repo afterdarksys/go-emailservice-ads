@@ -18,11 +18,12 @@ type SMTPServer struct {
 	addr      string
 	bridge    *Bridge
 	tlsConfig *tls.Config
+	banner    string // SMTP 220 greeting banner
 	// Delivery callback for the resulting AMP message
 	OnMessageDelivered func(msg *amp.AMPMessage) error
 }
 
-func NewSMTPServer(addr string, b *Bridge) *SMTPServer {
+func NewSMTPServer(addr string, b *Bridge, banner string) *SMTPServer {
 	// Load the server certificates for STARTTLS
 	cert, err := tls.LoadX509KeyPair("certs/cert.pem", "certs/key.pem")
 	var tlsConfig *tls.Config
@@ -32,10 +33,16 @@ func NewSMTPServer(addr string, b *Bridge) *SMTPServer {
 		telemetry.Log.Warn("Failed to load TLS certificates for legacy SMTP. STARTTLS degraded.", zap.Error(err))
 	}
 
+	// Use default banner if not provided
+	if banner == "" {
+		banner = "aftersmtp.msgs.global ESMTP AMP-Bridge"
+	}
+
 	return &SMTPServer{
 		addr:      addr,
 		bridge:    b,
 		tlsConfig: tlsConfig,
+		banner:    banner,
 	}
 }
 
@@ -77,7 +84,7 @@ func (s *SMTPServer) handleConnection(rawConn net.Conn) {
 	}
 
 	// Send Greeting
-	sess.conn.Write([]byte("220 aftersmtp.msgs.global ESMTP AMP-Bridge\r\n"))
+	sess.conn.Write([]byte("220 " + s.banner + "\r\n"))
 
 	var inData bool
 	var dataBytes []byte

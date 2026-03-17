@@ -1,0 +1,88 @@
+version: "1.0.0"
+updated: 2026-03-10T00:00:00Z
+
+# Transparent Proxy Configuration
+proxy:
+  listen_addr: ":2525"
+  backend_servers:
+    - "127.0.0.1:25"      # Primary mail server (Postfix/your service)
+    # - "127.0.0.1:2526"  # Backup mail server
+  server_name: "msgs.global"
+  banner: "msgs.global ESMTP Mail Service"  # SMTP 220 banner
+  read_timeout: 5m
+  write_timeout: 5m
+  max_connections: 1000
+
+# Composite Scoring System
+scoring:
+  thresholds:
+    allow: 30      # 0-30: Clean traffic
+    monitor: 50    # 31-50: Suspicious, monitor
+    throttle: 70   # 51-70: Likely spam, rate limit
+    tarpit: 90     # 71-90: High confidence spam, tarpit
+    drop: 91       # 91-100: Definite spam, DROP
+
+  weights:
+    # Protocol violations (high weight)
+    pre_banner_talk: 100      # Instant DROP
+    invalid_command: 40
+    malformed_helo: 25
+    missing_commands: 20
+
+    # Connection patterns (medium-high weight)
+    quick_disconnect: 30
+    frequency_spike: 25       # >100 connections/hour
+    no_auth_submission: 20
+    failed_auth_per: 15       # Per failed attempt
+    failed_auth_max: 45       # Maximum from failed auth
+
+    # Volume anomalies (medium weight)
+    high_recipient_count: 20  # >50 recipients
+    high_message_per_conn: 15 # >10 messages
+    unusual_message_size: 10
+    rapid_fire: 15
+
+    # Historical reputation (persistent)
+    previously_flagged: 30
+    top_spammer: 25
+    recent_violations: 20
+    new_ip: 10
+    known_good: -50           # Negative score!
+
+    # Timing patterns (low weight)
+    bot_like_timing: 15
+    off_hours_sending: 10
+    identical_timing: 10
+
+# PostgreSQL Database
+database:
+  host: "localhost"
+  port: 5432
+  database: "emailservice"
+  user: "premail"
+  password: "${PREMAIL_DB_PASSWORD}"  # Use environment variable
+  ssl_mode: "require"
+  retention_days: 90
+
+# nftables Integration
+nftables:
+  enabled: true
+  table_name: "inet filter"
+  blacklist_set: "adspremail_blacklist"
+  ratelimit_set: "adspremail_ratelimit"
+  monitor_set: "adspremail_monitor"
+
+# dnsscience.io Reputation Feed
+reputation:
+  dnsscience_enabled: false
+  dnsscience_api_url: "https://api.dnsscience.io"
+  dnsscience_api_key: "${DNSSCIENCE_API_KEY}"  # Use environment variable
+  feed_interval: 1h
+  batch_size: 100
+
+# Connection Analyzer
+analyzer:
+  pre_banner_timeout: 2s
+  quick_disconnect_threshold: 2s
+  hourly_connection_limit: 100
+  bot_timing_threshold: 0.01  # Variance threshold for bot detection

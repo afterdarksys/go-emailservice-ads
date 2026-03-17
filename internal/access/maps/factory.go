@@ -1,13 +1,19 @@
 package maps
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"go.uber.org/zap"
-
-	"github.com/afterdarksys/go-emailservice-ads/internal/access"
 )
+
+// Map interface for lookups (to avoid import cycle)
+type Map interface {
+	Lookup(ctx context.Context, key string) (string, error)
+	Type() string
+	Close() error
+}
 
 // Factory creates lookup maps from configuration
 type Factory struct {
@@ -23,7 +29,7 @@ func NewFactory(logger *zap.Logger) *Factory {
 
 // Create creates a map from a map specification
 // Format: "type:parameter" or "type:key=value,key=value"
-func (f *Factory) Create(spec string) (access.Map, error) {
+func (f *Factory) Create(spec string) (Map, error) {
 	parts := strings.SplitN(spec, ":", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid map spec: %s (expected type:params)", spec)

@@ -1,8 +1,6 @@
 package ai
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"regexp"

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -171,10 +172,149 @@ func main() {
 		RunE:  healthCheck,
 	})
 
+	// Domain commands
+	domainCmd := &cobra.Command{
+		Use:   "domain",
+		Short: "Manage domains",
+	}
+
+	domainCmd.AddCommand(&cobra.Command{
+		Use:   "add <domain>",
+		Short: "Add a new domain",
+		Args:  cobra.ExactArgs(1),
+		RunE:  domainAdd,
+	})
+
+	domainCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List all domains",
+		RunE:  domainList,
+	})
+
+	domainCmd.AddCommand(&cobra.Command{
+		Use:   "delete <domain>",
+		Short: "Delete a domain",
+		Args:  cobra.ExactArgs(1),
+		RunE:  domainDelete,
+	})
+
+	domainCmd.AddCommand(&cobra.Command{
+		Use:   "info <domain>",
+		Short: "Get domain information",
+		Args:  cobra.ExactArgs(1),
+		RunE:  domainInfo,
+	})
+
+	// User commands
+	userCmd := &cobra.Command{
+		Use:   "user",
+		Short: "Manage users",
+	}
+
+	userAddCmd := &cobra.Command{
+		Use:   "add <email>",
+		Short: "Add a new user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  userAdd,
+	}
+	userAddCmd.Flags().String("password", "", "User password (required)")
+	userCmd.AddCommand(userAddCmd)
+
+	userCmd.AddCommand(&cobra.Command{
+		Use:   "list [domain]",
+		Short: "List users (optionally filtered by domain)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  userList,
+	})
+
+	userCmd.AddCommand(&cobra.Command{
+		Use:   "delete <email>",
+		Short: "Delete a user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  userDelete,
+	})
+
+	userCmd.AddCommand(&cobra.Command{
+		Use:   "info <email>",
+		Short: "Get user information",
+		Args:  cobra.ExactArgs(1),
+		RunE:  userInfo,
+	})
+
+	userPasswdCmd := &cobra.Command{
+		Use:   "passwd <email>",
+		Short: "Change user password",
+		Args:  cobra.ExactArgs(1),
+		RunE:  userPasswd,
+	}
+	userPasswdCmd.Flags().String("password", "", "New password (required)")
+	userCmd.AddCommand(userPasswdCmd)
+
+	// Alias commands
+	aliasCmd := &cobra.Command{
+		Use:   "alias",
+		Short: "Manage email aliases",
+	}
+
+	aliasAddCmd := &cobra.Command{
+		Use:   "add <source>",
+		Short: "Add an email alias",
+		Args:  cobra.ExactArgs(1),
+		RunE:  aliasAdd,
+	}
+	aliasAddCmd.Flags().String("target", "", "Target email address (required)")
+	aliasCmd.AddCommand(aliasAddCmd)
+
+	aliasCmd.AddCommand(&cobra.Command{
+		Use:   "list [domain]",
+		Short: "List aliases (optionally filtered by domain)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  aliasList,
+	})
+
+	aliasCmd.AddCommand(&cobra.Command{
+		Use:   "delete <source>",
+		Short: "Delete an alias",
+		Args:  cobra.ExactArgs(1),
+		RunE:  aliasDelete,
+	})
+
+	// Tenant commands
+	tenantCmd := &cobra.Command{
+		Use:   "tenant",
+		Short: "Manage tenants (multi-tenant mode)",
+	}
+
+	tenantAddCmd := &cobra.Command{
+		Use:   "add <tenant-id>",
+		Short: "Add a new tenant",
+		Args:  cobra.ExactArgs(1),
+		RunE:  tenantAdd,
+	}
+	tenantAddCmd.Flags().String("name", "", "Tenant name (defaults to tenant-id)")
+	tenantCmd.AddCommand(tenantAddCmd)
+
+	tenantCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List all tenants",
+		RunE:  tenantList,
+	})
+
+	tenantCmd.AddCommand(&cobra.Command{
+		Use:   "delete <tenant-id>",
+		Short: "Delete a tenant",
+		Args:  cobra.ExactArgs(1),
+		RunE:  tenantDelete,
+	})
+
 	rootCmd.AddCommand(queueCmd)
 	rootCmd.AddCommand(dlqCmd)
 	rootCmd.AddCommand(msgCmd)
 	rootCmd.AddCommand(replicationCmd)
+	rootCmd.AddCommand(domainCmd)
+	rootCmd.AddCommand(userCmd)
+	rootCmd.AddCommand(aliasCmd)
+	rootCmd.AddCommand(tenantCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -419,4 +559,367 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+// ===== Domain Management =====
+
+func domainAdd(cmd *cobra.Command, args []string) error {
+	domain := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	payload := map[string]interface{}{
+		"domain": domain,
+	}
+	jsonData, _ := json.Marshal(payload)
+
+	_, err := client.doRequest("POST", "/api/v1/domains", bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Domain added: %s\n", domain)
+	return nil
+}
+
+func domainList(cmd *cobra.Command, args []string) error {
+	client := NewClient(apiURL, username, password, insecure)
+	data, err := client.doRequest("GET", "/api/v1/domains", nil)
+	if err != nil {
+		return err
+	}
+
+	var domains []map[string]interface{}
+	if err := json.Unmarshal(data, &domains); err != nil {
+		return err
+	}
+
+	if len(domains) == 0 {
+		fmt.Println("No domains found")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "DOMAIN\tSTATUS\tUSERS\tCREATED")
+
+	for _, d := range domains {
+		fmt.Fprintf(w, "%s\t%s\t%v\t%s\n",
+			d["domain"],
+			d["status"],
+			d["user_count"],
+			d["created_at"])
+	}
+	w.Flush()
+
+	return nil
+}
+
+func domainDelete(cmd *cobra.Command, args []string) error {
+	domain := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	_, err := client.doRequest("DELETE", fmt.Sprintf("/api/v1/domains/%s", domain), nil)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Domain deleted: %s\n", domain)
+	return nil
+}
+
+func domainInfo(cmd *cobra.Command, args []string) error {
+	domain := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	data, err := client.doRequest("GET", fmt.Sprintf("/api/v1/domains/%s", domain), nil)
+	if err != nil {
+		return err
+	}
+
+	var info map[string]interface{}
+	if err := json.Unmarshal(data, &info); err != nil {
+		return err
+	}
+
+	yamlData, err := yaml.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(yamlData))
+	return nil
+}
+
+// ===== User Management =====
+
+func userAdd(cmd *cobra.Command, args []string) error {
+	email := args[0]
+	password, _ := cmd.Flags().GetString("password")
+
+	if password == "" {
+		return fmt.Errorf("--password flag is required")
+	}
+
+	client := NewClient(apiURL, username, password, insecure)
+
+	payload := map[string]interface{}{
+		"email":    email,
+		"password": password,
+	}
+	jsonData, _ := json.Marshal(payload)
+
+	_, err := client.doRequest("POST", "/api/v1/users", bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ User added: %s\n", email)
+	return nil
+}
+
+func userList(cmd *cobra.Command, args []string) error {
+	client := NewClient(apiURL, username, password, insecure)
+
+	path := "/api/v1/users"
+	if len(args) > 0 {
+		path = fmt.Sprintf("%s?domain=%s", path, args[0])
+	}
+
+	data, err := client.doRequest("GET", path, nil)
+	if err != nil {
+		return err
+	}
+
+	var users []map[string]interface{}
+	if err := json.Unmarshal(data, &users); err != nil {
+		return err
+	}
+
+	if len(users) == 0 {
+		fmt.Println("No users found")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "EMAIL\tSTATUS\tQUOTA\tCREATED")
+
+	for _, u := range users {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			u["email"],
+			u["status"],
+			u["quota"],
+			u["created_at"])
+	}
+	w.Flush()
+
+	return nil
+}
+
+func userDelete(cmd *cobra.Command, args []string) error {
+	email := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	_, err := client.doRequest("DELETE", fmt.Sprintf("/api/v1/users/%s", email), nil)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ User deleted: %s\n", email)
+	return nil
+}
+
+func userInfo(cmd *cobra.Command, args []string) error {
+	email := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	data, err := client.doRequest("GET", fmt.Sprintf("/api/v1/users/%s", email), nil)
+	if err != nil {
+		return err
+	}
+
+	var info map[string]interface{}
+	if err := json.Unmarshal(data, &info); err != nil {
+		return err
+	}
+
+	yamlData, err := yaml.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(yamlData))
+	return nil
+}
+
+func userPasswd(cmd *cobra.Command, args []string) error {
+	email := args[0]
+	newPassword, _ := cmd.Flags().GetString("password")
+
+	if newPassword == "" {
+		return fmt.Errorf("--password flag is required")
+	}
+
+	client := NewClient(apiURL, username, password, insecure)
+
+	payload := map[string]interface{}{
+		"password": newPassword,
+	}
+	jsonData, _ := json.Marshal(payload)
+
+	_, err := client.doRequest("PUT", fmt.Sprintf("/api/v1/users/%s/password", email), bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Password updated for: %s\n", email)
+	return nil
+}
+
+// ===== Alias Management =====
+
+func aliasAdd(cmd *cobra.Command, args []string) error {
+	source := args[0]
+	target, _ := cmd.Flags().GetString("target")
+
+	if target == "" {
+		return fmt.Errorf("--target flag is required")
+	}
+
+	client := NewClient(apiURL, username, password, insecure)
+
+	payload := map[string]interface{}{
+		"source": source,
+		"target": target,
+	}
+	jsonData, _ := json.Marshal(payload)
+
+	_, err := client.doRequest("POST", "/api/v1/aliases", bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Alias added: %s -> %s\n", source, target)
+	return nil
+}
+
+func aliasList(cmd *cobra.Command, args []string) error {
+	client := NewClient(apiURL, username, password, insecure)
+
+	path := "/api/v1/aliases"
+	if len(args) > 0 {
+		path = fmt.Sprintf("%s?domain=%s", path, args[0])
+	}
+
+	data, err := client.doRequest("GET", path, nil)
+	if err != nil {
+		return err
+	}
+
+	var aliases []map[string]interface{}
+	if err := json.Unmarshal(data, &aliases); err != nil {
+		return err
+	}
+
+	if len(aliases) == 0 {
+		fmt.Println("No aliases found")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SOURCE\tTARGET\tCREATED")
+
+	for _, a := range aliases {
+		fmt.Fprintf(w, "%s\t%s\t%s\n",
+			a["source"],
+			a["target"],
+			a["created_at"])
+	}
+	w.Flush()
+
+	return nil
+}
+
+func aliasDelete(cmd *cobra.Command, args []string) error {
+	source := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	_, err := client.doRequest("DELETE", fmt.Sprintf("/api/v1/aliases/%s", source), nil)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Alias deleted: %s\n", source)
+	return nil
+}
+
+// ===== Tenant Management =====
+
+func tenantAdd(cmd *cobra.Command, args []string) error {
+	tenantID := args[0]
+	name, _ := cmd.Flags().GetString("name")
+
+	if name == "" {
+		name = tenantID
+	}
+
+	client := NewClient(apiURL, username, password, insecure)
+
+	payload := map[string]interface{}{
+		"tenant_id": tenantID,
+		"name":      name,
+	}
+	jsonData, _ := json.Marshal(payload)
+
+	_, err := client.doRequest("POST", "/api/v1/tenants", bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Tenant added: %s (%s)\n", tenantID, name)
+	return nil
+}
+
+func tenantList(cmd *cobra.Command, args []string) error {
+	client := NewClient(apiURL, username, password, insecure)
+	data, err := client.doRequest("GET", "/api/v1/tenants", nil)
+	if err != nil {
+		return err
+	}
+
+	var tenants []map[string]interface{}
+	if err := json.Unmarshal(data, &tenants); err != nil {
+		return err
+	}
+
+	if len(tenants) == 0 {
+		fmt.Println("No tenants found")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "TENANT ID\tNAME\tDOMAINS\tUSERS\tCREATED")
+
+	for _, t := range tenants {
+		fmt.Fprintf(w, "%s\t%s\t%v\t%v\t%s\n",
+			t["tenant_id"],
+			t["name"],
+			t["domain_count"],
+			t["user_count"],
+			t["created_at"])
+	}
+	w.Flush()
+
+	return nil
+}
+
+func tenantDelete(cmd *cobra.Command, args []string) error {
+	tenantID := args[0]
+	client := NewClient(apiURL, username, password, insecure)
+
+	_, err := client.doRequest("DELETE", fmt.Sprintf("/api/v1/tenants/%s", tenantID), nil)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Tenant deleted: %s\n", tenantID)
+	return nil
 }
