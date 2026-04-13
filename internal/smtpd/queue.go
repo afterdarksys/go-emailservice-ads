@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
+	"github.com/google/uuid"
+
 	"github.com/afterdarksys/go-emailservice-ads/internal/bounce"
 	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
@@ -45,13 +47,18 @@ type Message struct {
 	ContentHash   string    // SHA256 hash of message content
 	ClientIP      string    // Client IP address
 	HeloHostname  string    // HELO/EHLO hostname
+	DKIMResult    string            // Result of DKIM verification ("pass", "fail", "none")
+	SPFResult     string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
+	ExtraHeaders  map[string]string // Additional headers to prepend to message
+	IsBounce      bool              // True if this message is a bounce/DSN
 }
 
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
-	logger *zap.Logger
-	store  *storage.MessageStore
+	logger    *zap.Logger
+	store     *storage.MessageStore
+	imapStore *storage.IMAPAdapter
 
 	emergency chan *Message
 	msa       chan *Message
@@ -87,15 +94,16 @@ type QueueManager struct {
 
 // QueueMetrics tracks queue performance
 type QueueMetrics struct {
-	Enqueued   map[QueueTier]int64
-	Processed  map[QueueTier]int64
-	Failed     map[QueueTier]int64
-	Duplicates int64
-	LastUpdate time.Time
+	Enqueued    map[QueueTier]int64
+	Processed   map[QueueTier]int64
+	Failed      map[QueueTier]int64
+	Duplicates  int64
+	Backpressure int64
+	LastUpdate  time.Time
 }
 
 // NewQueueManager initializes queue channels and starts workers
-func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, hostname string, localDomains []string) *QueueManager {
+func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.IMAPAdapter, hostname string, localDomains []string) *QueueManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create DNS resolver
@@ -116,6 +124,7 @@ func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, hostname s
 	qm := &QueueManager{
 		logger:    logger,
 		store:     store,
+		imapStore: imapStore,
 		emergency: make(chan *Message, 10000), // Larger buffers for high throughput
 		msa:       make(chan *Message, 50000),
 		intQ:      make(chan *Message, 100000), // highest volume expected here for internal routing
@@ -233,13 +242,24 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 	qm.updateMetrics(msg.Tier, "processed")
 }
 
-// deliverLocal handles local message delivery
+// deliverLocal handles local message delivery via IMAP store.
 func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
-	// TODO: Integrate with IMAP storage or Maildir
-	// For now, just log
-	qm.logger.Info("Local delivery",
-		zap.String("msg_id", msg.ID),
-		zap.Int("recipients", len(recipients)))
+	for _, rcpt := range recipients {
+		username := strings.Split(rcpt, "@")[0]
+		msgID, err := qm.imapStore.StoreMessage(qm.ctx, username, "INBOX", msg.Data)
+		if err != nil {
+			qm.logger.Error("Local delivery failed",
+				zap.String("recipient", rcpt),
+				zap.Error(err))
+			qm.store.UpdateStatus(msg.ID, "pending", err.Error())
+			continue
+		}
+		qm.logger.Info("Local delivery succeeded",
+			zap.String("msg_id", msg.ID),
+			zap.String("imap_id", msgID),
+			zap.String("recipient", rcpt))
+		qm.publishEvent(elasticsearch.EventDelivered, msg, nil)
+	}
 }
 
 // deliverRemote handles remote SMTP delivery
@@ -309,6 +329,17 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
 
 // generateBounce creates and sends a bounce message
 func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryResult, recipients []string) {
+	// Never bounce to a null envelope sender — prevents bounce loops (RFC 5321 §4.5.5)
+	if msg.From == "" || msg.From == "<>" {
+		qm.logger.Info("Skipping bounce for null envelope sender", zap.String("msg_id", msg.ID))
+		return
+	}
+	// Suppress double-bounce: do not bounce a bounce/DSN
+	if msg.IsBounce {
+		qm.logger.Warn("Suppressing double-bounce", zap.String("msg_id", msg.ID))
+		return
+	}
+
 	for _, rcpt := range recipients {
 		reason := &bounce.BounceReason{
 			SMTPCode:     result.SMTPCode,
@@ -330,12 +361,13 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 
 		// Enqueue bounce message (send to original sender)
 		bounceEnvelope := &Message{
-			From:          fmt.Sprintf("postmaster@%s", qm.hostname),
+			From:          "<>", // RFC 5321: DSN messages use null reverse-path
 			To:            []string{msg.From},
 			Data:          bounceMsg,
 			CreatedAt:     time.Now(),
 			Tier:          TierEmergency, // High priority for bounces
 			ParentTraceID: msg.TraceID,   // Link to original message
+			IsBounce:      true,
 		}
 
 		if err := qm.Enqueue(bounceEnvelope); err != nil {
@@ -401,6 +433,8 @@ func (qm *QueueManager) updateMetrics(tier QueueTier, metricType string) {
 		qm.metrics.Failed[tier]++
 	case "duplicate":
 		qm.metrics.Duplicates++
+	case "backpressure":
+		qm.metrics.Backpressure++
 	}
 	qm.metrics.LastUpdate = time.Now()
 }
@@ -445,25 +479,46 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	// Publish enqueued event to Elasticsearch
 	qm.publishEvent(elasticsearch.EventEnqueued, msg, nil)
 
-	// Enqueue to in-memory channel for processing
-	switch msg.Tier {
-	case TierEmergency:
-		qm.emergency <- msg
-	case TierMSA:
-		qm.msa <- msg
-	case TierInt:
-		qm.intQ <- msg
-	case TierOut:
-		qm.out <- msg
-	case TierBulk:
-		qm.bulk <- msg
-	default:
-		// Fallback
-		qm.logger.Warn("Unknown tier, falling back to out queue", zap.String("tier", string(msg.Tier)))
-		qm.out <- msg
-	}
+	// Enqueue to in-memory channel for processing (non-blocking with 100ms backpressure)
+	return qm.enqueueToChannel(msg.Tier, msg)
+}
 
-	return nil
+// enqueueToChannel sends msg to the appropriate tier channel with a 100ms backpressure timeout.
+// The message is already persisted to the store, so it is safe to return without blocking
+// the SMTP session — the retry scheduler will reprocess it from the store.
+func (qm *QueueManager) enqueueToChannel(tier QueueTier, msg *Message) error {
+	ch := qm.channelForTier(tier)
+	select {
+	case ch <- msg:
+		return nil
+	case <-time.After(100 * time.Millisecond):
+		qm.logger.Warn("Queue channel full — message will be retried from store",
+			zap.String("tier", string(tier)),
+			zap.String("msg_id", msg.ID))
+		qm.updateMetrics(tier, "backpressure")
+		return nil
+	case <-qm.ctx.Done():
+		return fmt.Errorf("queue shutting down")
+	}
+}
+
+// channelForTier returns the channel for a given tier.
+func (qm *QueueManager) channelForTier(tier QueueTier) chan *Message {
+	switch tier {
+	case TierEmergency:
+		return qm.emergency
+	case TierMSA:
+		return qm.msa
+	case TierInt:
+		return qm.intQ
+	case TierOut:
+		return qm.out
+	case TierBulk:
+		return qm.bulk
+	default:
+		qm.logger.Warn("Unknown tier, falling back to out queue", zap.String("tier", string(tier)))
+		return qm.out
+	}
 }
 
 // GetMetrics returns current queue metrics
@@ -574,22 +629,14 @@ func (qm *QueueManager) Shutdown() {
 	qm.logger.Info("QueueManager stopped gracefully")
 }
 
-// generateTraceID generates a unique trace ID for message correlation
+// generateTraceID generates a unique trace ID for message correlation.
 func generateTraceID() string {
-	// Use timestamp + random UUID for trace ID
-	// Format: trace_<timestamp>_<uuid>
-	return fmt.Sprintf("trace_%d_%s", time.Now().UnixNano(), generateShortID())
+	return "trace_" + uuid.New().String()
 }
 
-// generateShortID generates a short random ID
+// generateShortID generates a cryptographically random UUID v4.
 func generateShortID() string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 12)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(1 * time.Nanosecond) // Ensure uniqueness
-	}
-	return string(b)
+	return uuid.New().String()
 }
 
 // getInstanceID returns the instance/pod identifier

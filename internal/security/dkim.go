@@ -2,6 +2,7 @@ package security
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -93,7 +94,7 @@ func NewVerifier(logger *zap.Logger, resolver *dns.Resolver) *Verifier {
 
 // VerifyDKIM verifies DKIM signatures in an email message
 // RFC 6376 - DomainKeys Identified Mail (DKIM) Signatures
-func (v *Verifier) VerifyDKIM(msg []byte) (string, error) {
+func (v *Verifier) VerifyDKIM(_ context.Context, msg []byte) (string, error) {
 	v.logger.Debug("Verifying DKIM signature")
 
 	// Use emersion/go-msgauth for DKIM verification

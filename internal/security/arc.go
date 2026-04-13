@@ -1,15 +1,20 @@
 package security
 
 import (
+	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 )
 
 // RFC 8463 - Authenticated Received Chain (ARC)
@@ -22,6 +27,7 @@ type ARCManager struct {
 	domain     string
 	selector   string
 	privateKey *rsa.PrivateKey
+	resolver   *dns.Resolver
 }
 
 // ARCSet represents a complete ARC set (one entry in the chain)
@@ -42,12 +48,13 @@ const (
 )
 
 // NewARCManager creates a new ARC manager
-func NewARCManager(logger *zap.Logger, domain, selector string, privateKey *rsa.PrivateKey) *ARCManager {
+func NewARCManager(logger *zap.Logger, domain, selector string, privateKey *rsa.PrivateKey, resolver *dns.Resolver) *ARCManager {
 	return &ARCManager{
 		logger:     logger,
 		domain:     domain,
 		selector:   selector,
 		privateKey: privateKey,
+		resolver:   resolver,
 	}
 }
 
@@ -119,7 +126,7 @@ func (a *ARCManager) createMessageSignature(headers []string, instance int) (str
 	// Calculate signature
 	h := sha256.New()
 	h.Write([]byte(canonicalHeaders + signatureInput))
-	signature, err := rsa.SignPKCS1v15(nil, a.privateKey, crypto.SHA256, h.Sum(nil))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, a.privateKey, crypto.SHA256, h.Sum(nil))
 	if err != nil {
 		return "", fmt.Errorf("failed to sign: %w", err)
 	}
@@ -153,7 +160,7 @@ func (a *ARCManager) createSeal(headers []string, instance int, arcAuthResults, 
 	// Sign
 	h := sha256.New()
 	h.Write([]byte(canonical + sealInput))
-	signature, err := rsa.SignPKCS1v15(nil, a.privateKey, crypto.SHA256, h.Sum(nil))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, a.privateKey, crypto.SHA256, h.Sum(nil))
 	if err != nil {
 		return "", fmt.Errorf("failed to sign seal: %w", err)
 	}
@@ -329,12 +336,138 @@ func (a *ARCManager) extractCV(arcSeal string) string {
 	return ""
 }
 
+// fetchPublicKey retrieves the RSA public key for the given selector and domain from DNS.
+func (a *ARCManager) fetchPublicKey(ctx context.Context, selector, domain string) (*rsa.PublicKey, error) {
+	txtName := selector + "._domainkey." + domain
+	records, err := a.resolver.LookupTXT(ctx, txtName)
+	if err != nil {
+		return nil, fmt.Errorf("DNS TXT lookup for %s failed: %w", txtName, err)
+	}
+	for _, record := range records {
+		// Find p= field
+		for _, field := range strings.Split(record, ";") {
+			field = strings.TrimSpace(field)
+			if !strings.HasPrefix(field, "p=") {
+				continue
+			}
+			keyB64 := strings.TrimPrefix(field, "p=")
+			keyDER, err := base64.StdEncoding.DecodeString(keyB64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode public key base64: %w", err)
+			}
+			pub, err := x509.ParsePKIXPublicKey(keyDER)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse public key: %w", err)
+			}
+			rsaPub, ok := pub.(*rsa.PublicKey)
+			if !ok {
+				return nil, fmt.Errorf("public key is not RSA")
+			}
+			return rsaPub, nil
+		}
+	}
+	return nil, fmt.Errorf("no public key found in DNS for %s", txtName)
+}
+
+// parseTagValue extracts the value of a named tag (e.g. "b") from a semicolon-separated header.
+func parseTagValue(header, tag string) string {
+	for _, field := range strings.Split(header, ";") {
+		field = strings.TrimSpace(field)
+		if strings.HasPrefix(field, tag+"=") {
+			return strings.TrimSpace(strings.TrimPrefix(field, tag+"="))
+		}
+	}
+	return ""
+}
+
 func (a *ARCManager) verifySeal(set ARCSet, previousSets []ARCSet) bool {
-	// Simplified verification - in production, fetch public key and verify signature
+	if a.resolver == nil {
+		a.logger.Warn("ARC seal verification skipped: no DNS resolver configured")
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	selector := parseTagValue(set.ARCSeal, "s")
+	domain := parseTagValue(set.ARCSeal, "d")
+	sigB64 := parseTagValue(set.ARCSeal, "b")
+	if selector == "" || domain == "" || sigB64 == "" {
+		a.logger.Warn("ARC-Seal missing required tags", zap.Int("instance", set.Instance))
+		return false
+	}
+
+	pubKey, err := a.fetchPublicKey(ctx, selector, domain)
+	if err != nil {
+		a.logger.Warn("Failed to fetch ARC public key", zap.Int("instance", set.Instance), zap.Error(err))
+		return false
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		a.logger.Warn("Failed to decode ARC-Seal signature", zap.Error(err))
+		return false
+	}
+
+	// Signed data is the ARC-Seal value with the b= field value stripped (up to and including "b=")
+	bIdx := strings.Index(set.ARCSeal, "b=")
+	if bIdx < 0 {
+		return false
+	}
+	signedData := set.ARCSeal[:bIdx+2] // include "b=" but not the value
+
+	h := sha256.New()
+	h.Write([]byte(signedData))
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, h.Sum(nil), sigBytes); err != nil {
+		a.logger.Warn("ARC-Seal signature verification failed", zap.Int("instance", set.Instance), zap.Error(err))
+		return false
+	}
 	return true
 }
 
 func (a *ARCManager) verifyMessageSignature(set ARCSet, headers []string) bool {
-	// Simplified verification - in production, fetch public key and verify signature
+	if a.resolver == nil {
+		a.logger.Warn("ARC message signature verification skipped: no DNS resolver configured")
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	selector := parseTagValue(set.ARCMessageSig, "s")
+	domain := parseTagValue(set.ARCMessageSig, "d")
+	sigB64 := parseTagValue(set.ARCMessageSig, "b")
+	if selector == "" || domain == "" || sigB64 == "" {
+		a.logger.Warn("ARC-Message-Signature missing required tags", zap.Int("instance", set.Instance))
+		return false
+	}
+
+	pubKey, err := a.fetchPublicKey(ctx, selector, domain)
+	if err != nil {
+		a.logger.Warn("Failed to fetch ARC public key for message sig", zap.Int("instance", set.Instance), zap.Error(err))
+		return false
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		a.logger.Warn("Failed to decode ARC-Message-Signature", zap.Error(err))
+		return false
+	}
+
+	// Hash the header set canonicalized for signing (up to but not including b= value)
+	bIdx := strings.Index(set.ARCMessageSig, "b=")
+	if bIdx < 0 {
+		return false
+	}
+	signedHeaders := a.canonicalizeHeaders(headers, []string{
+		"from", "to", "cc", "subject", "date", "message-id",
+		"in-reply-to", "references", "mime-version", "content-type",
+	})
+	signedData := signedHeaders + "\r\n" + set.ARCMessageSig[:bIdx+2]
+
+	h := sha256.New()
+	h.Write([]byte(signedData))
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, h.Sum(nil), sigBytes); err != nil {
+		a.logger.Warn("ARC-Message-Signature verification failed", zap.Int("instance", set.Instance), zap.Error(err))
+		return false
+	}
 	return true
 }

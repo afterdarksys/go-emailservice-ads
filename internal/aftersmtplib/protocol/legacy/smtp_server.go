@@ -10,6 +10,7 @@ import (
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/aftersmtplib/protocol/amp"
 	"github.com/afterdarksys/go-emailservice-ads/internal/aftersmtplib/telemetry"
+	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"go.uber.org/zap"
 )
 
@@ -19,16 +20,25 @@ type SMTPServer struct {
 	bridge    *Bridge
 	tlsConfig *tls.Config
 	banner    string // SMTP 220 greeting banner
+	userStore *auth.UserStore
 	// Delivery callback for the resulting AMP message
 	OnMessageDelivered func(msg *amp.AMPMessage) error
 }
 
-func NewSMTPServer(addr string, b *Bridge, banner string) *SMTPServer {
+func NewSMTPServer(addr string, b *Bridge, banner string, userStore *auth.UserStore) *SMTPServer {
 	// Load the server certificates for STARTTLS
 	cert, err := tls.LoadX509KeyPair("certs/cert.pem", "certs/key.pem")
 	var tlsConfig *tls.Config
 	if err == nil {
-		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			},
+		}
 	} else {
 		telemetry.Log.Warn("Failed to load TLS certificates for legacy SMTP. STARTTLS degraded.", zap.Error(err))
 	}
@@ -43,6 +53,7 @@ func NewSMTPServer(addr string, b *Bridge, banner string) *SMTPServer {
 		bridge:    b,
 		tlsConfig: tlsConfig,
 		banner:    banner,
+		userStore: userStore,
 	}
 }
 
@@ -191,9 +202,13 @@ func (s *SMTPServer) handleConnection(rawConn net.Conn) {
 
 			// PLAIN auth format: \x00user\x00password
 			credentials := strings.Split(string(decoded), "\x00")
-			if len(credentials) == 3 && credentials[1] == "ryan" && credentials[2] == "securepassword" {
-				sess.authenticated = true
-				sess.conn.Write([]byte("235 2.7.0 Authentication successful\r\n"))
+			if len(credentials) == 3 && s.userStore != nil {
+				if _, err := s.userStore.Authenticate(credentials[1], credentials[2]); err == nil {
+					sess.authenticated = true
+					sess.conn.Write([]byte("235 2.7.0 Authentication successful\r\n"))
+				} else {
+					sess.conn.Write([]byte("535 5.7.8 Authentication credentials invalid\r\n"))
+				}
 			} else {
 				sess.conn.Write([]byte("535 5.7.8 Authentication credentials invalid\r\n"))
 			}

@@ -323,6 +323,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	}
 
 	// Perform SPF verification for unauthenticated connections
+	spfResultStr := "none"
 	if !s.authenticated && s.policyEngine != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -336,24 +337,38 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		ipAddr := net.ParseIP(s.ip)
 		if ipAddr != nil && fromDomain != "" {
 			spfResult, err := s.policyEngine.VerifySPF(ctx, ipAddr, fromDomain, from)
-			if err == nil && spfResult == security.SPFFail {
-				s.logger.Warn("SPF verification failed",
-					zap.String("from", from),
-					zap.String("ip", s.ip),
-					zap.String("spf_result", string(spfResult)))
-				return &smtp.SMTPError{
-					Code:         550,
-					EnhancedCode: smtp.EnhancedCode{5, 7, 1},
-					Message:      "SPF validation failed",
+			if err == nil {
+				spfResultStr = string(spfResult)
+				switch spfResult {
+				case security.SPFFail:
+					s.logger.Warn("SPF hard fail — rejecting",
+						zap.String("from", from),
+						zap.String("ip", s.ip))
+					return &smtp.SMTPError{
+						Code:         550,
+						EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+						Message:      "SPF validation failed",
+					}
+				case security.SPFSoftFail:
+					s.logger.Info("SPF softfail — message tagged",
+						zap.String("from", from),
+						zap.String("ip", s.ip))
 				}
 			}
 		}
 	}
 
+	extraHeaders := map[string]string{
+		"X-SPF-Status": spfResultStr,
+	}
+
 	s.msg = &Message{
-		From:      from,
-		CreatedAt: time.Now(),
-		Tier:      TierInt, // Default to TierInt, allow policy to override
+		From:         from,
+		CreatedAt:    time.Now(),
+		Tier:         TierInt, // Default to TierInt, allow policy to override
+		SPFResult:    spfResultStr,
+		DKIMResult:   "none",
+		ExtraHeaders: extraHeaders,
 	}
 	return nil
 }
@@ -407,21 +422,21 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	// Perform DKIM verification for incoming messages (unauthenticated)
+	// Perform DKIM verification synchronously so the result feeds into policy evaluation
 	if !s.authenticated && s.dkimVerifier != nil {
-		// Run DKIM verification in background, don't block
-		go func() {
-			dkimResult, err := s.dkimVerifier.VerifyDKIM(b)
-			if err != nil {
-				s.logger.Debug("DKIM verification failed",
-					zap.String("from", s.msg.From),
-					zap.Error(err))
-			} else {
-				s.logger.Info("DKIM verification result",
-					zap.String("from", s.msg.From),
-					zap.String("result", dkimResult))
-			}
-		}()
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+		result, err := s.dkimVerifier.VerifyDKIM(ctx2, b)
+		cancel2()
+		if err != nil {
+			s.logger.Debug("DKIM verification failed",
+				zap.String("from", s.msg.From),
+				zap.Error(err))
+		} else {
+			s.logger.Info("DKIM verification result",
+				zap.String("from", s.msg.From),
+				zap.String("result", result))
+		}
+		s.msg.DKIMResult = result
 	}
 
 	// === POLICY ENGINE EVALUATION ===
@@ -441,10 +456,9 @@ func (s *Session) Data(r io.Reader) error {
 			emailCtx.IsOutbound = s.authenticated
 			emailCtx.LocalDomains = s.config.Server.LocalDomains
 
-			// TODO: Populate security results (SPF, DKIM, DMARC)
-			// These would come from earlier checks in the SMTP flow
-			emailCtx.SPFResult = policy.SPFNone
-			emailCtx.DKIMResult = policy.DKIMNone
+			// Populate security results from earlier checks
+			emailCtx.SPFResult = policy.SPFResult(s.msg.SPFResult)
+			emailCtx.DKIMResult = policy.DKIMResult(s.msg.DKIMResult)
 			emailCtx.DMARCResult = policy.DMARCNone
 
 			// TODO: Populate IP reputation

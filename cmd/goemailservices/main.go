@@ -88,8 +88,11 @@ func main() {
 	}
 	defer store.Close()
 
+	// Initialize IMAP adapter for local delivery
+	imapStore := storage.NewIMAPAdapter(store)
+
 	// Initialize queue manager with persistence
-	queueManager := smtpd.NewQueueManager(logger, store, cfg.Server.Domain, cfg.Server.LocalDomains)
+	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains)
 	defer queueManager.Shutdown()
 
 	// Initialize Elasticsearch integration (optional)
@@ -204,8 +207,8 @@ func main() {
 		}
 	}
 
-	// Create IMAP adapter for the message store
-	imapStore := storage.NewIMAPAdapter(store)
+	// Reuse IMAP adapter already created for the queue manager
+	imapStore = storage.NewIMAPAdapter(store)
 	imapServer := imap.NewServer(logger, imapStore, cfg, imapValidator)
 	go func() {
 		if err := imapServer.Start(); err != nil {

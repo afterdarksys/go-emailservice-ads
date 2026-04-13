@@ -7,9 +7,16 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 )
+
+// DKIMVerification holds the result of one DKIM signature verification.
+type DKIMVerification struct {
+	Domain string
+	Pass   bool
+}
 
 // SPFResult represents the result of SPF verification
 type SPFResult string
@@ -286,16 +293,27 @@ func (p *PolicyEngine) matchMX(ctx context.Context, ip net.IP, domain string, de
 	return false
 }
 
-// VerifyDMARC performs DMARC verification
-// RFC 7489 - Domain-based Message Authentication, Reporting, and Conformance (DMARC)
-func (p *PolicyEngine) VerifyDMARC(ctx context.Context, domain string, spfResult SPFResult, dkimResult string) (DMARCResult, DMARCPolicy, error) {
+// VerifyDMARC performs DMARC verification with proper identifier alignment per RFC 7489 §3.1.
+//
+// fromHeaderDomain is the domain from the RFC5322.From header.
+// spfDomain is the domain that SPF actually authenticated (RFC5321.MailFrom or HELO).
+// dkimResults contains all DKIM signatures with their signing domains and pass/fail status.
+// alignMode is "relaxed" (default) or "strict" as specified by aspf=/adkim= tags.
+func (p *PolicyEngine) VerifyDMARC(
+	ctx context.Context,
+	fromHeaderDomain string,
+	spfDomain string,
+	spfResult SPFResult,
+	dkimResults []DKIMVerification,
+	alignMode string,
+) (DMARCResult, DMARCPolicy, error) {
 	p.logger.Debug("Verifying DMARC",
-		zap.String("domain", domain),
-		zap.String("spf_result", string(spfResult)),
-		zap.String("dkim_result", dkimResult))
+		zap.String("from_header_domain", fromHeaderDomain),
+		zap.String("spf_domain", spfDomain),
+		zap.String("spf_result", string(spfResult)))
 
 	// Lookup DMARC record (_dmarc.domain.com)
-	dmarcDomain := "_dmarc." + domain
+	dmarcDomain := "_dmarc." + fromHeaderDomain
 	txtRecords, err := p.resolver.LookupTXT(ctx, dmarcDomain)
 	if err != nil {
 		p.logger.Debug("DMARC TXT lookup failed", zap.String("domain", dmarcDomain))
@@ -312,36 +330,61 @@ func (p *PolicyEngine) VerifyDMARC(ctx context.Context, domain string, spfResult
 	}
 
 	if dmarcRecord == "" {
-		p.logger.Debug("No DMARC record found", zap.String("domain", domain))
+		p.logger.Debug("No DMARC record found", zap.String("domain", fromHeaderDomain))
 		return DMARCNone, DMARCPolicyNone, nil
 	}
 
-	// Parse DMARC policy
-	policy := p.parseDMARCPolicy(dmarcRecord)
+	dmarcPolicy := p.parseDMARCPolicy(dmarcRecord)
 
-	// Check SPF and DKIM alignment (simplified - checks if either passes)
-	// RFC 7489 Section 3.1 - DMARC Policy Evaluation
-	dmarcPass := false
-
-	if spfResult == SPFPass {
-		dmarcPass = true
+	if alignMode == "" {
+		alignMode = "relaxed"
 	}
 
-	if dkimResult == "pass" {
-		dmarcPass = true
+	// SPF alignment: RFC5321.MailFrom domain must align with RFC5322.From domain
+	spfAligned := (spfResult == SPFPass || spfResult == SPFSoftFail) &&
+		domainsAlign(fromHeaderDomain, spfDomain, alignMode)
+	spfPass := spfResult == SPFPass && spfAligned
+
+	// DKIM alignment: any passing DKIM signature whose d= domain aligns with From counts
+	dkimPass := false
+	for _, v := range dkimResults {
+		if v.Pass && domainsAlign(fromHeaderDomain, v.Domain, alignMode) {
+			dkimPass = true
+			break
+		}
 	}
 
 	result := DMARCFail
-	if dmarcPass {
+	if spfPass || dkimPass {
 		result = DMARCPass
 	}
 
 	p.logger.Info("DMARC verification complete",
-		zap.String("domain", domain),
+		zap.String("from_header_domain", fromHeaderDomain),
 		zap.String("result", string(result)),
-		zap.String("policy", string(policy)))
+		zap.String("policy", string(dmarcPolicy)),
+		zap.Bool("spf_aligned", spfAligned),
+		zap.Bool("dkim_pass", dkimPass))
 
-	return result, policy, nil
+	return result, dmarcPolicy, nil
+}
+
+// domainsAlign returns true if authDomain satisfies DMARC alignment with fromDomain.
+func domainsAlign(fromDomain, authDomain, mode string) bool {
+	if mode == "strict" {
+		return strings.EqualFold(fromDomain, authDomain)
+	}
+	// relaxed: organizational domain match
+	return orgDomain(fromDomain) == orgDomain(authDomain)
+}
+
+// orgDomain returns the organizational domain (eTLD+1) for a given hostname.
+func orgDomain(d string) string {
+	eTLD, err := publicsuffix.EffectiveTLDPlusOne(strings.ToLower(d))
+	if err != nil {
+		return strings.ToLower(d)
+	}
+	return eTLD
 }
 
 // parseDMARCPolicy extracts the policy from a DMARC record

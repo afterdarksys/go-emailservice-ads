@@ -1,11 +1,12 @@
 package mailscript
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -56,8 +57,11 @@ type MailAction struct {
 
 // ExecutePolicy runs a Starlark script against the given context map
 // Returns actions the engine should take based on the script
+const maxStarlarkSteps = 1_000_000
+
 func (e *Engine) ExecutePolicy(scriptName, scriptContent string, mailCtx map[string]interface{}) (*MailAction, error) {
 	thread := &starlark.Thread{Name: "mailscript_thread"}
+	thread.SetMaxExecutionSteps(maxStarlarkSteps)
 	action := &MailAction{
 		AddHeaders: make(map[string]string),
 	}
@@ -89,7 +93,15 @@ func (e *Engine) ExecutePolicy(scriptName, scriptContent string, mailCtx map[str
 			e.logger.Error("MailScript execution error", zap.String("msg", evalErr.Backtrace()))
 		}
 
-		// check if the script explicitly aborted/rejected
+		// Step limit exceeded — fail open to avoid dropping legitimate mail
+		if strings.Contains(err.Error(), "step limit") {
+			e.logger.Error("MailScript exceeded step limit — failing open",
+				zap.String("script", scriptName))
+			action.Deliver = true
+			return action, nil
+		}
+
+		// Script explicitly rejected the message
 		if strings.Contains(err.Error(), "REJECTED_BY_POLICY") {
 			parts := strings.Split(err.Error(), "REJECTED_BY_POLICY: ")
 			reason := "Rejected by policy"
@@ -150,26 +162,73 @@ func builtinB64Decode(thread *starlark.Thread, b *starlark.Builtin, args starlar
 
 func builtinHTTPGet(logger *zap.Logger) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
 	return func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		var url string
-		if err := starlark.UnpackArgs(b.Name(), args, kwargs, "url", &url); err != nil {
+		var rawURL string
+		if err := starlark.UnpackArgs(b.Name(), args, kwargs, "url", &rawURL); err != nil {
 			return starlark.None, err
 		}
-		
+
+		if err := isAllowedURL(rawURL); err != nil {
+			logger.Warn("MailScript http_get blocked", zap.String("url", rawURL), zap.Error(err))
+			return starlark.String(""), nil
+		}
+
 		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(url)
+		resp, err := client.Get(rawURL)
 		if err != nil {
 			logger.Warn("Mailscript HTTP GET failed", zap.Error(err))
 			return starlark.String(""), nil
 		}
 		defer resp.Body.Close()
-		
-		bodyBytes, err := io.ReadAll(resp.Body)
+
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024)) // 64KB max
 		if err != nil {
 			return starlark.String(""), nil
 		}
-		
+
 		return starlark.String(string(bodyBytes)), nil
 	}
+}
+
+// isAllowedURL validates that a URL is safe to fetch from a MailScript context.
+// Only HTTPS URLs resolving to public IP addresses are permitted.
+func isAllowedURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("only HTTPS URLs are permitted in http_get")
+	}
+	host := u.Hostname()
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return fmt.Errorf("hostname lookup failed: %w", err)
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || isMetadataIP(ip) {
+			return fmt.Errorf("URL resolves to private/reserved address: %s", ipStr)
+		}
+	}
+	return nil
+}
+
+// isMetadataIP returns true for cloud metadata service IP ranges.
+func isMetadataIP(ip net.IP) bool {
+	for _, cidr := range []string{
+		"169.254.169.254/32", // AWS/GCP/Azure IMDS
+		"169.254.170.2/32",   // ECS task metadata
+	} {
+		_, ipNet, _ := net.ParseCIDR(cidr)
+		if ipNet != nil && ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func builtinRegexMatch(logger *zap.Logger) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
@@ -238,7 +297,7 @@ func builtinMimeExtract(logger *zap.Logger) func(*starlark.Thread, *starlark.Bui
 			b, _ := io.ReadAll(p.Body)
 			
 			partDict := starlark.NewDict(5)
-			ctype, _, _ := p.Header.ContentType()
+			ctype := p.Header.Get("Content-Type")
 			partDict.SetKey(starlark.String("content_type"), starlark.String(ctype))
 			partDict.SetKey(starlark.String("body"), starlark.String(string(b)))
 			
