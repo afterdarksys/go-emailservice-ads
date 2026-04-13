@@ -167,6 +167,7 @@ func main() {
 		policyMgr = nil
 	} else {
 		logger.Info("Policy manager initialized")
+		queueManager.SetPolicyManager(policyMgr)
 	}
 
 	// Start API Servers with full dependencies

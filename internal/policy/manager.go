@@ -331,6 +331,12 @@ func (m *Manager) getEngine(policyType PolicyType) (Engine, error) {
 	}
 }
 
+// EvaluateSieve runs a raw Sieve script against the given email context.
+// Used for per-user delivery-time filtering in deliverLocal.
+func (m *Manager) EvaluateSieve(ctx context.Context, script string, emailCtx *EmailContext) (*Action, error) {
+	return m.sieveEngine.Evaluate(ctx, emailCtx, script)
+}
+
 // GetStats returns policy manager statistics
 func (m *Manager) GetStats() map[string]interface{} {
 	m.metricsMu.Lock()

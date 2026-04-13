@@ -359,7 +359,11 @@ func apiRequest(method, path string, body io.Reader) (*http.Response, error) {
 		return nil, err
 	}
 
-	req.SetBasicAuth(apiUser, apiPassword)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else {
+		req.SetBasicAuth(apiUser, apiPassword)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}

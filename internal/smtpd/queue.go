@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"path/filepath"
+
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
+	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -82,6 +85,9 @@ type QueueManager struct {
 	// Elasticsearch integration (optional)
 	esIndexer  *elasticsearch.Indexer
 	instanceID string // Instance/pod identifier
+
+	// Policy manager for per-user Sieve filtering (optional)
+	policyManager *policy.Manager
 
 	// Metrics
 	metrics *QueueMetrics
@@ -246,7 +252,45 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
 	for _, rcpt := range recipients {
 		username := strings.Split(rcpt, "@")[0]
-		msgID, err := qm.imapStore.StoreMessage(qm.ctx, username, "INBOX", msg.Data)
+		folder := "INBOX"
+
+		// Run per-user Sieve script if policy manager is configured.
+		if qm.policyManager != nil {
+			scriptPath := filepath.Join("data", "sieve", username+".sieve")
+			if scriptData, err := os.ReadFile(scriptPath); err == nil {
+				emailCtx, ctxErr := policy.NewEmailContext(msg.From, msg.To, msg.ClientIP, msg.HeloHostname, msg.Data)
+				if ctxErr != nil {
+					qm.logger.Warn("Failed to build email context for Sieve, delivering to INBOX",
+						zap.String("recipient", rcpt),
+						zap.Error(ctxErr))
+				} else {
+					action, evalErr := qm.policyManager.EvaluateSieve(qm.ctx, string(scriptData), emailCtx)
+					if evalErr != nil {
+						qm.logger.Warn("Sieve evaluation failed, delivering to INBOX",
+							zap.String("recipient", rcpt),
+							zap.Error(evalErr))
+					} else {
+						switch action.Type {
+						case policy.ActionFileinto:
+							folder = action.Target
+						case policy.ActionDiscard:
+							qm.logger.Info("Sieve discarded message",
+								zap.String("msg_id", msg.ID),
+								zap.String("recipient", rcpt))
+							continue
+						case policy.ActionReject:
+							qm.logger.Info("Sieve rejected message at delivery",
+								zap.String("msg_id", msg.ID),
+								zap.String("recipient", rcpt),
+								zap.String("reason", action.Reason))
+							continue
+						}
+					}
+				}
+			}
+		}
+
+		msgID, err := qm.imapStore.StoreMessage(qm.ctx, username, folder, msg.Data)
 		if err != nil {
 			qm.logger.Error("Local delivery failed",
 				zap.String("recipient", rcpt),
@@ -257,7 +301,8 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
 		qm.logger.Info("Local delivery succeeded",
 			zap.String("msg_id", msg.ID),
 			zap.String("imap_id", msgID),
-			zap.String("recipient", rcpt))
+			zap.String("recipient", rcpt),
+			zap.String("folder", folder))
 		qm.publishEvent(elasticsearch.EventDelivered, msg, nil)
 	}
 }
@@ -546,6 +591,11 @@ func (qm *QueueManager) GetMetrics() *QueueMetrics {
 	}
 
 	return metrics
+}
+
+// SetPolicyManager attaches a policy manager for per-user Sieve filtering at delivery time.
+func (qm *QueueManager) SetPolicyManager(pm *policy.Manager) {
+	qm.policyManager = pm
 }
 
 // SetElasticsearchIndexer sets the Elasticsearch indexer for event publishing

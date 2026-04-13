@@ -68,7 +68,7 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 - **Policy Service Protocol** - External policy server support
 - **Restriction Classes** - Reusable rule sets
 
-### 🆕 Admin CLI (adsemailadm) (v2.0) ✅
+### 🆕 Admin CLI (adsemailadm) (v2.2) ✅
 
 - **Queue Management** - stats, list, retry, purge, inspect, DLQ operations
 - **Policy Management** - list, show, test, reload, stats, validate (8 example policies)
@@ -80,6 +80,8 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 - **Cluster Management** - status, nodes, load, rebalance, drain
 - **Security** - audit logs, SPF/DKIM/DMARC checks, RBL lookup
 - **Health Checks** - Comprehensive system status
+- **API Key Management** - create, list, revoke keys in config (Bearer token auth)
+- **Sieve Script Management** - per-user Sieve filter scripts (list, show, upload, edit, delete)
 
 ### Core Features ✅
 
@@ -109,7 +111,7 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 - **gRPC API** - Port 50051 (placeholder)
 - **AfterSMTP QUIC** - Port 4434, HTTP/3 AMP protocol (if enabled)
 - **AfterSMTP gRPC** - Port 4433, native gRPC streaming (if enabled)
-- **Admin CLI** - `adsemailadm` with 10 command groups (50+ commands)
+- **Admin CLI** - `adsemailadm` with 12 command groups (60+ commands)
 - **Legacy CLI** - `mailctl` with SASL authentication (v1.0 compatibility)
 - **Elasticsearch** - Mail event logging and search (if enabled)
 
@@ -523,9 +525,9 @@ logging:
 
 ---
 
-## Admin CLI (adsemailadm) - v2.0
+## Admin CLI (adsemailadm) - v2.2
 
-Comprehensive admin utility with 10 command groups and 50+ commands.
+Comprehensive admin utility with 12 command groups and 60+ commands.
 
 ### Queue Management
 ```bash
@@ -674,13 +676,48 @@ Comprehensive admin utility with 10 command groups and 50+ commands.
 ./bin/adsemailadm health storage
 ```
 
+### API Key Management
+```bash
+# List configured API keys
+./bin/adsemailadm apikeys list
+
+# Create a new API key (generates a secure ads_<hex> key)
+./bin/adsemailadm apikeys create myapp --permissions all --description "CI pipeline"
+./bin/adsemailadm apikeys create readonly --permissions queue:read,policy:read
+
+# Revoke an API key by name
+./bin/adsemailadm apikeys revoke myapp
+./bin/adsemailadm apikeys revoke myapp --force
+```
+
+### Sieve Script Management
+```bash
+# List users with Sieve scripts
+./bin/adsemailadm sieve list
+
+# Show a user's script
+./bin/adsemailadm sieve show alice
+
+# Upload a script from file
+./bin/adsemailadm sieve upload alice ./scripts/alice.sieve
+
+# Write an inline script
+./bin/adsemailadm sieve edit alice 'require ["fileinto"]; if header :contains "Subject" "[SPAM]" { fileinto "Junk"; }'
+
+# Delete a user's script
+./bin/adsemailadm sieve delete alice
+```
+
 ### Global Flags
 ```bash
 # API endpoint (default: http://localhost:8080)
 ./bin/adsemailadm --api http://email-api:8080 queue stats
 
-# Authentication
+# Authentication (Basic Auth)
 ./bin/adsemailadm --user admin --password secret queue stats
+
+# Authentication (Bearer token — superuser API key)
+./bin/adsemailadm --api-key ads_<your-key> queue stats
 
 # JSON output
 ./bin/adsemailadm --json queue stats

@@ -13,6 +13,7 @@ var (
 	apiEndpoint string
 	apiUser     string
 	apiPassword string
+	apiKey      string // Bearer token (overrides Basic Auth when set)
 	configFile  string
 	verbose     bool
 	jsonOutput  bool
@@ -83,6 +84,7 @@ Examples:
 	rootCmd.PersistentFlags().StringVar(&apiEndpoint, "api", "", "API endpoint (default: http://localhost:8080)")
 	rootCmd.PersistentFlags().StringVar(&apiUser, "user", "", "API username (default: admin)")
 	rootCmd.PersistentFlags().StringVar(&apiPassword, "password", "", "API password (default: changeme)")
+	rootCmd.PersistentFlags().StringVar(&apiKey, "api-key", "", "API key for Bearer token auth (overrides --user/--password)")
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "Config file path")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "JSON output format")
@@ -98,6 +100,8 @@ Examples:
 	rootCmd.AddCommand(clusterCmd())
 	rootCmd.AddCommand(securityCmd())
 	rootCmd.AddCommand(healthCmd())
+	rootCmd.AddCommand(apikeysCmd())
+	rootCmd.AddCommand(sieveCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
