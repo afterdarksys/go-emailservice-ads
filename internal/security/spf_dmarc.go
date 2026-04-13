@@ -124,8 +124,22 @@ func (p *PolicyEngine) evaluateSPF(ctx context.Context, spfRecord string, ip net
 	// Default result if no mechanism matches
 	defaultResult := SPFNeutral
 
+	// Pre-scan for redirect= modifier (RFC 7208 §6.1)
+	var redirectTarget string
+	for _, part := range parts[1:] {
+		if strings.HasPrefix(part, "redirect=") {
+			redirectTarget = strings.TrimPrefix(part, "redirect=")
+			break
+		}
+	}
+
 	// Evaluate each mechanism
 	for _, mechanism := range parts[1:] {
+		// Modifiers use = not :, skip them in the mechanism loop
+		if strings.Contains(mechanism, "=") {
+			continue
+		}
+
 		// Handle qualifiers: + (pass), - (fail), ~ (softfail), ? (neutral)
 		qualifier := "+"
 		if len(mechanism) > 0 && (mechanism[0] == '+' || mechanism[0] == '-' || mechanism[0] == '~' || mechanism[0] == '?') {
@@ -189,6 +203,11 @@ func (p *PolicyEngine) evaluateSPF(ctx context.Context, spfRecord string, ip net
 				return SPFNeutral
 			}
 		}
+	}
+
+	// RFC 7208 §6.1: follow redirect= if no mechanism matched
+	if redirectTarget != "" {
+		return p.evaluateSPFDomain(ctx, redirectTarget, ip, sender, depth+1)
 	}
 
 	return defaultResult
@@ -293,19 +312,92 @@ func (p *PolicyEngine) matchMX(ctx context.Context, ip net.IP, domain string, de
 	return false
 }
 
+// DMARCRecord holds parsed fields from a DMARC TXT record (RFC 7489 §6.3).
+type DMARCRecord struct {
+	Policy    DMARCPolicy // p=
+	SubPolicy DMARCPolicy // sp= (subdomain policy, defaults to Policy)
+	ADKIM     string      // adkim= "r" (relaxed) or "s" (strict), default "r"
+	ASPF      string      // aspf= "r" (relaxed) or "s" (strict), default "r"
+	Pct       int         // pct= percentage of messages to apply policy to, default 100
+	RUA       string      // rua= aggregate report URI
+	RI        int         // ri= report interval in seconds, default 86400
+}
+
+// parseDMARCRecord parses all standard tags from a DMARC TXT record.
+func parseDMARCRecord(raw string) DMARCRecord {
+	rec := DMARCRecord{
+		Policy:    DMARCPolicyNone,
+		SubPolicy: DMARCPolicyNone,
+		ADKIM:     "r",
+		ASPF:      "r",
+		Pct:       100,
+		RI:        86400,
+	}
+
+	for _, part := range strings.Split(raw, ";") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		switch key {
+		case "p":
+			rec.Policy = parseDMARCPolicyStr(val)
+		case "sp":
+			rec.SubPolicy = parseDMARCPolicyStr(val)
+		case "adkim":
+			if val == "s" {
+				rec.ADKIM = "s"
+			}
+		case "aspf":
+			if val == "s" {
+				rec.ASPF = "s"
+			}
+		case "pct":
+			var n int
+			if _, err := fmt.Sscanf(val, "%d", &n); err == nil && n >= 0 && n <= 100 {
+				rec.Pct = n
+			}
+		case "rua":
+			rec.RUA = val
+		case "ri":
+			var n int
+			if _, err := fmt.Sscanf(val, "%d", &n); err == nil && n > 0 {
+				rec.RI = n
+			}
+		}
+	}
+
+	// sp= defaults to p= when absent
+	if rec.SubPolicy == DMARCPolicyNone && rec.Policy != DMARCPolicyNone {
+		rec.SubPolicy = rec.Policy
+	}
+
+	return rec
+}
+
+func parseDMARCPolicyStr(s string) DMARCPolicy {
+	switch s {
+	case "reject":
+		return DMARCPolicyReject
+	case "quarantine":
+		return DMARCPolicyQuarantine
+	default:
+		return DMARCPolicyNone
+	}
+}
+
 // VerifyDMARC performs DMARC verification with proper identifier alignment per RFC 7489 §3.1.
 //
 // fromHeaderDomain is the domain from the RFC5322.From header.
 // spfDomain is the domain that SPF actually authenticated (RFC5321.MailFrom or HELO).
 // dkimResults contains all DKIM signatures with their signing domains and pass/fail status.
-// alignMode is "relaxed" (default) or "strict" as specified by aspf=/adkim= tags.
 func (p *PolicyEngine) VerifyDMARC(
 	ctx context.Context,
 	fromHeaderDomain string,
 	spfDomain string,
 	spfResult SPFResult,
 	dkimResults []DKIMVerification,
-	alignMode string,
 ) (DMARCResult, DMARCPolicy, error) {
 	p.logger.Debug("Verifying DMARC",
 		zap.String("from_header_domain", fromHeaderDomain),
@@ -321,34 +413,40 @@ func (p *PolicyEngine) VerifyDMARC(
 	}
 
 	// Find DMARC record
-	var dmarcRecord string
+	var rawRecord string
 	for _, record := range txtRecords {
 		if strings.HasPrefix(record, "v=DMARC1") {
-			dmarcRecord = record
+			rawRecord = record
 			break
 		}
 	}
 
-	if dmarcRecord == "" {
+	if rawRecord == "" {
 		p.logger.Debug("No DMARC record found", zap.String("domain", fromHeaderDomain))
 		return DMARCNone, DMARCPolicyNone, nil
 	}
 
-	dmarcPolicy := p.parseDMARCPolicy(dmarcRecord)
+	rec := parseDMARCRecord(rawRecord)
 
-	if alignMode == "" {
-		alignMode = "relaxed"
+	// aspf/adkim tags specify alignment mode: "r" → relaxed, "s" → strict
+	spfAlignMode := "relaxed"
+	if rec.ASPF == "s" {
+		spfAlignMode = "strict"
+	}
+	dkimAlignMode := "relaxed"
+	if rec.ADKIM == "s" {
+		dkimAlignMode = "strict"
 	}
 
 	// SPF alignment: RFC5321.MailFrom domain must align with RFC5322.From domain
 	spfAligned := (spfResult == SPFPass || spfResult == SPFSoftFail) &&
-		domainsAlign(fromHeaderDomain, spfDomain, alignMode)
+		domainsAlign(fromHeaderDomain, spfDomain, spfAlignMode)
 	spfPass := spfResult == SPFPass && spfAligned
 
 	// DKIM alignment: any passing DKIM signature whose d= domain aligns with From counts
 	dkimPass := false
 	for _, v := range dkimResults {
-		if v.Pass && domainsAlign(fromHeaderDomain, v.Domain, alignMode) {
+		if v.Pass && domainsAlign(fromHeaderDomain, v.Domain, dkimAlignMode) {
 			dkimPass = true
 			break
 		}
@@ -362,11 +460,11 @@ func (p *PolicyEngine) VerifyDMARC(
 	p.logger.Info("DMARC verification complete",
 		zap.String("from_header_domain", fromHeaderDomain),
 		zap.String("result", string(result)),
-		zap.String("policy", string(dmarcPolicy)),
+		zap.String("policy", string(rec.Policy)),
 		zap.Bool("spf_aligned", spfAligned),
 		zap.Bool("dkim_pass", dkimPass))
 
-	return result, dmarcPolicy, nil
+	return result, rec.Policy, nil
 }
 
 // domainsAlign returns true if authDomain satisfies DMARC alignment with fromDomain.
@@ -385,29 +483,4 @@ func orgDomain(d string) string {
 		return strings.ToLower(d)
 	}
 	return eTLD
-}
-
-// parseDMARCPolicy extracts the policy from a DMARC record
-func (p *PolicyEngine) parseDMARCPolicy(dmarcRecord string) DMARCPolicy {
-	// Default policy is "none"
-	policy := DMARCPolicyNone
-
-	// Parse DMARC tags
-	parts := strings.Split(dmarcRecord, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "p=") {
-			policyStr := strings.TrimPrefix(part, "p=")
-			switch policyStr {
-			case "reject":
-				policy = DMARCPolicyReject
-			case "quarantine":
-				policy = DMARCPolicyQuarantine
-			case "none":
-				policy = DMARCPolicyNone
-			}
-		}
-	}
-
-	return policy
 }

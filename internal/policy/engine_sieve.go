@@ -42,19 +42,20 @@ func (e *sieveEngine) Evaluate(ctx context.Context, emailCtx *EmailContext, scri
 }
 
 func (e *sieveEngine) Compile(script string) (interface{}, error) {
-	// TODO: Implement Sieve script parsing and compilation
-	return script, nil
+	return svParse(script)
 }
 
 func (e *sieveEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailContext, compiled interface{}) (*Action, error) {
-	// TODO: Implement Sieve script execution
-	return &Action{Type: ActionKeep}, nil
+	ast, ok := compiled.(*svScript)
+	if !ok {
+		return &Action{Type: ActionKeep}, nil
+	}
+	return svExec(emailCtx, ast)
 }
 
 func (e *sieveEngine) Validate(script string) error {
-	// TODO: Implement Sieve script validation
-	_ = script
-	return nil
+	_, err := svParse(script)
+	return err
 }
 
 func (e *sieveEngine) GetCapabilities() []string {

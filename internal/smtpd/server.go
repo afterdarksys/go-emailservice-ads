@@ -108,8 +108,8 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 
 	s.Addr = cfg.Server.Addr
 	s.Domain = cfg.Server.Domain
-	s.ReadTimeout = 10 * time.Second
-	s.WriteTimeout = 10 * time.Second
+	s.ReadTimeout = 10 * time.Minute
+	s.WriteTimeout = 10 * time.Minute
 	s.MaxMessageBytes = int64(cfg.Server.MaxMessageBytes)
 	s.MaxRecipients = cfg.Server.MaxRecipients
 	s.AllowInsecureAuth = cfg.Server.AllowInsecureAuth

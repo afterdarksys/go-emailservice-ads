@@ -58,7 +58,7 @@ type Message struct {
 type QueueManager struct {
 	logger    *zap.Logger
 	store     *storage.MessageStore
-	imapStore *storage.IMAPAdapter
+	imapStore *storage.MailboxStore
 
 	emergency chan *Message
 	msa       chan *Message
@@ -103,7 +103,7 @@ type QueueMetrics struct {
 }
 
 // NewQueueManager initializes queue channels and starts workers
-func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.IMAPAdapter, hostname string, localDomains []string) *QueueManager {
+func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.MailboxStore, hostname string, localDomains []string) *QueueManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create DNS resolver

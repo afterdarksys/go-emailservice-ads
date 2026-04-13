@@ -66,6 +66,12 @@ type Config struct {
 		RequireTLS bool       `yaml:"require_tls"` // Require TLS for IMAP
 	} `yaml:"imap"`
 
+	JMAP struct {
+		Addr             string `yaml:"addr"`               // JMAP HTTP listen address
+		JWTPublicKeyPath string `yaml:"jwt_public_key_path"` // PEM RSA/ECDSA public key for Bearer token validation
+		JWTIssuer        string `yaml:"jwt_issuer"`          // Expected iss claim (empty = skip check)
+	} `yaml:"jmap"`
+
 	API struct {
 		RESTAddr      string   `yaml:"rest_addr"`
 		GRPCAddr      string   `yaml:"grpc_addr"`

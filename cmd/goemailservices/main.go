@@ -88,8 +88,14 @@ func main() {
 	}
 	defer store.Close()
 
-	// Initialize IMAP adapter for local delivery
-	imapStore := storage.NewIMAPAdapter(store)
+	// Initialize IMAP adapter and SQLite-backed mailbox store for local delivery
+	imapAdapter := storage.NewIMAPAdapter(store)
+	mailboxDBPath := filepath.Join(".", "data", "mailbox.db")
+	imapStore, err := storage.NewMailboxStore(imapAdapter, mailboxDBPath)
+	if err != nil {
+		logger.Fatal("Failed to initialize mailbox store", zap.Error(err))
+	}
+	defer imapStore.Close()
 
 	// Initialize queue manager with persistence
 	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains)
@@ -207,8 +213,7 @@ func main() {
 		}
 	}
 
-	// Reuse IMAP adapter already created for the queue manager
-	imapStore = storage.NewIMAPAdapter(store)
+	// Reuse the mailbox store already created for the queue manager
 	imapServer := imap.NewServer(logger, imapStore, cfg, imapValidator)
 	go func() {
 		if err := imapServer.Start(); err != nil {

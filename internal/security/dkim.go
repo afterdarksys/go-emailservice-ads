@@ -3,6 +3,7 @@ package security
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -17,13 +18,15 @@ import (
 
 // Signer handles adding DKIM signatures to outbound messages
 type Signer struct {
-	logger     *zap.Logger
-	domain     string
-	selector   string
-	privateKey *rsa.PrivateKey
+	logger    *zap.Logger
+	domain    string
+	selector  string
+	rsaKey    *rsa.PrivateKey
+	ed25519Key ed25519.PrivateKey
 }
 
 // NewSigner initializes a DKIM signer. If keyPath is empty, signing is disabled.
+// Supports RSA (PKCS1 or PKCS8) and Ed25519 (PKCS8) private keys.
 func NewSigner(logger *zap.Logger, domain, selector, keyPath string) (*Signer, error) {
 	if keyPath == "" {
 		return &Signer{logger: logger}, nil
@@ -39,43 +42,55 @@ func NewSigner(logger *zap.Logger, domain, selector, keyPath string) (*Signer, e
 		return nil, fmt.Errorf("failed to decode PEM block from DKIM key")
 	}
 
-	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		// Try PKCS8
-		parsedKey, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err2 != nil {
-			return nil, fmt.Errorf("failed to parse DKIM private key (PKCS1/8): %w", err)
-		}
-		var ok bool
-		privKey, ok = parsedKey.(*rsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("DKIM key is not RSA")
-		}
+	s := &Signer{logger: logger, domain: domain, selector: selector}
+
+	// Try PKCS1 RSA first
+	if rsaKey, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		s.rsaKey = rsaKey
+		logger.Info("DKIM Signer configured (RSA)", zap.String("domain", domain), zap.String("selector", selector))
+		return s, nil
 	}
 
-	logger.Info("DKIM Signer configured", zap.String("domain", domain), zap.String("selector", selector))
+	// Try PKCS8 (RSA or Ed25519)
+	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DKIM private key (PKCS1/8): %w", err)
+	}
+	switch k := parsedKey.(type) {
+	case *rsa.PrivateKey:
+		s.rsaKey = k
+		logger.Info("DKIM Signer configured (RSA/PKCS8)", zap.String("domain", domain), zap.String("selector", selector))
+	case ed25519.PrivateKey:
+		s.ed25519Key = k
+		logger.Info("DKIM Signer configured (Ed25519)", zap.String("domain", domain), zap.String("selector", selector))
+	default:
+		return nil, fmt.Errorf("unsupported DKIM key type: %T", parsedKey)
+	}
 
-	return &Signer{
-		logger:     logger,
-		domain:     domain,
-		selector:   selector,
-		privateKey: privKey,
-	}, nil
+	return s, nil
 }
 
-// SignOptions defines the headers and body hash settings
+// GetOptions returns dkim.SignOptions populated for the loaded key type.
 func (s *Signer) GetOptions() *dkim.SignOptions {
-	if s.privateKey == nil {
-		return nil
+	headerKeys := []string{"From", "To", "Subject", "Date", "Message-ID"}
+
+	if s.ed25519Key != nil {
+		return &dkim.SignOptions{
+			Domain:     s.domain,
+			Selector:   s.selector,
+			Signer:     s.ed25519Key,
+			HeaderKeys: headerKeys,
+		}
 	}
-	return &dkim.SignOptions{
-		Domain:   s.domain,
-		Selector: s.selector,
-		Signer:   s.privateKey,
-		HeaderKeys: []string{
-			"From", "To", "Subject", "Date", "Message-ID",
-		},
+	if s.rsaKey != nil {
+		return &dkim.SignOptions{
+			Domain:     s.domain,
+			Selector:   s.selector,
+			Signer:     s.rsaKey,
+			HeaderKeys: headerKeys,
+		}
 	}
+	return nil
 }
 
 // Verifier handles DKIM signature verification for incoming messages

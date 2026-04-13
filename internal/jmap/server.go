@@ -2,15 +2,25 @@ package jmap
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/mail"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
+	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
 // RFC 8620 - JSON Meta Application Protocol (JMAP)
@@ -19,18 +29,58 @@ import (
 
 // JMAPServer implements a JMAP server
 type JMAPServer struct {
-	logger     *zap.Logger
-	config     *config.Config
-	validator  *auth.Validator
-	httpServer *http.Server
+	logger       *zap.Logger
+	config       *config.Config
+	validator    *auth.Validator
+	store        *storage.IMAPAdapter
+	jwtPublicKey crypto.PublicKey
+	httpServer   *http.Server
 }
 
-// NewJMAPServer creates a new JMAP server
-func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Validator) *JMAPServer {
-	return &JMAPServer{
+// NewJMAPServer creates a new JMAP server.
+// store may be nil if JMAP Email/get is not required.
+func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Validator, store *storage.IMAPAdapter) *JMAPServer {
+	s := &JMAPServer{
 		logger:    logger,
 		config:    cfg,
 		validator: validator,
+		store:     store,
+	}
+
+	if cfg.JMAP.JWTPublicKeyPath != "" {
+		key, err := loadPublicKey(cfg.JMAP.JWTPublicKeyPath)
+		if err != nil {
+			logger.Warn("JMAP JWT public key load failed — Bearer auth disabled",
+				zap.String("path", cfg.JMAP.JWTPublicKeyPath),
+				zap.Error(err))
+		} else {
+			s.jwtPublicKey = key
+			logger.Info("JMAP JWT public key loaded", zap.String("path", cfg.JMAP.JWTPublicKeyPath))
+		}
+	}
+
+	return s
+}
+
+// loadPublicKey reads a PEM-encoded RSA or ECDSA public key from disk.
+func loadPublicKey(path string) (crypto.PublicKey, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found in %s", path)
+	}
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+	switch key.(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey:
+		return key, nil
+	default:
+		return nil, fmt.Errorf("unsupported public key type: %T", key)
 	}
 }
 
@@ -287,16 +337,95 @@ func (j *JMAPServer) handleMailboxSet(args map[string]interface{}, callID string
 }
 
 func (j *JMAPServer) handleEmailGet(args map[string]interface{}, callID string) MethodResponse {
+	accountID, _ := args["accountId"].(string)
+	if accountID == "" {
+		accountID = "primary"
+	}
+
+	notFound := []string{}
+	list := []map[string]interface{}{}
+
+	if j.store == nil {
+		return MethodResponse{
+			Name:      "Email/get",
+			Arguments: map[string]interface{}{"accountId": accountID, "state": "0", "list": list, "notFound": notFound},
+			CallID:    callID,
+		}
+	}
+
+	ctx := context.Background()
+
+	// If specific IDs were requested, fetch each one individually.
+	if rawIDs, ok := args["ids"]; ok && rawIDs != nil {
+		ids := toStringSlice(rawIDs)
+		for _, id := range ids {
+			data, err := j.store.FetchMessage(ctx, id)
+			if err != nil {
+				notFound = append(notFound, id)
+				continue
+			}
+			list = append(list, emailObjectFromRaw(id, data))
+		}
+	} else {
+		// No IDs specified — return all messages for the account.
+		summaries, err := j.store.GetMessages(ctx, accountID, "INBOX")
+		if err != nil {
+			j.logger.Warn("Email/get store error", zap.Error(err))
+		} else {
+			for _, s := range summaries {
+				list = append(list, map[string]interface{}{
+					"id":    s.ID,
+					"size":  s.Size,
+					"flags": s.Flags,
+				})
+			}
+		}
+	}
+
 	return MethodResponse{
 		Name: "Email/get",
 		Arguments: map[string]interface{}{
-			"accountId": "primary",
+			"accountId": accountID,
 			"state":     "0",
-			"list":      []map[string]interface{}{},
-			"notFound":  []string{},
+			"list":      list,
+			"notFound":  notFound,
 		},
 		CallID: callID,
 	}
+}
+
+// emailObjectFromRaw parses raw RFC 5322 bytes into a minimal JMAP Email object.
+func emailObjectFromRaw(id string, data []byte) map[string]interface{} {
+	obj := map[string]interface{}{
+		"id":   id,
+		"size": len(data),
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(string(data)))
+	if err != nil {
+		return obj
+	}
+	h := msg.Header
+	obj["subject"] = h.Get("Subject")
+	obj["from"] = h.Get("From")
+	obj["to"] = h.Get("To")
+	obj["date"] = h.Get("Date")
+	obj["messageId"] = h.Get("Message-ID")
+	return obj
+}
+
+// toStringSlice converts an interface{} that is []interface{} of strings to []string.
+func toStringSlice(v interface{}) []string {
+	raw, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (j *JMAPServer) handleEmailSet(args map[string]interface{}, callID string) MethodResponse {
@@ -355,10 +484,43 @@ func (j *JMAPServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Not implemented", http.StatusNotImplemented)
 }
 
+// validateBearerToken validates a JWT Bearer token from an Authorization header.
+// Returns true if the token is valid and (when configured) issued by the expected issuer.
 func (j *JMAPServer) validateBearerToken(authHeader string) bool {
-	// Simplified token validation
-	// In production, validate JWT or OAuth tokens
-	return false
+	if j.jwtPublicKey == nil {
+		return false
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenStr == authHeader {
+		return false // prefix not present
+	}
+
+	keyFunc := func(t *jwt.Token) (interface{}, error) {
+		switch j.jwtPublicKey.(type) {
+		case *rsa.PublicKey:
+			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
+		case *ecdsa.PublicKey:
+			if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
+		}
+		return j.jwtPublicKey, nil
+	}
+
+	opts := []jwt.ParserOption{jwt.WithExpirationRequired()}
+	if j.config.JMAP.JWTIssuer != "" {
+		opts = append(opts, jwt.WithIssuer(j.config.JMAP.JWTIssuer))
+	}
+
+	token, err := jwt.Parse(tokenStr, keyFunc, opts...)
+	if err != nil || !token.Valid {
+		j.logger.Debug("JMAP Bearer token invalid", zap.Error(err))
+		return false
+	}
+	return true
 }
 
 // JMAP data structures per RFC 8620

@@ -4,13 +4,27 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"time"
 
+	imap "github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/server"
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 )
+
+// MessageSummary represents the metadata for a single email in the store.
+type MessageSummary struct {
+	ID      string
+	UID     uint32
+	Flags   []string
+	Size    int64
+	Date    time.Time
+	From    string
+	Subject string
+	Deleted bool
+}
 
 // Store defines the interface for backend mailbox operations.
 // This is designed to be pluggable to support traditional Maildir,
@@ -19,13 +33,22 @@ type Store interface {
 	GetMessages(ctx context.Context, username, folder string) ([]MessageSummary, error)
 	FetchMessage(ctx context.Context, msgID string) ([]byte, error)
 	StoreMessage(ctx context.Context, username, folder string, data []byte) (string, error)
+
+	// UID tracking — RFC 3501 §2.3.1.1
+	GetUIDValidity(ctx context.Context, username, mailbox string) (uint32, error)
+	AllocateUID(ctx context.Context, username, mailbox string) (uint32, error)
+
+	// Flag management — RFC 3501 §2.3.2
+	UpdateMessageFlags(ctx context.Context, msgID, username, mailbox string, op imap.FlagsOp, flags []string) error
+
+	// ExpungeDeleted permanently removes \Deleted messages and returns their message IDs.
+	ExpungeDeleted(ctx context.Context, username, mailbox string) ([]string, error)
 }
 
-// MessageSummary represents the metadata for a single email in the store
-type MessageSummary struct {
-	ID    string
-	Flags []string
-	Size  int64
+// Updater is an optional Store extension for IMAP IDLE push notifications.
+// Stores that support delivery notifications implement this interface.
+type Updater interface {
+	DeliveryUpdates() <-chan [2]string
 }
 
 // Server implements secure IMAP4rev1 server with TLS and authentication
