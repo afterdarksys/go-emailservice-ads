@@ -128,28 +128,52 @@ func (j *JMAPServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// authUserKey is the context key under which the authenticated account name is
+// stored after authMiddleware succeeds. Handlers MUST use this value — never a
+// client-supplied accountId — when accessing mailbox data.
+type authUserKeyType struct{}
+
+var authUserKey = authUserKeyType{}
+
+// authUserFromContext returns the authenticated account name bound by
+// authMiddleware, or "" if the request was somehow not authenticated.
+func authUserFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(authUserKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // authMiddleware provides authentication for JMAP requests
 func (j *JMAPServer) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// RFC 8620 Section 3.1 - Authentication
 		// Support both Basic Auth and Bearer tokens
 
+		var authUser string
 		username, password, ok := r.BasicAuth()
 		if ok {
 			if _, err := j.validator.Authenticate(username, password); err != nil {
 				http.Error(w, "Authentication failed", http.StatusUnauthorized)
 				return
 			}
+			authUser = username
 		} else {
 			// Check for Bearer token
 			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" || !j.validateBearerToken(authHeader) {
+			subject, valid := j.bearerSubject(authHeader)
+			if !valid {
 				http.Error(w, "Authentication required", http.StatusUnauthorized)
 				return
 			}
+			authUser = subject
 		}
 
-		next.ServeHTTP(w, r)
+		// Bind the authenticated identity to the request so downstream handlers
+		// scope every mailbox access to this account and cannot be tricked by a
+		// client-supplied accountId (broken object-level authorization / IDOR).
+		ctx := context.WithValue(r.Context(), authUserKey, authUser)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -195,7 +219,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		PrimaryAccounts: map[string]string{
 			"urn:ietf:params:jmap:mail": "primary",
 		},
-		Username: "user@example.com", // Would come from auth
+		Username: authUserFromContext(r.Context()),
 		APIUrl:   fmt.Sprintf("https://%s/jmap/api/", r.Host),
 		DownloadUrl: fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?accept={type}", r.Host),
 		UploadUrl:   fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
@@ -221,23 +245,25 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Process request
-	resp := j.processRequest(&req)
+	// Process request scoped to the authenticated account.
+	resp := j.processRequest(r.Context(), &req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
 // processRequest processes a JMAP request and returns a response
-func (j *JMAPServer) processRequest(req *Request) *Response {
+func (j *JMAPServer) processRequest(ctx context.Context, req *Request) *Response {
 	resp := &Response{
 		MethodResponses: make([]MethodResponse, 0),
 		SessionState:    req.Using,
 	}
 
+	authUser := authUserFromContext(ctx)
+
 	// Process each method call
 	for _, call := range req.MethodCalls {
-		methodResp := j.processMethodCall(call)
+		methodResp := j.processMethodCall(ctx, authUser, call)
 		resp.MethodResponses = append(resp.MethodResponses, methodResp)
 	}
 
@@ -245,7 +271,7 @@ func (j *JMAPServer) processRequest(req *Request) *Response {
 }
 
 // processMethodCall processes a single method call
-func (j *JMAPServer) processMethodCall(call MethodCall) MethodResponse {
+func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, call MethodCall) MethodResponse {
 	methodName := call.Name
 	args := call.Arguments
 	callID := call.ID
@@ -260,7 +286,7 @@ func (j *JMAPServer) processMethodCall(call MethodCall) MethodResponse {
 	case "Mailbox/set":
 		return j.handleMailboxSet(args, callID)
 	case "Email/get":
-		return j.handleEmailGet(args, callID)
+		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/set":
 		return j.handleEmailSet(args, callID)
 	case "Email/query":
@@ -336,16 +362,29 @@ func (j *JMAPServer) handleMailboxSet(args map[string]interface{}, callID string
 	}
 }
 
-func (j *JMAPServer) handleEmailGet(args map[string]interface{}, callID string) MethodResponse {
-	accountID, _ := args["accountId"].(string)
-	if accountID == "" {
-		accountID = "primary"
-	}
-
+func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args map[string]interface{}, callID string) MethodResponse {
 	notFound := []string{}
 	list := []map[string]interface{}{}
 
-	if j.store == nil {
+	// The account a JMAP client addresses is identified by accountId, but the
+	// data it may reach is determined solely by the authenticated identity. We
+	// echo back the client's accountId only after confirming it maps to the
+	// authenticated user; any other value is rejected so one user cannot read
+	// another user's mailbox by spoofing accountId.
+	reqAccountID, _ := args["accountId"].(string)
+	if reqAccountID != "" && reqAccountID != "primary" && reqAccountID != authUser {
+		return MethodResponse{
+			Name: "error",
+			Arguments: map[string]interface{}{
+				"type":        "accountNotFound",
+				"description": "requested account is not accessible to the authenticated user",
+			},
+			CallID: callID,
+		}
+	}
+	accountID := "primary"
+
+	if j.store == nil || authUser == "" {
 		return MethodResponse{
 			Name:      "Email/get",
 			Arguments: map[string]interface{}{"accountId": accountID, "state": "0", "list": list, "notFound": notFound},
@@ -353,12 +392,26 @@ func (j *JMAPServer) handleEmailGet(args map[string]interface{}, callID string) 
 		}
 	}
 
-	ctx := context.Background()
+	// Build the set of message IDs the authenticated user actually owns. Every
+	// read — whether by explicit id or "return all" — is filtered through this
+	// set so a guessed/enumerated message id from another mailbox cannot be
+	// fetched (object-level authorization).
+	owned := map[string]MessageOwnedSummary{}
+	if summaries, err := j.store.GetMessages(ctx, authUser, "INBOX"); err != nil {
+		j.logger.Warn("Email/get store error", zap.String("user", authUser), zap.Error(err))
+	} else {
+		for _, s := range summaries {
+			owned[s.ID] = MessageOwnedSummary{Size: s.Size, Flags: s.Flags}
+		}
+	}
 
-	// If specific IDs were requested, fetch each one individually.
 	if rawIDs, ok := args["ids"]; ok && rawIDs != nil {
-		ids := toStringSlice(rawIDs)
-		for _, id := range ids {
+		// Specific IDs requested: only return those the user owns.
+		for _, id := range toStringSlice(rawIDs) {
+			if _, ok := owned[id]; !ok {
+				notFound = append(notFound, id)
+				continue
+			}
 			data, err := j.store.FetchMessage(ctx, id)
 			if err != nil {
 				notFound = append(notFound, id)
@@ -367,18 +420,13 @@ func (j *JMAPServer) handleEmailGet(args map[string]interface{}, callID string) 
 			list = append(list, emailObjectFromRaw(id, data))
 		}
 	} else {
-		// No IDs specified — return all messages for the account.
-		summaries, err := j.store.GetMessages(ctx, accountID, "INBOX")
-		if err != nil {
-			j.logger.Warn("Email/get store error", zap.Error(err))
-		} else {
-			for _, s := range summaries {
-				list = append(list, map[string]interface{}{
-					"id":    s.ID,
-					"size":  s.Size,
-					"flags": s.Flags,
-				})
-			}
+		// No IDs specified — return all messages the user owns.
+		for id, meta := range owned {
+			list = append(list, map[string]interface{}{
+				"id":    id,
+				"size":  meta.Size,
+				"flags": meta.Flags,
+			})
 		}
 	}
 
@@ -392,6 +440,13 @@ func (j *JMAPServer) handleEmailGet(args map[string]interface{}, callID string) 
 		},
 		CallID: callID,
 	}
+}
+
+// MessageOwnedSummary captures the minimal metadata needed to answer Email/get
+// for a message confirmed to belong to the authenticated user.
+type MessageOwnedSummary struct {
+	Size  int64
+	Flags []string
 }
 
 // emailObjectFromRaw parses raw RFC 5322 bytes into a minimal JMAP Email object.
@@ -484,16 +539,17 @@ func (j *JMAPServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Not implemented", http.StatusNotImplemented)
 }
 
-// validateBearerToken validates a JWT Bearer token from an Authorization header.
-// Returns true if the token is valid and (when configured) issued by the expected issuer.
-func (j *JMAPServer) validateBearerToken(authHeader string) bool {
+// bearerSubject validates a JWT Bearer token from an Authorization header and,
+// on success, returns the token subject (sub claim) as the authenticated account
+// name. The boolean is false if the token is missing, malformed, or invalid.
+func (j *JMAPServer) bearerSubject(authHeader string) (string, bool) {
 	if j.jwtPublicKey == nil {
-		return false
+		return "", false
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 	if tokenStr == authHeader {
-		return false // prefix not present
+		return "", false // prefix not present
 	}
 
 	keyFunc := func(t *jwt.Token) (interface{}, error) {
@@ -518,9 +574,15 @@ func (j *JMAPServer) validateBearerToken(authHeader string) bool {
 	token, err := jwt.Parse(tokenStr, keyFunc, opts...)
 	if err != nil || !token.Valid {
 		j.logger.Debug("JMAP Bearer token invalid", zap.Error(err))
-		return false
+		return "", false
 	}
-	return true
+
+	subject, err := token.Claims.GetSubject()
+	if err != nil || subject == "" {
+		j.logger.Debug("JMAP Bearer token missing subject claim")
+		return "", false
+	}
+	return subject, true
 }
 
 // JMAP data structures per RFC 8620

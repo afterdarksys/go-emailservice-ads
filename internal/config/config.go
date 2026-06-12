@@ -55,6 +55,12 @@ type Config struct {
 		// DANE Configuration (RFC 6698, RFC 7672)
 		DANE              DANEConfig `yaml:"dane"`
 
+		// SPF Configuration (RFC 7208)
+		SPF               SPFPolicyConfig `yaml:"spf"`
+
+		// DMARC Configuration (RFC 7489)
+		DMARC             DMARCPolicyConfig `yaml:"dmarc"`
+
 		// Restrictions and Policies
 		DelayReject       bool `yaml:"delay_reject"`          // Delay rejection until RCPT TO (default: true)
 		DelayOpenUntilValidRcpt bool `yaml:"delay_open_until_valid_rcpt"` // Don't open queue file until valid RCPT (default: true)
@@ -206,6 +212,36 @@ type APIKeyConfig struct {
 	Description string   `yaml:"description"` // Optional description
 }
 
+// SPFPolicyConfig configures inbound SPF handling (RFC 7208).
+//
+// SPF is best consumed as an input to DMARC alignment rather than as a standalone
+// reject gate: forwarding breaks envelope SPF, and operators frequently publish
+// broken records (>10 DNS lookups, multiple records, stray `+all`). Standalone
+// rejection is therefore opt-in.
+//   - "monitor" (default): evaluate, log, and stamp the result; feed it to DMARC,
+//     but never reject on SPF alone.
+//   - "enforce": reject at MAIL FROM on SPF hardfail (-all), and on softfail too
+//     if RejectOnSoftfail is set.
+type SPFPolicyConfig struct {
+	Enabled          bool   `yaml:"enabled"`            // Evaluate SPF for inbound mail
+	Mode             string `yaml:"mode"`               // "monitor" (default) or "enforce"
+	RejectOnSoftfail bool   `yaml:"reject_on_softfail"` // When enforcing, also reject on ~all softfail
+}
+
+// DMARCPolicyConfig configures inbound DMARC handling (RFC 7489).
+//
+// Two modes are supported so a deployment can observe before it enforces — the
+// standard enterprise rollout path:
+//   - "monitor": always evaluate, log, and stamp Authentication-Results, but
+//     never reject or quarantine regardless of the sender's published p=.
+//   - "enforce": honor the sender's published policy (p=reject → reject,
+//     p=quarantine → route to QuarantineFolder).
+type DMARCPolicyConfig struct {
+	Enabled          bool   `yaml:"enabled"`           // Evaluate DMARC for inbound mail
+	Mode             string `yaml:"mode"`              // "monitor" (default) or "enforce"
+	QuarantineFolder string `yaml:"quarantine_folder"` // Folder for quarantined local mail (default "Junk")
+}
+
 // DANEConfig configures DANE (DNS-Based Authentication of Named Entities)
 // RFC 6698, RFC 7672 - SMTP Security via DANE
 type DANEConfig struct {
@@ -283,6 +319,19 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DANE.DNSServers = []string{} // Use system defaults
 	cfg.Server.DANE.CacheTTL = 3600      // 1 hour cache
 	cfg.Server.DANE.Timeout = 10         // 10 second timeout
+
+	// SPF: evaluate by default, but in monitor mode — SPF feeds DMARC and is
+	// stamped/logged, never a standalone reject. Forwarding and misconfigured
+	// records make hard SPF rejection a deliverability hazard; it is opt-in.
+	cfg.Server.SPF.Enabled = true
+	cfg.Server.SPF.Mode = "monitor"
+	cfg.Server.SPF.RejectOnSoftfail = false
+
+	// DMARC: evaluate by default, but in monitor mode — observe and report before
+	// enforcing. Operators opt into rejection/quarantine by setting mode: enforce.
+	cfg.Server.DMARC.Enabled = true
+	cfg.Server.DMARC.Mode = "monitor"
+	cfg.Server.DMARC.QuarantineFolder = "Junk"
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS for IMAP
 	

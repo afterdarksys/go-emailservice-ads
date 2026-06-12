@@ -268,6 +268,10 @@ func (v *DANEValidator) VerifyHostname(ctx context.Context, hostname string, por
 		return result, nil
 	}
 
+	// TLSA records are present: DANE applies and is enforced. A certificate that
+	// does not match MUST cause the connection to fail (RFC 7672 §2.2).
+	result.Enforced = true
+
 	// Verify certificate
 	match, err := VerifyCertificate(cert, chain, tlsaResult.Records, v.logger)
 	if err != nil {
@@ -287,8 +291,14 @@ func (v *DANEValidator) VerifyHostname(ctx context.Context, hostname string, por
 // This integrates DANE into the TLS handshake
 func (v *DANEValidator) GetTLSConfig(hostname string, port int) *tls.Config {
 	return &tls.Config{
-		ServerName:         hostname,
-		InsecureSkipVerify: false, // Still verify with standard PKI
+		ServerName: hostname,
+		// RFC 7672 §3.1: for SMTP, only DANE-TA(2) and DANE-EE(3) usages apply,
+		// and DANE-EE certificates are typically self-signed with no PKIX trust
+		// path or matching name. We therefore disable Go's built-in PKIX
+		// verification and authenticate the peer solely via the TLSA records in
+		// VerifyPeerCertificate below. Setting this false would make the handshake
+		// fail on valid DANE-EE certs before DANE is ever consulted.
+		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			// Parse certificates
@@ -322,8 +332,16 @@ func (v *DANEValidator) GetTLSConfig(hostname string, port int) *tls.Config {
 				return fmt.Errorf("DANE validation failed: %w", err)
 			}
 
+			// When DANE is in force (TLSA records present, i.e. Enforced) or strict
+			// mode is enabled, any non-match is a hard failure. A passing match sets
+			// result.Valid; anything else aborts the handshake so we never accept a
+			// certificate that the TLSA records do not authenticate.
 			if !result.Valid && (v.strictMode || result.Enforced) {
-				return fmt.Errorf("DANE validation failed: %s", result.ErrorReason)
+				reason := result.ErrorReason
+				if reason == "" {
+					reason = "no TLSA record matched the presented certificate"
+				}
+				return fmt.Errorf("DANE validation failed: %s", reason)
 			}
 
 			return nil

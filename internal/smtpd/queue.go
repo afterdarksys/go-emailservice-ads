@@ -52,8 +52,11 @@ type Message struct {
 	HeloHostname  string    // HELO/EHLO hostname
 	DKIMResult    string            // Result of DKIM verification ("pass", "fail", "none")
 	SPFResult     string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
+	DMARCResult   string            // Result of DMARC evaluation ("pass", "fail", "none")
 	ExtraHeaders  map[string]string // Additional headers to prepend to message
 	IsBounce      bool              // True if this message is a bounce/DSN
+	Quarantine      bool            // True if DMARC enforce mode quarantined this message
+	QuarantineFolder string         // Target folder for quarantined local delivery (e.g. "Junk")
 }
 
 // QueueManager handles the multi-tier queuing system
@@ -288,6 +291,19 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
 					}
 				}
 			}
+		}
+
+		// DMARC quarantine (enforce mode): keep a failing message out of the inbox,
+		// unless the user's Sieve script already routed it somewhere specific.
+		if msg.Quarantine && folder == "INBOX" {
+			folder = msg.QuarantineFolder
+			if folder == "" {
+				folder = "Junk"
+			}
+			qm.logger.Info("Delivering DMARC-quarantined message to quarantine folder",
+				zap.String("msg_id", msg.ID),
+				zap.String("recipient", rcpt),
+				zap.String("folder", folder))
 		}
 
 		msgID, err := qm.imapStore.StoreMessage(qm.ctx, username, folder, msg.Data)

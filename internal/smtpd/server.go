@@ -1,11 +1,13 @@
 package smtpd
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
 	"strings"
 	"sync"
 	"time"
@@ -322,9 +324,14 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		}
 	}
 
-	// Perform SPF verification for unauthenticated connections
+	// Perform SPF verification for unauthenticated connections.
+	// The result is always recorded — it is stamped into Authentication-Results
+	// and feeds DMARC alignment. Whether an SPF non-pass *rejects* depends on the
+	// configured mode: "monitor" (default) treats SPF purely as a DMARC input,
+	// while "enforce" reluctantly hard-rejects. Standalone SPF rejection is opt-in
+	// because forwarding and misconfigured records make it a deliverability hazard.
 	spfResultStr := "none"
-	if !s.authenticated && s.policyEngine != nil {
+	if !s.authenticated && s.policyEngine != nil && s.config.Server.SPF.Enabled {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -339,20 +346,32 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 			spfResult, err := s.policyEngine.VerifySPF(ctx, ipAddr, fromDomain, from)
 			if err == nil {
 				spfResultStr = string(spfResult)
+				enforce := strings.EqualFold(s.config.Server.SPF.Mode, "enforce")
 				switch spfResult {
 				case security.SPFFail:
-					s.logger.Warn("SPF hard fail — rejecting",
-						zap.String("from", from),
-						zap.String("ip", s.ip))
-					return &smtp.SMTPError{
-						Code:         550,
-						EnhancedCode: smtp.EnhancedCode{5, 7, 1},
-						Message:      "SPF validation failed",
+					if enforce {
+						s.logger.Warn("SPF hard fail — rejecting (enforce mode)",
+							zap.String("from", from), zap.String("ip", s.ip))
+						return &smtp.SMTPError{
+							Code:         550,
+							EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+							Message:      "SPF validation failed",
+						}
 					}
+					s.logger.Info("SPF hard fail — monitor mode, deferring to DMARC",
+						zap.String("from", from), zap.String("ip", s.ip))
 				case security.SPFSoftFail:
+					if enforce && s.config.Server.SPF.RejectOnSoftfail {
+						s.logger.Warn("SPF softfail — rejecting (enforce mode, reject_on_softfail)",
+							zap.String("from", from), zap.String("ip", s.ip))
+						return &smtp.SMTPError{
+							Code:         550,
+							EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+							Message:      "SPF validation failed (softfail)",
+						}
+					}
 					s.logger.Info("SPF softfail — message tagged",
-						zap.String("from", from),
-						zap.String("ip", s.ip))
+						zap.String("from", from), zap.String("ip", s.ip))
 				}
 			}
 		}
@@ -422,21 +441,106 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	// Perform DKIM verification synchronously so the result feeds into policy evaluation
+	// Perform DKIM verification synchronously so the result feeds into policy and
+	// DMARC evaluation. We capture each signature's signing domain (d=) so DMARC
+	// can check identifier alignment (RFC 7489 §3.1).
+	var dkimResults []security.DKIMVerification
 	if !s.authenticated && s.dkimVerifier != nil {
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-		result, err := s.dkimVerifier.VerifyDKIM(ctx2, b)
-		cancel2()
-		if err != nil {
-			s.logger.Debug("DKIM verification failed",
-				zap.String("from", s.msg.From),
-				zap.Error(err))
-		} else {
-			s.logger.Info("DKIM verification result",
-				zap.String("from", s.msg.From),
-				zap.String("result", result))
+		verifications, err := s.dkimVerifier.VerifyWithDetails(b)
+		switch {
+		case err != nil:
+			s.logger.Debug("DKIM verification error", zap.String("from", s.msg.From), zap.Error(err))
+			s.msg.DKIMResult = "fail"
+		case len(verifications) == 0:
+			s.msg.DKIMResult = "none" // unsigned message
+		default:
+			anyPass := false
+			for _, v := range verifications {
+				pass := v.Err == nil
+				dkimResults = append(dkimResults, security.DKIMVerification{Domain: v.Domain, Pass: pass})
+				if pass {
+					anyPass = true
+				}
+			}
+			if anyPass {
+				s.msg.DKIMResult = "pass"
+			} else {
+				s.msg.DKIMResult = "fail"
+			}
 		}
-		s.msg.DKIMResult = result
+		s.logger.Info("DKIM verification result",
+			zap.String("from", s.msg.From),
+			zap.String("result", s.msg.DKIMResult))
+	}
+
+	// === DMARC EVALUATION (RFC 7489) ===
+	// Inbound (unauthenticated) mail only. Evaluation always runs (so the verdict
+	// is logged and stamped into Authentication-Results); whether we *act* on a
+	// failure depends on the configured mode:
+	//   - monitor: observe only — never reject or quarantine, whatever p= says.
+	//   - enforce: honor the sender's published policy (p=reject/p=quarantine).
+	// This lets a deployment observe before enforcing — the standard rollout path.
+	if !s.authenticated && s.policyEngine != nil && s.config.Server.DMARC.Enabled {
+		if fromHeaderDomain := headerFromDomain(b); fromHeaderDomain != "" {
+			spfDomain := addressDomain(s.msg.From)
+			if spfDomain == "" {
+				spfDomain = s.ehlo // null reverse-path: SPF authenticates the HELO identity
+			}
+
+			dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
+			dmarcResult, dmarcPolicy, derr := s.policyEngine.VerifyDMARC(
+				dctx, fromHeaderDomain, spfDomain, security.SPFResult(s.msg.SPFResult), dkimResults)
+			dcancel()
+			if derr != nil {
+				s.logger.Debug("DMARC evaluation error",
+					zap.String("from_header_domain", fromHeaderDomain), zap.Error(derr))
+			}
+			s.msg.DMARCResult = string(dmarcResult)
+
+			enforce := strings.EqualFold(s.config.Server.DMARC.Mode, "enforce")
+			s.logger.Info("DMARC evaluation",
+				zap.String("from_header_domain", fromHeaderDomain),
+				zap.String("result", string(dmarcResult)),
+				zap.String("policy", string(dmarcPolicy)),
+				zap.Bool("enforce", enforce),
+				zap.String("ip", s.ip))
+
+			if dmarcResult == security.DMARCFail {
+				switch dmarcPolicy {
+				case security.DMARCPolicyReject:
+					if enforce {
+						s.logger.Warn("DMARC fail with p=reject — rejecting message",
+							zap.String("from_header_domain", fromHeaderDomain),
+							zap.String("ip", s.ip))
+						return &smtp.SMTPError{
+							Code:         550,
+							EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+							Message:      "DMARC policy evaluation failed",
+						}
+					}
+					s.logger.Info("DMARC fail with p=reject — monitor mode, message allowed",
+						zap.String("from_header_domain", fromHeaderDomain),
+						zap.String("ip", s.ip))
+				case security.DMARCPolicyQuarantine:
+					if enforce {
+						folder := s.config.Server.DMARC.QuarantineFolder
+						if folder == "" {
+							folder = "Junk"
+						}
+						s.msg.Quarantine = true
+						s.msg.QuarantineFolder = folder
+						s.logger.Info("DMARC fail with p=quarantine — routing to quarantine folder",
+							zap.String("from_header_domain", fromHeaderDomain),
+							zap.String("folder", folder),
+							zap.String("ip", s.ip))
+					} else {
+						s.logger.Info("DMARC fail with p=quarantine — monitor mode, message allowed",
+							zap.String("from_header_domain", fromHeaderDomain),
+							zap.String("ip", s.ip))
+					}
+				}
+			}
+		}
 	}
 
 	// === POLICY ENGINE EVALUATION ===
@@ -459,7 +563,7 @@ func (s *Session) Data(r io.Reader) error {
 			// Populate security results from earlier checks
 			emailCtx.SPFResult = policy.SPFResult(s.msg.SPFResult)
 			emailCtx.DKIMResult = policy.DKIMResult(s.msg.DKIMResult)
-			emailCtx.DMARCResult = policy.DMARCNone
+			emailCtx.DMARCResult = policy.DMARCResult(s.msg.DMARCResult)
 
 			// TODO: Populate IP reputation
 			emailCtx.IPReputation = policy.ReputationScore{Score: 50, Source: "internal"}
@@ -533,6 +637,14 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	// Stamp an RFC 7601 Authentication-Results header for inbound mail so
+	// downstream filters (Sieve, clients) can see the SPF/DKIM/DMARC verdicts.
+	// Added for unauthenticated mail only; submission from our own users is trusted.
+	if !s.authenticated {
+		s.msg.Data = prependAuthResults(s.msg.Data, s.config.Server.Domain,
+			s.msg.SPFResult, s.msg.DKIMResult, s.msg.DMARCResult, s.msg.From)
+	}
+
 	// Fast dispatch to queue manager
 	if err := s.qManager.Enqueue(s.msg); err != nil {
 		s.logger.Error("Failed to enqueue message", zap.Error(err))
@@ -555,4 +667,73 @@ func (s *Session) Reset() {
 func (s *Session) Logout() error {
 	s.logger.Debug("Session logout")
 	return nil
+}
+
+// addressDomain returns the lowercased domain of an envelope address, tolerating
+// optional angle brackets (e.g. "<user@example.com>"). Returns "" if there is no
+// domain (e.g. the null reverse-path "<>").
+func addressDomain(addr string) string {
+	addr = strings.TrimSpace(addr)
+	addr = strings.Trim(addr, "<>")
+	at := strings.LastIndex(addr, "@")
+	if at < 0 || at == len(addr)-1 {
+		return ""
+	}
+	return strings.ToLower(addr[at+1:])
+}
+
+// headerFromDomain extracts the domain of the RFC 5322 From header — the
+// identity DMARC authenticates against. Returns "" if the header is absent or
+// unparseable, or if it lists multiple From addresses (RFC 7489 only defines
+// alignment for a single From domain).
+func headerFromDomain(raw []byte) string {
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return ""
+	}
+	fromHeader := msg.Header.Get("From")
+	if fromHeader == "" {
+		return ""
+	}
+	addrs, err := mail.ParseAddressList(fromHeader)
+	if err != nil || len(addrs) != 1 {
+		return ""
+	}
+	return addressDomain(addrs[0].Address)
+}
+
+// prependAuthResults inserts an RFC 7601 Authentication-Results header at the top
+// of a message's header block, recording the SPF, DKIM and DMARC verdicts.
+func prependAuthResults(raw []byte, authservID, spf, dkim, dmarc, mailFrom string) []byte {
+	if authservID == "" {
+		authservID = "localhost"
+	}
+	if spf == "" {
+		spf = "none"
+	}
+	if dkim == "" {
+		dkim = "none"
+	}
+	if dmarc == "" {
+		dmarc = "none"
+	}
+
+	header := fmt.Sprintf("Authentication-Results: %s; spf=%s smtp.mailfrom=%s; dkim=%s; dmarc=%s\r\n",
+		sanitizeHeaderValue(authservID), spf, sanitizeHeaderValue(mailFrom), dkim, dmarc)
+
+	out := make([]byte, 0, len(header)+len(raw))
+	out = append(out, header...)
+	out = append(out, raw...)
+	return out
+}
+
+// sanitizeHeaderValue strips CR/LF (and other control characters) from a value
+// that is interpolated into a header line, preventing header injection.
+func sanitizeHeaderValue(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, v)
 }

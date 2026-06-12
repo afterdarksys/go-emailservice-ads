@@ -564,12 +564,18 @@ func (v *Validator) AuthorizedToSendAs(username, fromAddress string) bool {
 		return true
 	}
 
-	// Allow if FROM uses the same username (e.g., user@domain matches user)
+	// Allow if FROM uses the same local-part as the username AND stays within the
+	// user's own registered domain. Without the domain check a user could spoof
+	// <username>@any-domain (e.g. user "bob" sending as bob@google.com); the
+	// domain must match the user's registered email domain. Cross-domain sending
+	// is only possible via an explicit domain entitlement (checked above).
 	if strings.EqualFold(fromUser, username) {
-		v.logger.Debug("User authorized - username matches",
-			zap.String("username", username),
-			zap.String("from", fromAddress))
-		return true
+		if userDomain := emailDomain(user.Email); userDomain != "" && strings.EqualFold(userDomain, fromDomain) {
+			v.logger.Debug("User authorized - username and domain match",
+				zap.String("username", username),
+				zap.String("from", fromAddress))
+			return true
+		}
 	}
 
 	v.logger.Warn("User not authorized to send as FROM address",
@@ -578,6 +584,16 @@ func (v *Validator) AuthorizedToSendAs(username, fromAddress string) bool {
 		zap.String("registered_email", user.Email))
 
 	return false
+}
+
+// emailDomain returns the lowercased domain part of an email address, or "" if
+// the address is not in local-part@domain form.
+func emailDomain(email string) string {
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 || parts[1] == "" {
+		return ""
+	}
+	return strings.ToLower(parts[1])
 }
 
 // GrantDomainAccess allows a user to send from any address in the specified domain

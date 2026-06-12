@@ -39,9 +39,6 @@ type MailDelivery struct {
 	pools       map[string]*connectionPool
 	poolsMu     sync.RWMutex
 
-	// TLS configuration for outbound STARTTLS (RFC 3207)
-	tlsConfig   *tls.Config
-
 	// DANE validator for DNS-Based Authentication (RFC 7672)
 	daneValidator *dane.DANEValidator
 	daneEnabled   bool
@@ -76,11 +73,8 @@ func NewMailDelivery(logger *zap.Logger, resolver *dns.Resolver, hostname string
 		resolver:       resolver,
 		hostname:       hostname,
 		pools:          make(map[string]*connectionPool),
-		tlsConfig: &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: false, // SECURITY: Always verify certificates
-			ServerName:         "", // Will be set per connection
-		},
+		// Per-connection TLS configs are built in dialSMTP: DANE-authenticated
+		// when TLSA records exist, otherwise encrypt-only opportunistic TLS.
 		daneEnabled:    false, // Will be enabled via SetDANEValidator
 		connectTimeout: 30 * time.Second,
 		dataTimeout:    5 * time.Minute,
@@ -370,45 +364,60 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 		return nil, fmt.Errorf("EHLO failed: %w", err)
 	}
 
-	// Attempt opportunistic STARTTLS (RFC 3207)
-	// We don't fail if STARTTLS is not supported, but we try if available
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		tlsConfig := d.tlsConfig.Clone()
-		tlsConfig.ServerName = mxHost
-
-		// RFC 7672: Check for DANE TLSA records before STARTTLS
-		if d.daneEnabled && d.daneValidator != nil {
-			d.logger.Debug("Checking DANE availability",
-				zap.String("mx_host", mxHost))
-
-			// Pre-flight DANE check (opportunistic)
-			tlsaResult, err := d.daneValidator.CheckDANEAvailability(ctx, mxHost, 25)
-			if err == nil && len(tlsaResult.Records) > 0 {
-				// DANE available - configure TLS with DANE verification
-				d.logger.Info("DANE records found, enabling DANE validation",
-					zap.String("mx_host", mxHost),
-					zap.Int("tlsa_records", len(tlsaResult.Records)),
-					zap.Bool("dnssec_valid", tlsaResult.DNSSECValid))
-
-				// Use DANE-enabled TLS config
-				tlsConfig = d.daneValidator.GetTLSConfig(mxHost, 25)
-			} else if err != nil {
-				d.logger.Debug("DANE lookup failed, using standard TLS",
-					zap.String("mx_host", mxHost),
-					zap.Error(err))
-			} else {
-				d.logger.Debug("No DANE records found, using standard TLS",
-					zap.String("mx_host", mxHost))
-			}
+	// RFC 7672: determine whether DANE TLSA records exist for this MX before
+	// deciding the TLS security level. If TLSA records are published, TLS is
+	// MANDATORY and authenticated — we must never fall back to cleartext, since
+	// doing so would let an active attacker strip TLS (a DANE downgrade attack).
+	daneMandatory := false
+	if d.daneEnabled && d.daneValidator != nil {
+		d.logger.Debug("Checking DANE availability", zap.String("mx_host", mxHost))
+		if tlsaResult, derr := d.daneValidator.CheckDANEAvailability(ctx, mxHost, 25); derr == nil && len(tlsaResult.Records) > 0 {
+			daneMandatory = true
+			d.logger.Info("DANE records found, TLS is mandatory for this MX",
+				zap.String("mx_host", mxHost),
+				zap.Int("tlsa_records", len(tlsaResult.Records)),
+				zap.Bool("dnssec_valid", tlsaResult.DNSSECValid))
+		} else if derr != nil {
+			d.logger.Debug("DANE lookup failed, treating as opportunistic",
+				zap.String("mx_host", mxHost), zap.Error(derr))
 		}
+	}
 
+	starttlsOffered, _ := client.Extension("STARTTLS")
+
+	if daneMandatory {
+		// DANE TLSA records require authenticated TLS. A server that does not
+		// offer STARTTLS, or a handshake that fails DANE verification, MUST cause
+		// the delivery attempt to fail rather than continue in the clear.
+		if !starttlsOffered {
+			client.Close()
+			return nil, fmt.Errorf("DANE required for %s but server does not offer STARTTLS", mxHost)
+		}
+		tlsConfig := d.daneValidator.GetTLSConfig(mxHost, 25)
 		if err := client.StartTLS(tlsConfig); err != nil {
-			d.logger.Warn("STARTTLS failed, continuing without TLS",
+			client.Close()
+			return nil, fmt.Errorf("DANE-authenticated STARTTLS to %s failed: %w", mxHost, err)
+		}
+		d.logger.Debug("DANE-authenticated STARTTLS successful", zap.String("mx_host", mxHost))
+	} else if starttlsOffered {
+		// Opportunistic TLS (RFC 7672 §1.3): the goal is encryption against a
+		// passive attacker. MX hostnames rarely carry a PKIX-valid certificate,
+		// so we must NOT verify the certificate — verifying would cause most
+		// handshakes to fail and silently downgrade to cleartext, which is
+		// strictly worse than unauthenticated encryption. Authentication is only
+		// provided by DANE (above) or MTA-STS.
+		tlsConfig := &tls.Config{
+			ServerName:         mxHost,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true, // opportunistic: encrypt-don't-authenticate (RFC 7672)
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			// Opportunistic only: a failed handshake may fall back to cleartext.
+			d.logger.Warn("Opportunistic STARTTLS failed, continuing without TLS",
 				zap.String("mx_host", mxHost),
 				zap.Error(err))
 		} else {
-			d.logger.Debug("STARTTLS successful",
-				zap.String("mx_host", mxHost))
+			d.logger.Debug("Opportunistic STARTTLS successful", zap.String("mx_host", mxHost))
 		}
 	}
 
