@@ -55,9 +55,9 @@
   - Track bounce rates
 
 - [ ] Add content filtering
-  - Attachment scanning
-  - Virus detection
-  - Size limits per domain
+  - Integrate MailScript as the SMTP content-filter proxy
+  - Follow `docs/MAILSCRIPT_EMAILSERVICE_INTEGRATION.md` for upstream relay, quarantine, and rejection action mapping
+  - Keep EmailService responsible for queueing, mailbox storage, and delivery
 
 ## LOW Priority 📝
 
@@ -195,11 +195,6 @@
   - Privacy controls
 
 ## Future Enhancements
-
-- [ ] Add web UI for management
-  - Queue visualization
-  - Message search
-  - Admin controls
 
 - [ ] Implement gRPC API properly
   - Service definitions
