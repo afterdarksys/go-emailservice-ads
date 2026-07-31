@@ -16,6 +16,22 @@ proxy command on the same `gomeow-mailnet` network with:
 mailscript proxy --script=/etc/mailscript/perimeter.star --upstream=emailservice:2525
 ```
 
+For gomeow.media, use the production gateway policy and enable trusted
+quarantine forwarding:
+
+```sh
+mailscript proxy \
+  --script=/etc/mailscript/gomeow-media-gateway.star \
+  --upstream=emailservice:2525 \
+  --forward-quarantine \
+  --enable-tls --cert=/etc/mailscript/tls/fullchain.pem --key=/etc/mailscript/tls/privkey.pem \
+  --port=25,587
+```
+
+`--forward-quarantine` requires the matching EmailService `content_filter`
+configuration. MailScript removes any client-supplied quarantine marker and
+adds it only after a policy action, so public senders cannot forge the route.
+
 Publish MailScript's TLS-enabled ports 25 and 587, never EmailService's 2525.
 Replace the example `172.30.0.0/24` CIDR if the deployment network changes.
 

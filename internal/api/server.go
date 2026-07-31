@@ -67,6 +67,10 @@ func (s *Server) startREST() {
 	// Health and readiness endpoints (public)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReadiness)
+	// Versioned public discovery endpoints are part of the msgs.global control
+	// plane contract. Keep the legacy paths above for existing probes.
+	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	mux.HandleFunc("/api/v1/version", s.handleVersion)
 
 	// Metrics endpoint (public - for Prometheus)
 	if s.metrics != nil {
@@ -104,6 +108,14 @@ func (s *Server) startREST() {
 	if err != nil && err != http.ErrServerClosed {
 		s.logger.Fatal("REST API server crashed", zap.Error(err))
 	}
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"service": "go-emailservice-ads",
+		"version": "2.3.0",
+	})
 }
 
 // authMiddleware provides authentication via API key (Bearer token) or Basic Auth
@@ -280,10 +292,10 @@ func (s *Server) handleQueueStats(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"metrics": map[string]interface{}{
-			"enqueued":   metrics.Enqueued,
-			"processed":  metrics.Processed,
-			"failed":     metrics.Failed,
-			"duplicates": metrics.Duplicates,
+			"enqueued":    metrics.Enqueued,
+			"processed":   metrics.Processed,
+			"failed":      metrics.Failed,
+			"duplicates":  metrics.Duplicates,
 			"last_update": metrics.LastUpdate,
 		},
 		"storage": storageStats,
