@@ -54,19 +54,32 @@ with `server.dkim.enabled: false` — turn it on only once the key and DNS recor
 below are both in place, otherwise outbound mail is unauthenticated and major
 receivers (Gmail, Yahoo, Outlook) are likely to spam-folder or reject it.
 
-1. Generate an Ed25519 key (smaller DNS TXT record than RSA; both are supported):
+**Status: key generated, DNS not yet published.** A key already exists at
+`secrets/mail.private.pem` (gitignored — never commit it) and `setup-gomeow-media.sh`
+mounts it into the container automatically. What's left is entirely operational:
+publish the DNS record below, then flip `server.dkim.enabled: true`.
+
+1. (Already done for this key. To regenerate — e.g. on a different host, or to
+   rotate — Ed25519 gives a smaller DNS TXT record than RSA and both are
+   supported; macOS's default `/usr/bin/openssl` is LibreSSL and doesn't
+   support `-algorithm ed25519`, use a real OpenSSL build, e.g. Homebrew's
+   `/usr/local/opt/openssl/bin/openssl`):
    ```sh
    openssl genpkey -algorithm ed25519 -out mail.private.pem
    openssl pkey -in mail.private.pem -pubout -outform DER | tail -c 32 | base64
    ```
-   Place `mail.private.pem` at the path `server.dkim.private_key_path` points to
-   (default `/etc/goemailservices/dkim/mail.private.pem`), mode `0600`, owned by
-   the service account only — it is as sensitive as a TLS private key.
+   `mail.private.pem` must end up at the path `server.dkim.private_key_path`
+   points to (default `/etc/goemailservices/dkim/mail.private.pem` — mounted
+   there by `setup-gomeow-media.sh` from `secrets/`), mode `0600`, owned by the
+   service account only — it is as sensitive as a TLS private key.
 
-2. Publish the public key as a TXT record at
-   `mail._domainkey.gomeow.media`:
+2. Publish this TXT record at `mail._domainkey.gomeow.media` (this is the
+   real public key for the key already generated — I don't have onedns.io
+   credentials configured in this environment, so this step needs to be done
+   by whoever has `onedns login` set up, either via `onedns records create`
+   or the onedns.io dashboard for the gomeow.media zone):
    ```
-   v=DKIM1; k=ed25519; p=<base64 output from step 1>
+   v=DKIM1; k=ed25519; p=s7kTjXy8LNDyGLIG0tyaGGDBHZKF/GXYptptvUDU1gI=
    ```
 
 3. Wait for DNS propagation, then set `server.dkim.enabled: true` and restart.

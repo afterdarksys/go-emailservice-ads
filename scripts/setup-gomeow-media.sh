@@ -11,6 +11,7 @@ docker build -t goemailservice-gomeow:local "$root_dir"
 docker rm -f gomeow-emailservice >/dev/null 2>&1 || true
 docker run -d --name gomeow-emailservice --network "$network_name" --ip 172.30.0.10 \
   -v "$root_dir/deploy/mailscript/gomeow.media/emailservice.yaml:/opt/goemailservices/config.yaml:ro" \
+  -v "$root_dir/deploy/mailscript/gomeow.media/secrets/mail.private.pem:/etc/goemailservices/dkim/mail.private.pem:ro" \
   goemailservice-gomeow:local >/dev/null
 
 echo "EmailService backend is running as gomeow-emailservice on $network_name."
