@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,12 @@ type Config struct {
 		// Relay controls which non-local recipients this server will accept
 		// and hand off to internal/delivery. See RelayConfig doc comment.
 		Relay RelayConfig `yaml:"relay"`
+
+		// AuthMechanisms lists the SASL mechanisms advertised for SMTP AUTH.
+		// Every entry must match one Session.Auth implements (currently just
+		// "PLAIN") — LoadConfig rejects anything else at startup rather than
+		// silently advertising a mechanism nothing can service.
+		AuthMechanisms []string `yaml:"auth_mechanisms"`
 
 		// Proxy Protocol Support
 		ProxyProtocol ProxyProtocolConfig `yaml:"proxy_protocol"`
@@ -307,6 +314,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DisableVRFY = true        // SECURITY: Disable user enumeration
 	cfg.Server.DisableEXPN = true        // SECURITY: Disable mailing list expansion
 	cfg.Server.LocalDomains = []string{"localhost", "localhost.local"}
+	cfg.Server.AuthMechanisms = []string{"PLAIN"}
 
 	cfg.Server.Timeouts.Command = "300s"
 
@@ -394,6 +402,14 @@ func LoadConfig(path string) (*Config, error) {
 	for i := range cfg.Server.DKIM {
 		if cfg.Server.DKIM[i].Selector == "" {
 			cfg.Server.DKIM[i].Selector = "mail"
+		}
+	}
+
+	// Fail fast on a mechanism nothing implements, rather than advertising it
+	// in EHLO and only discovering the gap when a client tries to use it.
+	for _, mech := range cfg.Server.AuthMechanisms {
+		if mech != "PLAIN" {
+			return nil, fmt.Errorf("server.auth_mechanisms: unimplemented mechanism %q (supported: PLAIN)", mech)
 		}
 	}
 

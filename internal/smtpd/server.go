@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -372,10 +373,34 @@ type Session struct {
 	relayAuthIP   bool
 }
 
-func (s *Session) AuthPlain(username, password string) error {
-	s.logger.Debug("AuthPlain attempted", zap.String("username", username))
+// AuthMechanisms advertises which SASL mechanisms this server accepts.
+// Configured via server.auth_mechanisms rather than hardcoded, so an
+// operator can add/remove mechanisms without a code change. Unimplemented
+// entries are rejected at config load (see LoadConfig), not silently
+// ignored here.
+func (s *Session) AuthMechanisms() []string {
+	return s.config.Server.AuthMechanisms
+}
 
-	// Use IP-aware authentication with account lockout protection
+// Auth implements smtp.AuthSession, dispatching to the SASL mechanism the
+// client requested. Only mechanisms actually implemented below may be
+// listed in server.auth_mechanisms — see LoadConfig's validation.
+func (s *Session) Auth(mech string) (sasl.Server, error) {
+	switch mech {
+	case sasl.Plain:
+		return sasl.NewPlainServer(func(_, username, password string) error {
+			return s.authenticateUser(username, password)
+		}), nil
+	default:
+		return nil, smtp.ErrAuthUnknownMechanism
+	}
+}
+
+// authenticateUser is the shared credential check behind every SASL
+// mechanism in Auth: IP-aware authentication with account lockout
+// protection, on success marking the session authenticated for the
+// duration of the connection (checked by Mail/Rcpt's relay authorization).
+func (s *Session) authenticateUser(username, password string) error {
 	user, err := s.validator.GetUserStore().AuthenticateWithIP(username, password, s.ip)
 	if err != nil {
 		s.logger.Warn("Authentication failed",
