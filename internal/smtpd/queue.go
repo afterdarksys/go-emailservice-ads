@@ -286,7 +286,15 @@ func (qm *QueueManager) finalizeDelivery(msg *Message, deliveryErr error) {
 func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 	var deliveryErr error
 	for _, rcpt := range recipients {
-		username := strings.Split(rcpt, "@")[0]
+		// The full address, not just the local part, is the mailbox key —
+		// it must match what IMAP Login uses (internal/imap/backend.go
+		// passes the client's username straight through, and every
+		// server.local_domains account here is provisioned as a full
+		// address). Stripping to local-part would collide same-named
+		// mailboxes across domains on a shared mailhub (help@a.com and
+		// help@b.com both landing in "help") and never match how the
+		// owner actually logs in to read it.
+		username := rcpt
 		folder := "INBOX"
 
 		// Run per-user Sieve script if policy manager is configured.
