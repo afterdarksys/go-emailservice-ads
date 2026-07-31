@@ -49,15 +49,15 @@ the `gomeow.media` local mailbox. It never sends external mail or changes DNS.
 ## DKIM signing
 
 EmailService signs outbound mail itself (`internal/delivery` + `internal/security`);
-this is separate from MailScript's inbound filtering. `emailservice.yaml` ships
-with `server.dkim.enabled: false` — turn it on only once the key and DNS record
-below are both in place, otherwise outbound mail is unauthenticated and major
-receivers (Gmail, Yahoo, Outlook) are likely to spam-folder or reject it.
+this is separate from MailScript's inbound filtering.
 
-**Status: key generated, DNS not yet published.** A key already exists at
-`secrets/mail.private.pem` (gitignored — never commit it) and `setup-gomeow-media.sh`
-mounts it into the container automatically. What's left is entirely operational:
-publish the DNS record below, then flip `server.dkim.enabled: true`.
+**Status: done and live.** Key generated at `secrets/mail.private.pem`
+(gitignored — never commit it; `setup-gomeow-media.sh` mounts it into the
+container automatically), `mail._domainkey.gomeow.media` published to
+ns1/ns2 via `dnsscienced/deploy-zones.sh gomeow.media` and verified
+resolving on both authoritative servers and a public resolver, and
+`server.dkim.enabled: true` in `emailservice.yaml` — all done 2026-07-31.
+Remaining steps below are for rotation or standing this up on a new host.
 
 1. (Already done for this key. To regenerate — e.g. on a different host, or to
    rotate — Ed25519 gives a smaller DNS TXT record than RSA and both are
@@ -73,11 +73,10 @@ publish the DNS record below, then flip `server.dkim.enabled: true`.
    there by `setup-gomeow-media.sh` from `secrets/`), mode `0600`, owned by the
    service account only — it is as sensitive as a TLS private key.
 
-2. Publish this TXT record at `mail._domainkey.gomeow.media` (this is the
-   real public key for the key already generated — I don't have onedns.io
-   credentials configured in this environment, so this step needs to be done
-   by whoever has `onedns login` set up, either via `onedns records create`
-   or the onedns.io dashboard for the gomeow.media zone):
+2. Publish this TXT record at `mail._domainkey.gomeow.media` (already done —
+   published via `~/development/dnsscienced/deploy-zones.sh gomeow.media`,
+   source of truth is `gomeow.media.dnszone` in the `dnsscienced-zones` repo;
+   for a future rotation, edit that file and rerun the same deploy script):
    ```
    v=DKIM1; k=ed25519; p=s7kTjXy8LNDyGLIG0tyaGGDBHZKF/GXYptptvUDU1gI=
    ```
