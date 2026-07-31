@@ -23,6 +23,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/netutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/replication"
+	"github.com/afterdarksys/go-emailservice-ads/internal/security"
 	"github.com/afterdarksys/go-emailservice-ads/internal/smtpd"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
@@ -101,8 +102,25 @@ func main() {
 	}
 	defer imapStore.Close()
 
+	// Initialize outbound DKIM signing (optional; nil disables signing)
+	var dkimSigner *security.Signer
+	if cfg.Server.DKIM.Enabled {
+		dkimDomain := cfg.Server.DKIM.Domain
+		if dkimDomain == "" {
+			dkimDomain = cfg.Server.Domain
+		}
+		dkimSigner, err = security.NewSigner(logger, dkimDomain, cfg.Server.DKIM.Selector, cfg.Server.DKIM.PrivateKeyPath)
+		if err != nil {
+			logger.Fatal("Failed to initialize DKIM signer", zap.Error(err))
+		}
+		if dkimSigner.GetOptions() == nil {
+			logger.Fatal("DKIM signing is enabled but no private key was loaded",
+				zap.String("private_key_path", cfg.Server.DKIM.PrivateKeyPath))
+		}
+	}
+
 	// Initialize queue manager with persistence
-	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains)
+	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains, dkimSigner)
 	defer queueManager.Shutdown()
 
 	// Initialize Elasticsearch integration (optional)

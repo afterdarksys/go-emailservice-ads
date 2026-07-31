@@ -25,6 +25,14 @@ server:
     enabled: true
     mode: "monitor"
     quarantine_folder: "Junk"
+  dkim:
+    # Signs outbound mail claiming From: *@gomeow.media. See README.md "DKIM
+    # signing" for key generation and the DNS record to publish. Leave
+    # disabled until the key exists and the DNS record has propagated.
+    enabled: false
+    domain: "gomeow.media"
+    selector: "mail"
+    private_key_path: "/etc/goemailservices/dkim/mail.private.pem"
 
 content_filter:
   enabled: true

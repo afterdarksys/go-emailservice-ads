@@ -825,12 +825,12 @@ export MAILCTL_PASSWORD=changeme
 
 ### Active but Not Enforced ✅
 1. **DKIM Verification** - Verifies signatures, logs results (RFC 6376)
-2. **Greylisting** - Available, disabled by default (enable in config)
+2. **DMARC Verification** - Reject/quarantine enforcement wired in; monitor mode by default (RFC 7489)
+3. **DKIM Signing** - Signs outbound mail when a key is configured; disabled by default until one is provisioned (RFC 6376)
+4. **Greylisting** - Available, disabled by default (enable in config)
 
 ### Deployed but Not Integrated ⏸️
-1. **DMARC Verification** - Code exists (RFC 7489)
-2. **DKIM Signing** - Code exists (needs key configuration)
-3. **Directory Service** - Client exists (needs endpoint config)
+1. **Directory Service** - Client exists (needs endpoint config)
 
 **See:** `SECURITY_FEATURES.md` for detailed documentation
 **NEW:** `docs/DANE_IMPLEMENTATION.md` for complete DANE guide

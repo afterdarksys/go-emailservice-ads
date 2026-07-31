@@ -45,6 +45,9 @@ type Config struct {
 		// DMARC Configuration (RFC 7489)
 		DMARC DMARCPolicyConfig `yaml:"dmarc"`
 
+		// DKIM Configuration for signing outbound mail (RFC 6376)
+		DKIM DKIMSignConfig `yaml:"dkim"`
+
 		// Restrictions and Policies
 		DelayReject             bool `yaml:"delay_reject"`                // Delay rejection until RCPT TO (default: true)
 		DelayOpenUntilValidRcpt bool `yaml:"delay_open_until_valid_rcpt"` // Don't open queue file until valid RCPT (default: true)
@@ -227,6 +230,19 @@ type DMARCPolicyConfig struct {
 	QuarantineFolder string `yaml:"quarantine_folder"` // Folder for quarantined local mail (default "Junk")
 }
 
+// DKIMSignConfig configures DKIM signing of outbound mail (RFC 6376).
+//
+// Signing is opt-in: it requires a private key to exist on disk, and it only
+// ever signs messages whose envelope MAIL FROM domain matches Domain (falls
+// back to Server.Domain when empty) — this server never signs mail on behalf
+// of a domain it doesn't control, e.g. relayed or forwarded mail.
+type DKIMSignConfig struct {
+	Enabled        bool   `yaml:"enabled"`          // Sign outbound mail
+	Domain         string `yaml:"domain"`           // SDID to sign as (default: Server.Domain)
+	Selector       string `yaml:"selector"`         // DNS selector (default: "mail")
+	PrivateKeyPath string `yaml:"private_key_path"` // PEM-encoded RSA or Ed25519 private key
+}
+
 // DANEConfig configures DANE (DNS-Based Authentication of Named Entities)
 // RFC 6698, RFC 7672 - SMTP Security via DANE
 type DANEConfig struct {
@@ -290,6 +306,12 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DMARC.Enabled = true
 	cfg.Server.DMARC.Mode = "monitor"
 	cfg.Server.DMARC.QuarantineFolder = "Junk"
+
+	// DKIM signing: off by default (requires an operator-provisioned private
+	// key); "mail" is the conventional selector when one isn't specified.
+	cfg.Server.DKIM.Enabled = false
+	cfg.Server.DKIM.Selector = "mail"
+
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS before authentication
 	cfg.IMAP.TLSMode = "starttls"

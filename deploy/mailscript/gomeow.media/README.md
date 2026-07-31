@@ -46,6 +46,37 @@ After MailScript is running, execute:
 The test confirms MailScript accepts a message and the backend stores it in
 the `gomeow.media` local mailbox. It never sends external mail or changes DNS.
 
+## DKIM signing
+
+EmailService signs outbound mail itself (`internal/delivery` + `internal/security`);
+this is separate from MailScript's inbound filtering. `emailservice.yaml` ships
+with `server.dkim.enabled: false` — turn it on only once the key and DNS record
+below are both in place, otherwise outbound mail is unauthenticated and major
+receivers (Gmail, Yahoo, Outlook) are likely to spam-folder or reject it.
+
+1. Generate an Ed25519 key (smaller DNS TXT record than RSA; both are supported):
+   ```sh
+   openssl genpkey -algorithm ed25519 -out mail.private.pem
+   openssl pkey -in mail.private.pem -pubout -outform DER | tail -c 32 | base64
+   ```
+   Place `mail.private.pem` at the path `server.dkim.private_key_path` points to
+   (default `/etc/goemailservices/dkim/mail.private.pem`), mode `0600`, owned by
+   the service account only — it is as sensitive as a TLS private key.
+
+2. Publish the public key as a TXT record at
+   `mail._domainkey.gomeow.media`:
+   ```
+   v=DKIM1; k=ed25519; p=<base64 output from step 1>
+   ```
+
+3. Wait for DNS propagation, then set `server.dkim.enabled: true` and restart.
+   Verify with `dig TXT mail._domainkey.gomeow.media` and by sending a test
+   message to a mailbox that shows Authentication-Results (e.g. Gmail).
+
+Signing only ever applies to mail whose envelope `MAIL FROM` domain matches
+`server.dkim.domain` — it will never sign mail on behalf of a domain this
+server doesn't own.
+
 ## Continuous mail-flow monitoring
 
 `mailflow-probe` is a separate daemon, so it also detects a hung EmailService

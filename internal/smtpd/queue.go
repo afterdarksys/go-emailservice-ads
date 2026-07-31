@@ -1,6 +1,7 @@
 package smtpd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 
 	"path/filepath"
 
+	"github.com/emersion/go-msgauth/dkim"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
+	"github.com/afterdarksys/go-emailservice-ads/internal/security"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -86,6 +89,9 @@ type QueueManager struct {
 	hostname        string
 	localDomains    map[string]bool
 
+	// dkimSigner signs outbound mail when configured. Nil disables signing.
+	dkimSigner *security.Signer
+
 	// Elasticsearch integration (optional)
 	esIndexer  *elasticsearch.Indexer
 	instanceID string // Instance/pod identifier
@@ -112,8 +118,9 @@ type QueueMetrics struct {
 	LastUpdate   time.Time
 }
 
-// NewQueueManager initializes queue channels and starts workers
-func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.MailboxStore, hostname string, localDomains []string) *QueueManager {
+// NewQueueManager initializes queue channels and starts workers. dkimSigner
+// may be nil, which disables outbound DKIM signing.
+func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.MailboxStore, hostname string, localDomains []string, dkimSigner *security.Signer) *QueueManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create DNS resolver
@@ -152,6 +159,7 @@ func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore 
 		bounceGenerator: bounceGen,
 		hostname:        hostname,
 		localDomains:    localDomainsMap,
+		dkimSigner:      dkimSigner,
 		instanceID:      getInstanceID(),
 
 		metrics: &QueueMetrics{
@@ -346,13 +354,50 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 	return deliveryErr
 }
 
+// signOutbound returns a DKIM-signed copy of msg.Data when a signing key is
+// configured for the message's envelope-from domain. It returns (nil, nil)
+// when signing does not apply here (no signer configured, or the From domain
+// doesn't match the signer's SDID — this server must never sign mail on
+// behalf of a domain it doesn't control, e.g. relayed/forwarded mail), and
+// (nil, err) when signing was expected to happen but failed. Callers must
+// treat a non-nil error as a delivery failure rather than falling back to
+// sending unsigned: shipping "From: user@gomeow.media" unsigned would
+// misrepresent the domain's authentication to the recipient.
+func (qm *QueueManager) signOutbound(msg *Message) ([]byte, error) {
+	if qm.dkimSigner == nil {
+		return nil, nil
+	}
+	opts := qm.dkimSigner.GetOptions()
+	if opts == nil {
+		return nil, nil
+	}
+	if !strings.EqualFold(qm.extractDomain(msg.From), opts.Domain) {
+		return nil, nil
+	}
+	var buf bytes.Buffer
+	if err := dkim.Sign(&buf, bytes.NewReader(msg.Data), opts); err != nil {
+		return nil, fmt.Errorf("dkim sign: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 // deliverRemote handles remote SMTP delivery
 func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 	ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
 	defer cancel()
 
+	data, err := qm.signOutbound(msg)
+	if err != nil {
+		qm.logger.Error("DKIM signing failed; withholding unsigned mail for retry",
+			zap.String("msg_id", msg.ID), zap.Error(err))
+		return fmt.Errorf("dkim signing: %w", err)
+	}
+	if data == nil {
+		data = msg.Data
+	}
+
 	startTime := time.Now()
-	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, msg.Data)
+	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, data)
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
