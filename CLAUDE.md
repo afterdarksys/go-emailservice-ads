@@ -8,7 +8,7 @@ go-emailservice-ads is mailhub software: a Kubernetes-native enterprise email se
 
 Module: `github.com/afterdarksys/go-emailservice-ads` (Go 1.24).
 
-**Known critical gap (per README):** queue workers simulate delivery with a 10ms sleep (`internal/smtpd/queue.go` ~line 149) — messages are accepted, stored, and tracked but never actually sent to remote MTAs.
+Outbound delivery is real: `internal/smtpd/queue.go`'s `deliverRemote` calls `internal/delivery.MailDelivery.Deliver`, which does DNS/MX resolution, DANE-aware TLS negotiation, and an actual SMTP dial to the remote MTA on port 25. There is no simulated/sleep-based delivery path in this codebase.
 
 ## Commands
 
@@ -36,7 +36,7 @@ kubectl apply -f deploy/kubernetes/base/ ; kubectl apply -f deploy/kubernetes/pe
 
 ## Architecture
 
-Message flow: SMTP ingress (`internal/smtpd`) → Postfix-style access control (`internal/access`, 20+ lookup map types, stage-based restrictions) → SPF/DKIM/DANE checks (`internal/security`, cached DNS in `internal/dns`) → Starlark policy engine (`internal/policy`, scripts in `policies/*.star`) → persistent message store with WAL journal (`internal/storage`) → multi-tier priority queue (1,050 workers across emergency/msa/int/out/bulk tiers in `internal/smtpd`) → delivery (`internal/delivery` — currently simulated, see gap above).
+Message flow: SMTP ingress (`internal/smtpd`) → Postfix-style access control (`internal/access`, 20+ lookup map types, stage-based restrictions) → SPF/DKIM/DANE checks (`internal/security`, cached DNS in `internal/dns`) → Starlark policy engine (`internal/policy`, scripts in `policies/*.star`) → persistent message store with WAL journal (`internal/storage`) → multi-tier priority queue (1,050 workers across emergency/msa/int/out/bulk tiers in `internal/smtpd`) → delivery (`internal/delivery` — real SMTP delivery to remote MTAs, DANE-aware).
 
 Around that core:
 

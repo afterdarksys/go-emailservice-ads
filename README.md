@@ -197,9 +197,9 @@ Region Deployment (Kubernetes):
      ├─ Outbound   (200 workers, 500/s)
      └─ Bulk       (100 workers, 100/s)
         ↓
-     ⚠️ [CRITICAL GAP] Workers simulate delivery (10ms sleep)
+     Real SMTP delivery (MX lookup, DANE-aware TLS, RFC 5321 client)
         ↓
-     "delivered" status (not actually sent!)
+     "delivered" status (recipient outcomes tracked per domain)
 
 Parallel Services:
   ├─ :1143  IMAP Server (mail retrieval)
@@ -790,9 +790,8 @@ export MAILCTL_PASSWORD=changeme
 
 ### Queue Processing
 - **Capacity:** 1,050 workers × 100 msg/s = **8.6 million messages/day**
-- **Current:** Workers simulate delivery (10ms sleep) ⚠️
-- **Needed:** Implement real SMTP delivery (200-500ms per message)
-- **With real delivery:** ~1,000-5,000 msg/s = **86-432 million/day**
+- **Current:** Real SMTP delivery (DNS/MX lookup, DANE-aware TLS, ~200-500ms per message)
+- **Effective throughput:** ~1,000-5,000 msg/s = **86-432 million/day**
 
 ### Disaster Recovery
 - **WAL:** Write-ahead logging for crash recovery
@@ -838,24 +837,14 @@ export MAILCTL_PASSWORD=changeme
 
 ---
 
-## Critical Gap: No Real SMTP Delivery
+## Outbound SMTP Delivery
 
-**Current implementation:** `internal/smtpd/queue.go:149-153`
-```go
-// TODO: Integrate actual delivery/routing logic here
-time.Sleep(10 * time.Millisecond)  // ⚠️ SIMULATION ONLY!
-```
-
-**What's needed:**
-1. MX record lookup for recipient domain
-2. SMTP connection to recipient mail server
-3. SMTP handshake (EHLO, MAIL FROM, RCPT TO, DATA)
+**Implementation:** `internal/smtpd/queue.go`'s `deliverRemote` calls `internal/delivery.MailDelivery.Deliver`, which performs:
+1. MX record lookup for the recipient domain (`internal/dns`)
+2. DANE/TLSA-aware TLS negotiation, failing closed on bogus DNSSEC (RFC 7672)
+3. SMTP handshake (EHLO, MAIL FROM, RCPT TO, DATA) with connection pooling
 4. Message transmission
-5. Response code handling (2xx success, 4xx retry, 5xx fail)
-
-**Impact:** Messages are accepted, stored, tracked - but never actually delivered!
-
-**See:** `POSTFIX_FEATURES.md` for implementation roadmap
+5. Per-recipient response code handling (2xx success, 4xx retry, 5xx permanent failure), tracked individually so one failed domain can't mask a successful one
 
 ---
 
@@ -1285,11 +1274,6 @@ Before deploying to production:
 ---
 
 ## Known Issues
-
-### Critical 🚨
-1. **No real SMTP delivery** - Workers simulate with 10ms sleep
-   - Impact: Messages accepted but not delivered
-   - Fix: Implement MX lookup + SMTP client in `queue.go:149-153`
 
 ### High ⚠️
 1. **DMARC not enforced** - Code exists but not integrated
