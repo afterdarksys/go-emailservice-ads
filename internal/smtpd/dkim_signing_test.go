@@ -70,9 +70,9 @@ func TestSignOutboundSkipsWhenNoSignerConfigured(t *testing.T) {
 	}
 }
 
-func TestSignOutboundSkipsOnDomainMismatch(t *testing.T) {
+func TestSignOutboundSkipsOnDomainWithNoConfiguredSigner(t *testing.T) {
 	signer, _ := newTestDKIMSigner(t, "gomeow.media")
-	qm := &QueueManager{logger: zap.NewNop(), dkimSigner: signer}
+	qm := &QueueManager{logger: zap.NewNop(), dkimSigners: map[string]*security.Signer{"gomeow.media": signer}}
 	msg := &Message{From: "user@some-other-domain.test", Data: []byte("From: user@some-other-domain.test\r\nTo: a@b.test\r\nSubject: hi\r\nDate: Fri, 31 Jul 2026 12:00:00 +0000\r\nMessage-ID: <1@some-other-domain.test>\r\n\r\nbody\r\n")}
 
 	signed, err := qm.signOutbound(msg)
@@ -80,13 +80,13 @@ func TestSignOutboundSkipsOnDomainMismatch(t *testing.T) {
 		t.Fatalf("signOutbound() error = %v", err)
 	}
 	if signed != nil {
-		t.Fatalf("signOutbound() signed a message for a domain the signer does not own: %s", signed)
+		t.Fatalf("signOutbound() signed a message for a domain with no configured signer: %s", signed)
 	}
 }
 
 func TestSignOutboundSignsMatchingDomainCaseInsensitively(t *testing.T) {
 	signer, lookupTXT := newTestDKIMSigner(t, "gomeow.media")
-	qm := &QueueManager{logger: zap.NewNop(), dkimSigner: signer}
+	qm := &QueueManager{logger: zap.NewNop(), dkimSigners: map[string]*security.Signer{"gomeow.media": signer}}
 	msg := &Message{
 		From: "user@GoMeow.Media",
 		Data: []byte("From: user@GoMeow.Media\r\nTo: a@b.test\r\nSubject: hi\r\nDate: Fri, 31 Jul 2026 12:00:00 +0000\r\nMessage-ID: <1@gomeow.media>\r\n\r\nbody\r\n"),
@@ -115,5 +115,36 @@ func TestSignOutboundSignsMatchingDomainCaseInsensitively(t *testing.T) {
 	}
 	if verifications[0].Domain != "gomeow.media" {
 		t.Fatalf("verified domain = %q, want %q", verifications[0].Domain, "gomeow.media")
+	}
+}
+
+// Threats: on a shared mailhub, domain A's signer must never be reachable
+// for domain B's mail — that would let one tenant's key sign (and thus
+// authenticate) another tenant's outbound mail.
+func TestSignOutboundOnSharedMailhubUsesOnlyTheMatchingDomainsSigner(t *testing.T) {
+	catSigner, catLookup := newTestDKIMSigner(t, "gomeow.media")
+	dogSigner, _ := newTestDKIMSigner(t, "brooklyncats.show")
+	qm := &QueueManager{logger: zap.NewNop(), dkimSigners: map[string]*security.Signer{
+		"gomeow.media":      catSigner,
+		"brooklyncats.show": dogSigner,
+	}}
+	msg := &Message{
+		From: "meow@gomeow.media",
+		Data: []byte("From: meow@gomeow.media\r\nTo: a@b.test\r\nSubject: hi\r\nDate: Fri, 31 Jul 2026 12:00:00 +0000\r\nMessage-ID: <1@gomeow.media>\r\n\r\nbody\r\n"),
+	}
+
+	signed, err := qm.signOutbound(msg)
+	if err != nil {
+		t.Fatalf("signOutbound() error = %v", err)
+	}
+	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(signed), &dkim.VerifyOptions{LookupTXT: catLookup})
+	if err != nil {
+		t.Fatalf("dkim.VerifyWithOptions() error = %v", err)
+	}
+	if len(verifications) != 1 || verifications[0].Err != nil {
+		t.Fatalf("mail from gomeow.media did not verify against gomeow.media's own key: %+v", verifications)
+	}
+	if verifications[0].Domain != "gomeow.media" {
+		t.Fatalf("signed as domain %q, want gomeow.media — brooklyncats.show's signer must not apply", verifications[0].Domain)
 	}
 }

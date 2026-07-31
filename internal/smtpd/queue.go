@@ -89,8 +89,9 @@ type QueueManager struct {
 	hostname        string
 	localDomains    map[string]bool
 
-	// dkimSigner signs outbound mail when configured. Nil disables signing.
-	dkimSigner *security.Signer
+	// dkimSigners signs outbound mail, keyed by lowercase sending domain. A
+	// missing key means that domain isn't signed.
+	dkimSigners map[string]*security.Signer
 
 	// Elasticsearch integration (optional)
 	esIndexer  *elasticsearch.Indexer
@@ -118,9 +119,10 @@ type QueueMetrics struct {
 	LastUpdate   time.Time
 }
 
-// NewQueueManager initializes queue channels and starts workers. dkimSigner
-// may be nil, which disables outbound DKIM signing.
-func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.MailboxStore, hostname string, localDomains []string, dkimSigner *security.Signer) *QueueManager {
+// NewQueueManager initializes queue channels and starts workers. dkimSigners
+// maps lowercase sending domain to its signer; a nil/empty map disables
+// outbound DKIM signing entirely.
+func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore *storage.MailboxStore, hostname string, localDomains []string, dkimSigners map[string]*security.Signer) *QueueManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create DNS resolver
@@ -159,7 +161,7 @@ func NewQueueManager(logger *zap.Logger, store *storage.MessageStore, imapStore 
 		bounceGenerator: bounceGen,
 		hostname:        hostname,
 		localDomains:    localDomainsMap,
-		dkimSigner:      dkimSigner,
+		dkimSigners:     dkimSigners,
 		instanceID:      getInstanceID(),
 
 		metrics: &QueueMetrics{
@@ -356,22 +358,20 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 
 // signOutbound returns a DKIM-signed copy of msg.Data when a signing key is
 // configured for the message's envelope-from domain. It returns (nil, nil)
-// when signing does not apply here (no signer configured, or the From domain
-// doesn't match the signer's SDID — this server must never sign mail on
-// behalf of a domain it doesn't control, e.g. relayed/forwarded mail), and
-// (nil, err) when signing was expected to happen but failed. Callers must
-// treat a non-nil error as a delivery failure rather than falling back to
-// sending unsigned: shipping "From: user@gomeow.media" unsigned would
-// misrepresent the domain's authentication to the recipient.
+// when signing does not apply here (no signer configured for this domain —
+// this server must never sign mail on behalf of a domain it doesn't control,
+// e.g. relayed/forwarded mail, or a domain sharing this mailhub that hasn't
+// had a key provisioned), and (nil, err) when signing was expected to happen
+// but failed. Callers must treat a non-nil error as a delivery failure rather
+// than falling back to sending unsigned: shipping "From: user@gomeow.media"
+// unsigned would misrepresent the domain's authentication to the recipient.
 func (qm *QueueManager) signOutbound(msg *Message) ([]byte, error) {
-	if qm.dkimSigner == nil {
+	signer := qm.dkimSigners[strings.ToLower(qm.extractDomain(msg.From))]
+	if signer == nil {
 		return nil, nil
 	}
-	opts := qm.dkimSigner.GetOptions()
+	opts := signer.GetOptions()
 	if opts == nil {
-		return nil, nil
-	}
-	if !strings.EqualFold(qm.extractDomain(msg.From), opts.Domain) {
 		return nil, nil
 	}
 	var buf bytes.Buffer

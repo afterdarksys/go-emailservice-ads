@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -102,25 +103,29 @@ func main() {
 	}
 	defer imapStore.Close()
 
-	// Initialize outbound DKIM signing (optional; nil disables signing)
-	var dkimSigner *security.Signer
-	if cfg.Server.DKIM.Enabled {
-		dkimDomain := cfg.Server.DKIM.Domain
-		if dkimDomain == "" {
-			dkimDomain = cfg.Server.Domain
+	// Initialize outbound DKIM signing — one signer per configured sending
+	// domain (empty map disables signing entirely).
+	dkimSigners := make(map[string]*security.Signer)
+	for _, dc := range cfg.Server.DKIM {
+		if !dc.Enabled {
+			continue
 		}
-		dkimSigner, err = security.NewSigner(logger, dkimDomain, cfg.Server.DKIM.Selector, cfg.Server.DKIM.PrivateKeyPath)
+		if dc.Domain == "" {
+			logger.Fatal("DKIM signing entry is enabled but has no domain set")
+		}
+		signer, err := security.NewSigner(logger, dc.Domain, dc.Selector, dc.PrivateKeyPath)
 		if err != nil {
-			logger.Fatal("Failed to initialize DKIM signer", zap.Error(err))
+			logger.Fatal("Failed to initialize DKIM signer", zap.String("domain", dc.Domain), zap.Error(err))
 		}
-		if dkimSigner.GetOptions() == nil {
+		if signer.GetOptions() == nil {
 			logger.Fatal("DKIM signing is enabled but no private key was loaded",
-				zap.String("private_key_path", cfg.Server.DKIM.PrivateKeyPath))
+				zap.String("domain", dc.Domain), zap.String("private_key_path", dc.PrivateKeyPath))
 		}
+		dkimSigners[strings.ToLower(dc.Domain)] = signer
 	}
 
 	// Initialize queue manager with persistence
-	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains, dkimSigner)
+	queueManager := smtpd.NewQueueManager(logger, store, imapStore, cfg.Server.Domain, cfg.Server.LocalDomains, dkimSigners)
 	defer queueManager.Shutdown()
 
 	// Initialize Elasticsearch integration (optional)
