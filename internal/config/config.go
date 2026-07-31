@@ -33,6 +33,10 @@ type Config struct {
 		// Local domains for delivery
 		LocalDomains []string `yaml:"local_domains"` // Domains handled locally
 
+		// Relay controls which non-local recipients this server will accept
+		// and hand off to internal/delivery. See RelayConfig doc comment.
+		Relay RelayConfig `yaml:"relay"`
+
 		// Proxy Protocol Support
 		ProxyProtocol ProxyProtocolConfig `yaml:"proxy_protocol"`
 
@@ -243,6 +247,26 @@ type DKIMSignConfig struct {
 	PrivateKeyPath string `yaml:"private_key_path"` // PEM-encoded RSA or Ed25519 private key
 }
 
+// RelayConfig controls which RCPT TO recipients this server accepts.
+//
+// Threats: an open relay lets anyone on the internet use this server to send
+// mail to arbitrary third parties — the server's reputation (and its IPs)
+// get blacklisted within hours, and it becomes a spam cannon. Does NOT
+// protect against an authenticated user or an allowed network abusing their
+// own legitimate relay access; that's rate limiting's job.
+//
+// Local-domain recipients (server.local_domains) are always accepted — that
+// is normal inbound delivery, not relay, and unauthenticated senders must be
+// able to reach it (nobody authenticates to send you email). Every other
+// recipient is relay, and is fail-closed: denied unless the sender
+// authenticated via SMTP AUTH, or the client IP falls in AllowedNetworks
+// (e.g. trusted internal application servers submitting outbound mail
+// without per-connection SASL). AllowedNetworks is empty by default, so a
+// fresh deployment permits zero unauthenticated relay.
+type RelayConfig struct {
+	AllowedNetworks []string `yaml:"allowed_networks"` // CIDRs permitted to relay to any destination without SMTP AUTH
+}
+
 // DANEConfig configures DANE (DNS-Based Authentication of Named Entities)
 // RFC 6698, RFC 7672 - SMTP Security via DANE
 type DANEConfig struct {
@@ -311,6 +335,11 @@ func LoadConfig(path string) (*Config, error) {
 	// key); "mail" is the conventional selector when one isn't specified.
 	cfg.Server.DKIM.Enabled = false
 	cfg.Server.DKIM.Selector = "mail"
+
+	// Relay: SECURITY — fail closed. No networks are relay-authorized by
+	// default; only SMTP-authenticated senders and server.local_domains
+	// recipients are accepted until an operator opts a network in.
+	cfg.Server.Relay.AllowedNetworks = []string{}
 
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS before authentication

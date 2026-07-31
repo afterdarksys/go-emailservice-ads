@@ -226,6 +226,27 @@ func (b *Backend) isTrustedContentFilterProxy(ip string) bool {
 	return false
 }
 
+// isRelayAuthorizedNetwork reports whether ip may relay to non-local
+// recipients without SMTP authentication. CIDR-based for the same reason as
+// isTrustedContentFilterProxy: source IP can't be spoofed on a private
+// network the way headers can. Empty/unparseable config fails closed (deny).
+func (b *Backend) isRelayAuthorizedNetwork(ip string) bool {
+	if len(b.config.Server.Relay.AllowedNetworks) == 0 {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, raw := range b.config.Server.Relay.AllowedNetworks {
+		_, network, err := net.ParseCIDR(raw)
+		if err == nil && network.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
 type ipMessageLimiter struct {
 	mu      sync.Mutex
 	perHour int
@@ -324,6 +345,7 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		limiter:       bkd.limiter,
 		messageRates:  bkd.messageRates,
 		trustedFilter: bkd.isTrustedContentFilterProxy(ip),
+		relayAuthIP:   bkd.isRelayAuthorizedNetwork(ip),
 	}, nil
 }
 
@@ -347,6 +369,7 @@ type Session struct {
 	limiter       *connectionLimiter
 	messageRates  *ipMessageLimiter
 	trustedFilter bool
+	relayAuthIP   bool
 }
 
 func (s *Session) AuthPlain(username, password string) error {
@@ -505,6 +528,18 @@ func spfIdentityForMailFrom(from, ehlo string) (domain, identity string) {
 func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 	s.logger.Debug("RCPT TO", zap.String("to", to))
 
+	if !s.isRelayPermitted(to) {
+		s.logger.Warn("Relay access denied",
+			zap.String("to", to),
+			zap.String("from", s.msg.From),
+			zap.String("ip", s.ip))
+		return &smtp.SMTPError{
+			Code:         554,
+			EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message:      "Relay access denied",
+		}
+	}
+
 	// Apply greylisting if enabled (only for unauthenticated)
 	if s.greylisting != nil && !s.authenticated {
 		shouldGreylist, retryAfter, err := s.greylisting.Check(s.ip, s.msg.From, to)
@@ -529,6 +564,26 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 
 	s.msg.To = append(s.msg.To, to)
 	return nil
+}
+
+// isRelayPermitted decides whether this server will accept mail addressed to
+// to. Local-domain recipients are normal inbound delivery and are always
+// permitted — unauthenticated internet senders must be able to reach a local
+// mailbox, or the server couldn't receive mail at all. Every other recipient
+// is relay: fail-closed, permitted only for an authenticated sender or a
+// client IP in server.relay.allowed_networks. trustedFilter (the private
+// MailScript perimeter) is deliberately NOT a relay grant on its own — it
+// only establishes that inbound filtering has already happened; without this
+// check a spammer routing through the public MailScript proxy could relay to
+// arbitrary third-party domains through this backend.
+func (s *Session) isRelayPermitted(to string) bool {
+	domain := addressDomain(to)
+	for _, local := range s.config.Server.LocalDomains {
+		if strings.EqualFold(domain, local) {
+			return true
+		}
+	}
+	return s.authenticated || s.relayAuthIP
 }
 
 func (s *Session) Data(r io.Reader) error {

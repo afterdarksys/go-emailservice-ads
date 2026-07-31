@@ -386,44 +386,23 @@ global_routing:
   latency_check_interval: "5m"
   cost_optimization: true
 
-# NEW: Access Control (Postfix-style)
-access_control:
-  # My networks (trusted networks)
-  my_networks:
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-    - "192.168.0.0/16"
-    - "127.0.0.1/8"
+# Relay control (anti-open-relay). This is the ONLY access-control block the
+# server actually reads — RCPT TO for a server.local_domains recipient is
+# always accepted (normal inbound delivery); every other recipient is relay
+# and is denied unless the sender authenticated via SMTP AUTH or connects
+# from one of these networks. Fail-closed: leave empty to permit zero
+# unauthenticated relay (the default).
+server:
+  relay:
+    allowed_networks:
+      - "10.0.0.0/8"   # e.g. trusted internal app servers submitting outbound mail without SASL
 
-  # My domains (authorized domains)
-  my_domains:
-    - "msgs.global"
-    - "example.com"
-
-  # Relay domains (domains we relay for)
-  relay_domains:
-    - "partner.com"
-
-  # Client restrictions (applied on connection)
-  client_restrictions:
-    - "permit_mynetworks"
-    - "reject_rbl_client zen.spamhaus.org"
-    - "permit"
-
-  # Recipient restrictions (applied on RCPT TO)
-  recipient_restrictions:
-    - "permit_mynetworks"
-    - "permit_sasl_authenticated"
-    - "reject_unauth_destination"
-    - "reject_unknown_recipient_domain"
-    - "check_recipient_access hash:/etc/postfix/recipient_access"
-    - "permit"
-
-  # Sender restrictions (applied on MAIL FROM)
-  sender_restrictions:
-    - "permit_mynetworks"
-    - "reject_unknown_sender_domain"
-    - "check_sender_access regexp:/etc/postfix/sender_checks"
+# `internal/access` also has a full Postfix-style restriction-chain engine
+# (my_networks/my_domains/relay_domains, client/recipient/sender
+# restrictions, RBL checks, access maps — the shape this section used to
+# document) but it is NOT wired into config loading or the SMTP session yet:
+# nothing under an `access_control:` key in config.yaml has any effect. Don't
+# rely on it for open-relay protection until it's actually connected.
 
 # Policy Engine
 policy:

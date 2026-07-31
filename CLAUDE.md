@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-go-emailservice-ads is mailhub software: a Kubernetes-native enterprise email service (Go) for msgs.global internal mail infrastructure. It provides an SMTP server (port 2525), IMAP server (1143), REST API (8080), Postfix-style access control, a Starlark policy engine, multi-tier worker queues with WAL-based disaster recovery, SPF/DKIM/DMARC/DANE verification, global multi-region routing, Elasticsearch event logging, SSO (OAuth2/OIDC), and optional AfterSMTP next-gen protocol support (QUIC/gRPC/blockchain ledger).
+go-emailservice-ads is mailhub software: a Kubernetes-native enterprise email service (Go) for msgs.global internal mail infrastructure. It provides an SMTP server (port 2525), IMAP server (1143), REST API (8080), relay/open-relay protection (`Session.isRelayPermitted` in `internal/smtpd/server.go` — see below; `internal/access`'s fuller Postfix-style engine exists but is NOT wired in), a Starlark policy engine, multi-tier worker queues with WAL-based disaster recovery, SPF/DKIM/DMARC/DANE verification, global multi-region routing, Elasticsearch event logging, SSO (OAuth2/OIDC), and optional AfterSMTP next-gen protocol support (QUIC/gRPC/blockchain ledger).
 
 Module: `github.com/afterdarksys/go-emailservice-ads` (Go 1.24).
 
@@ -36,7 +36,9 @@ kubectl apply -f deploy/kubernetes/base/ ; kubectl apply -f deploy/kubernetes/pe
 
 ## Architecture
 
-Message flow: SMTP ingress (`internal/smtpd`) → Postfix-style access control (`internal/access`, 20+ lookup map types, stage-based restrictions) → SPF/DKIM/DANE checks (`internal/security`, cached DNS in `internal/dns`) → Starlark policy engine (`internal/policy`, scripts in `policies/*.star`) → persistent message store with WAL journal (`internal/storage`) → multi-tier priority queue (1,050 workers across emergency/msa/int/out/bulk tiers in `internal/smtpd`) → delivery (`internal/delivery` — real SMTP delivery to remote MTAs, DANE-aware).
+Message flow: SMTP ingress (`internal/smtpd`) → relay authorization (`Session.isRelayPermitted`: local-domain RCPT always accepted, everything else fail-closed to SMTP-authenticated senders or `server.relay.allowed_networks`) → SPF/DKIM/DANE checks (`internal/security`, cached DNS in `internal/dns`) → Starlark policy engine (`internal/policy`, scripts in `policies/*.star`) → persistent message store with WAL journal (`internal/storage`) → multi-tier priority queue (1,050 workers across emergency/msa/int/out/bulk tiers in `internal/smtpd`) → delivery (`internal/delivery` — real SMTP delivery to remote MTAs, DANE-aware).
+
+`internal/access` (20+ lookup map types, stage-based Postfix-style restriction chains — RBL, access maps, HELO/sender/client restrictions) is a fuller access-control engine that exists in the tree but has zero callers outside its own package — it is not part of the live message flow. Don't assume it's enforcing anything until it's actually wired into config loading and `internal/smtpd`.
 
 Around that core:
 
