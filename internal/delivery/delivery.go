@@ -125,6 +125,11 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 				zap.Int("recipients", len(recipients)),
 				zap.Error(err))
 			lastResult = result
+			if result != nil && len(result.Recipients) == 0 {
+				for _, recipient := range recipients {
+					result.Recipients = append(result.Recipients, RecipientResult{Recipient: recipient, SMTPCode: result.SMTPCode, IsPermanent: result.IsPermanent, Message: result.Message})
+				}
+			}
 			failures = append(failures, fmt.Sprintf("%s: %v", domain, err))
 			continue
 		}

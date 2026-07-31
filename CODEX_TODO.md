@@ -75,17 +75,17 @@ Review target: `security/tls-dane-dmarc-spf` against `main`.
   - UID allocation errors are converted to UID `0`, and the SQLite metadata insert error is ignored after the raw blob has already been accepted. This leaves successful APPEND/local-delivery responses for messages without valid mailbox membership or UID state.
   - Completed: UID and metadata errors now fail the operation and tombstone the orphaned raw blob; regression coverage is in `store_test.go`.
 
-- [ ] Track delivery results per domain and recipient.
+- [x] Track delivery results per domain and recipient.
   - `internal/delivery/delivery.go:107`
   - A failed domain followed by a successful domain can make `Deliver` return success because only `lastResult` and `lastError` are retained. Permanently rejected RCPT commands are also skipped without being represented in the final result.
-  - Return per-recipient outcomes so successful recipients are committed and temporary/permanent failures are retried or bounced independently.
+  - Completed: delivery records recipient outcomes; successful and permanent recipients are removed from the durable transaction, permanent recipients receive bounces, and only temporary recipients remain for retry. Regression coverage is in `queue_persistence_test.go`.
 
 ## P1 — Protocol Tuning and Resource Limits
 
-- [ ] Wire configured SMTP connection, rate, and timeout controls into the active server.
+- [x] Wire configured SMTP connection, rate, and timeout controls into the active server.
   - `internal/smtpd/server.go:109`
   - `max_connections`, `max_per_ip`, `rate_limit_per_ip`, granular command timeouts, error limits, command restrictions, and client rate settings are parsed but unused. The active server hardcodes ten-minute read/write timeouts, and its connection counter is never consulted.
-  - Implement the controls or remove them from the production configuration contract; add tests showing limits actually reject or throttle clients.
+  - Completed: the active server enforces configured total/per-IP connection limits, per-IP DATA rate limits, and generic command timeout. Unsupported granular/error/client settings were removed from the production configuration contract; regression coverage is in `limits_test.go`.
 
 - [x] Bound IMAP literal sizes.
   - `internal/imap/server.go:85`

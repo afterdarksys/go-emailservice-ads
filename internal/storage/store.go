@@ -194,6 +194,23 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 	return nil
 }
 
+// UpdateRecipients durably replaces the envelope recipients for a queued
+// transaction. It is used after mixed-recipient delivery so retries target only
+// the recipients that still need an attempt.
+func (s *MessageStore) UpdateRecipients(messageID string, recipients []string) error {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	entry, exists := s.index[messageID]
+	if !exists {
+		return fmt.Errorf("message not found: %s", messageID)
+	}
+	entry.To = append([]string(nil), recipients...)
+	if err := s.journal.Write(entry); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ListPending returns all pending messages for a tier
 func (s *MessageStore) ListPending(tier string) []*JournalEntry {
 	return s.ListByStatus("pending", tier)

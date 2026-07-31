@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -96,5 +97,29 @@ func TestFinalizeDeliveryKeepsFailedMessagePending(t *testing.T) {
 	}
 	if entry.Status != "pending" {
 		t.Fatalf("status after failed delivery = %q, want pending", entry.Status)
+	}
+}
+
+func TestRecipientOutcomesPersistOnlyTemporaryRecipients(t *testing.T) {
+	queue, store := newPersistenceTestQueue(t)
+	id, _, err := store.Store(&storage.JournalEntry{MessageID: "mixed", To: []string{"ok@example.test", "temp@example.test", "perm@example.test"}, Data: []byte("body"), Tier: string(TierOut)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := &Message{ID: id, To: []string{"ok@example.test", "temp@example.test", "perm@example.test"}}
+	queue.handleRecipientOutcomes(message, &delivery.DeliveryResult{Recipients: []delivery.RecipientResult{{Recipient: "ok@example.test", Success: true}, {Recipient: "temp@example.test"}, {Recipient: "perm@example.test", IsPermanent: true}}}, message.To)
+	entry, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entry.To) != 1 || entry.To[0] != "temp@example.test" {
+		t.Fatalf("persisted retry recipients = %#v", entry.To)
+	}
+}
+
+func TestPermanentRecipientOutcomesDoNotRetry(t *testing.T) {
+	result := &delivery.DeliveryResult{Recipients: []delivery.RecipientResult{{Recipient: "perm@example.test", IsPermanent: true}}}
+	if resultHasTemporaryRecipient(result) {
+		t.Fatal("permanent-only outcome must not retry")
 	}
 }

@@ -378,12 +378,17 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		}
 		qm.publishEvent(elasticsearch.EventFailed, msg, extra)
 
-		// Generate bounce message if permanent failure
-		if result != nil && result.IsPermanent {
-			qm.generateBounce(msg, result, recipients)
+		if result != nil {
+			qm.handleRecipientOutcomes(msg, result, recipients)
+			if !resultHasTemporaryRecipient(result) {
+				return nil
+			}
 		}
 
 		return fmt.Errorf("remote delivery: %w", err)
+	}
+	if result != nil {
+		qm.handleRecipientOutcomes(msg, result, recipients)
 	}
 
 	// Publish success event to Elasticsearch
@@ -404,6 +409,49 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		zap.String("remote_host", result.RemoteHost),
 		zap.Int("recipients", len(recipients)))
 	return nil
+}
+
+func resultHasTemporaryRecipient(result *delivery.DeliveryResult) bool {
+	for _, outcome := range result.Recipients {
+		if !outcome.Success && !outcome.IsPermanent {
+			return true
+		}
+	}
+	return false
+}
+
+// handleRecipientOutcomes removes successful and permanent recipients from a
+// durable retry transaction. Permanent recipients generate a DSN; only
+// temporary recipients remain in the journal for the retry scheduler.
+func (qm *QueueManager) handleRecipientOutcomes(msg *Message, result *delivery.DeliveryResult, fallback []string) {
+	if len(result.Recipients) == 0 {
+		return
+	}
+	var retry, permanent []string
+	for _, outcome := range result.Recipients {
+		if outcome.Success {
+			continue
+		}
+		if outcome.IsPermanent {
+			permanent = append(permanent, outcome.Recipient)
+		} else {
+			retry = append(retry, outcome.Recipient)
+		}
+	}
+	if len(permanent) > 0 {
+		qm.generateBounce(msg, result, permanent)
+	}
+	if len(retry) == 0 && len(permanent) > 0 {
+		retry = nil
+	}
+	if len(retry) == 0 && len(permanent) == 0 {
+		return
+	}
+	if err := qm.store.UpdateRecipients(msg.ID, retry); err != nil {
+		qm.logger.Error("Failed to persist remaining recipients", zap.String("msg_id", msg.ID), zap.Error(err))
+		return
+	}
+	msg.To = retry
 }
 
 // generateBounce creates and sends a bounce message

@@ -27,24 +27,8 @@ type Config struct {
 		DisableVRFY    bool `yaml:"disable_vrfy"`      // Disable VRFY command
 		DisableEXPN    bool `yaml:"disable_expn"`      // Disable EXPN command
 
-		// Timeout Configuration (following Postfix conventions)
+		// Command timeout applied by the active SMTP server.
 		Timeouts TimeoutConfig `yaml:"timeouts"`
-
-		// Error Handling
-		SoftErrorLimit   int    `yaml:"soft_error_limit"`   // Errors before logging warning (default: 10)
-		HardErrorLimit   int    `yaml:"hard_error_limit"`   // Errors before disconnecting (default: 20)
-		JunkCommandLimit int    `yaml:"junk_command_limit"` // Unknown commands before disconnect (default: 100)
-		ErrorSleepTime   string `yaml:"error_sleep_time"`   // Delay after error (default: 1s)
-
-		// Command Restrictions
-		ForbiddenCommands []string `yaml:"forbidden_commands"` // Commands to reject (e.g., CONNECT, GET, POST)
-		HeloRequired      bool     `yaml:"helo_required"`      // Require HELO/EHLO before other commands
-
-		// Client Behavior
-		ClientMessageRateLimit   int `yaml:"client_message_rate_limit"`   // Messages per hour per client (0 = unlimited)
-		ClientRecipientRateLimit int `yaml:"client_recipient_rate_limit"` // Recipients per hour per client (0 = unlimited)
-		ClientNewTLSSessionRate  int `yaml:"client_new_tls_session_rate"` // New TLS sessions per hour per client (0 = unlimited)
-		RecipientOvershootLimit  int `yaml:"recipient_overshoot_limit"`   // Allow RCPT commands beyond max_recipients before rejecting
 
 		// Local domains for delivery
 		LocalDomains []string `yaml:"local_domains"` // Domains handled locally
@@ -175,17 +159,7 @@ type HeaderLoggingConfig struct {
 
 // TimeoutConfig defines granular timeout settings for SMTP operations
 type TimeoutConfig struct {
-	Connect   string `yaml:"connect"`    // Connection timeout (default: 30s)
-	Helo      string `yaml:"helo"`       // HELO/EHLO timeout (default: 300s)
-	Mail      string `yaml:"mail"`       // MAIL FROM timeout (default: 300s)
-	Rcpt      string `yaml:"rcpt"`       // RCPT TO timeout (default: 300s)
-	DataInit  string `yaml:"data_init"`  // DATA command timeout (default: 120s)
-	DataBlock string `yaml:"data_block"` // Data transfer timeout per block (default: 180s)
-	DataDone  string `yaml:"data_done"`  // Final "." timeout (default: 600s)
-	Rset      string `yaml:"rset"`       // RSET command timeout (default: 20s)
-	Quit      string `yaml:"quit"`       // QUIT command timeout (default: 300s)
-	Starttls  string `yaml:"starttls"`   // STARTTLS negotiation timeout (default: 300s)
-	Command   string `yaml:"command"`    // Generic command timeout (default: 300s)
+	Command string `yaml:"command"`
 }
 
 // ProxyProtocolConfig configures PROXY protocol support (HAProxy/nginx)
@@ -277,34 +251,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DisableEXPN = true        // SECURITY: Disable mailing list expansion
 	cfg.Server.LocalDomains = []string{"localhost", "localhost.local"}
 
-	// Timeout defaults (following Postfix)
-	cfg.Server.Timeouts.Connect = "30s"
-	cfg.Server.Timeouts.Helo = "300s"
-	cfg.Server.Timeouts.Mail = "300s"
-	cfg.Server.Timeouts.Rcpt = "300s"
-	cfg.Server.Timeouts.DataInit = "120s"
-	cfg.Server.Timeouts.DataBlock = "180s"
-	cfg.Server.Timeouts.DataDone = "600s"
-	cfg.Server.Timeouts.Rset = "20s"
-	cfg.Server.Timeouts.Quit = "300s"
-	cfg.Server.Timeouts.Starttls = "300s"
 	cfg.Server.Timeouts.Command = "300s"
-
-	// Error handling defaults
-	cfg.Server.SoftErrorLimit = 10
-	cfg.Server.HardErrorLimit = 20
-	cfg.Server.JunkCommandLimit = 100
-	cfg.Server.ErrorSleepTime = "1s"
-
-	// Command restrictions
-	cfg.Server.ForbiddenCommands = []string{"CONNECT", "GET", "POST"}
-	cfg.Server.HeloRequired = false
-
-	// Client behavior limits
-	cfg.Server.ClientMessageRateLimit = 0 // 0 = unlimited
-	cfg.Server.ClientRecipientRateLimit = 0
-	cfg.Server.ClientNewTLSSessionRate = 0
-	cfg.Server.RecipientOvershootLimit = 1000
 
 	// Proxy Protocol defaults
 	cfg.Server.ProxyProtocol.Enabled = false
