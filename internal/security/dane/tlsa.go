@@ -16,23 +16,23 @@ import (
 
 // TLSA Usage Values (RFC 6698 Section 2.1.1)
 const (
-	TLSAUsagePKIXTA   = 0 // CA constraint (PKIX Trust Anchor)
-	TLSAUsagePKIXEE   = 1 // Service certificate constraint (PKIX End Entity)
-	TLSAUsageDANETA   = 2 // Trust anchor assertion (DANE-TA)
-	TLSAUsageDANEEE   = 3 // Domain-issued certificate (DANE-EE) - Most common
+	TLSAUsagePKIXTA = 0 // CA constraint (PKIX Trust Anchor)
+	TLSAUsagePKIXEE = 1 // Service certificate constraint (PKIX End Entity)
+	TLSAUsageDANETA = 2 // Trust anchor assertion (DANE-TA)
+	TLSAUsageDANEEE = 3 // Domain-issued certificate (DANE-EE) - Most common
 )
 
 // TLSA Selector Values (RFC 6698 Section 2.1.2)
 const (
-	TLSASelectorCert    = 0 // Full certificate
-	TLSASelectorSPKI    = 1 // SubjectPublicKeyInfo
+	TLSASelectorCert = 0 // Full certificate
+	TLSASelectorSPKI = 1 // SubjectPublicKeyInfo
 )
 
 // TLSA Matching Type Values (RFC 6698 Section 2.1.3)
 const (
-	TLSAMatchingFull     = 0 // Exact match
-	TLSAMatchingSHA256   = 1 // SHA-256 hash
-	TLSAMatchingSHA512   = 2 // SHA-512 hash
+	TLSAMatchingFull   = 0 // Exact match
+	TLSAMatchingSHA256 = 1 // SHA-256 hash
+	TLSAMatchingSHA512 = 2 // SHA-512 hash
 )
 
 // TLSARecord represents a parsed TLSA DNS record
@@ -49,11 +49,11 @@ type TLSARecord struct {
 
 // TLSALookupResult contains TLSA query results with DNSSEC validation
 type TLSALookupResult struct {
-	Records      []*TLSARecord
-	DNSSECValid  bool
-	DNSSECBogus  bool
+	Records        []*TLSARecord
+	DNSSECValid    bool
+	DNSSECBogus    bool
 	DNSSECInsecure bool
-	ErrorReason  string
+	ErrorReason    string
 }
 
 // String returns a human-readable description of the TLSA record
@@ -189,14 +189,12 @@ func LookupTLSA(ctx context.Context, resolver *DNSSECResolver, hostname string, 
 			continue
 		}
 
-		record := &TLSARecord{
-			Usage:        tlsa.Usage,
-			Selector:     tlsa.Selector,
-			MatchingType: tlsa.MatchingType,
-			Certificate:  []byte(tlsa.Certificate),
-			TTL:          tlsa.Hdr.Ttl,
-			Domain:       hostname,
-			Port:         port,
+		record, err := tlsaRecordFromDNS(tlsa, hostname, port)
+		if err != nil {
+			logger.Warn("Invalid TLSA record",
+				zap.String("query", tlsaName),
+				zap.Error(err))
+			continue
 		}
 
 		// Validate record
@@ -224,6 +222,24 @@ func LookupTLSA(ctx context.Context, resolver *DNSSECResolver, hostname string, 
 	}
 
 	return result, nil
+}
+
+// tlsaRecordFromDNS converts the hexadecimal association data exposed by
+// miekg/dns into the raw bytes required by RFC 6698 certificate matching.
+func tlsaRecordFromDNS(tlsa *dns.TLSA, hostname string, port int) (*TLSARecord, error) {
+	certificate, err := hex.DecodeString(tlsa.Certificate)
+	if err != nil {
+		return nil, fmt.Errorf("decode TLSA association data: %w", err)
+	}
+	return &TLSARecord{
+		Usage:        tlsa.Usage,
+		Selector:     tlsa.Selector,
+		MatchingType: tlsa.MatchingType,
+		Certificate:  certificate,
+		TTL:          tlsa.Hdr.Ttl,
+		Domain:       hostname,
+		Port:         port,
+	}, nil
 }
 
 // GetPreferredRecord selects the best TLSA record from multiple options
@@ -337,9 +353,9 @@ func ShouldEnforceDANE(result *TLSALookupResult) bool {
 type DANERequirement int
 
 const (
-	DANENone       DANERequirement = iota // No DANE available
-	DANEOpportunistic                      // DANE available, try but don't enforce
-	DANEMandatory                          // DANE with DNSSEC, must succeed
+	DANENone          DANERequirement = iota // No DANE available
+	DANEOpportunistic                        // DANE available, try but don't enforce
+	DANEMandatory                            // DANE with DNSSEC, must succeed
 )
 
 func GetDANERequirement(result *TLSALookupResult) DANERequirement {

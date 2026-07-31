@@ -7,6 +7,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var errMailboxMutationUnsupported = errors.New("mailbox mutation is not supported by this storage backend")
+
 // User implements the go-imap backend.User interface
 type User struct {
 	logger   *zap.Logger
@@ -63,11 +65,7 @@ func (u *User) GetMailbox(name string) (backend.Mailbox, error) {
 // CreateMailbox creates a new mailbox
 // RFC 3501 Section 6.3.3 - CREATE Command
 func (u *User) CreateMailbox(name string) error {
-	u.logger.Info("CREATE mailbox",
-		zap.String("user", u.username),
-		zap.String("mailbox", name))
-	// In production, persist this
-	return nil
+	return errMailboxMutationUnsupported
 }
 
 // DeleteMailbox deletes a mailbox
@@ -76,10 +74,7 @@ func (u *User) DeleteMailbox(name string) error {
 	if name == "INBOX" {
 		return errors.New("cannot delete INBOX")
 	}
-	u.logger.Info("DELETE mailbox",
-		zap.String("user", u.username),
-		zap.String("mailbox", name))
-	return nil
+	return errMailboxMutationUnsupported
 }
 
 // RenameMailbox renames a mailbox
@@ -88,11 +83,7 @@ func (u *User) RenameMailbox(existingName, newName string) error {
 	if existingName == "INBOX" {
 		return errors.New("cannot rename INBOX")
 	}
-	u.logger.Info("RENAME mailbox",
-		zap.String("user", u.username),
-		zap.String("old", existingName),
-		zap.String("new", newName))
-	return nil
+	return errMailboxMutationUnsupported
 }
 
 // Logout closes the user session

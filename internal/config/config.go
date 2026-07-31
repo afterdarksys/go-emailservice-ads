@@ -10,7 +10,7 @@ type Config struct {
 	Server struct {
 		Addr              string     `yaml:"addr"`
 		Domain            string     `yaml:"domain"`
-		Banner            string     `yaml:"banner"`          // SMTP 220 banner message (used by legacy SMTP only; main server uses Domain)
+		Banner            string     `yaml:"banner"` // SMTP 220 banner message (used by legacy SMTP only; main server uses Domain)
 		TLS               *TLSConfig `yaml:"tls,omitempty"`
 		MaxMessageBytes   int        `yaml:"max_message_bytes"`
 		MaxRecipients     int        `yaml:"max_recipients"`
@@ -20,70 +20,71 @@ type Config struct {
 		Mode              string     `yaml:"mode"`                // test or prod
 
 		// Connection and Rate Limiting
-		MaxConnections    int  `yaml:"max_connections"`     // Total concurrent connections (0 = unlimited)
-		MaxPerIP          int  `yaml:"max_per_ip"`          // Connections per IP (0 = unlimited)
-		RateLimitPerIP    int  `yaml:"rate_limit_per_ip"`   // Messages per hour per IP (0 = unlimited)
-		EnableGreylist    bool `yaml:"enable_greylist"`     // Enable greylisting
-		DisableVRFY       bool `yaml:"disable_vrfy"`        // Disable VRFY command
-		DisableEXPN       bool `yaml:"disable_expn"`        // Disable EXPN command
+		MaxConnections int  `yaml:"max_connections"`   // Total concurrent connections (0 = unlimited)
+		MaxPerIP       int  `yaml:"max_per_ip"`        // Connections per IP (0 = unlimited)
+		RateLimitPerIP int  `yaml:"rate_limit_per_ip"` // Messages per hour per IP (0 = unlimited)
+		EnableGreylist bool `yaml:"enable_greylist"`   // Enable greylisting
+		DisableVRFY    bool `yaml:"disable_vrfy"`      // Disable VRFY command
+		DisableEXPN    bool `yaml:"disable_expn"`      // Disable EXPN command
 
 		// Timeout Configuration (following Postfix conventions)
-		Timeouts          TimeoutConfig `yaml:"timeouts"`
+		Timeouts TimeoutConfig `yaml:"timeouts"`
 
 		// Error Handling
-		SoftErrorLimit    int    `yaml:"soft_error_limit"`    // Errors before logging warning (default: 10)
-		HardErrorLimit    int    `yaml:"hard_error_limit"`    // Errors before disconnecting (default: 20)
-		JunkCommandLimit  int    `yaml:"junk_command_limit"`  // Unknown commands before disconnect (default: 100)
-		ErrorSleepTime    string `yaml:"error_sleep_time"`    // Delay after error (default: 1s)
+		SoftErrorLimit   int    `yaml:"soft_error_limit"`   // Errors before logging warning (default: 10)
+		HardErrorLimit   int    `yaml:"hard_error_limit"`   // Errors before disconnecting (default: 20)
+		JunkCommandLimit int    `yaml:"junk_command_limit"` // Unknown commands before disconnect (default: 100)
+		ErrorSleepTime   string `yaml:"error_sleep_time"`   // Delay after error (default: 1s)
 
 		// Command Restrictions
-		ForbiddenCommands []string `yaml:"forbidden_commands"`  // Commands to reject (e.g., CONNECT, GET, POST)
-		HeloRequired      bool     `yaml:"helo_required"`       // Require HELO/EHLO before other commands
+		ForbiddenCommands []string `yaml:"forbidden_commands"` // Commands to reject (e.g., CONNECT, GET, POST)
+		HeloRequired      bool     `yaml:"helo_required"`      // Require HELO/EHLO before other commands
 
 		// Client Behavior
-		ClientMessageRateLimit    int `yaml:"client_message_rate_limit"`    // Messages per hour per client (0 = unlimited)
-		ClientRecipientRateLimit  int `yaml:"client_recipient_rate_limit"`  // Recipients per hour per client (0 = unlimited)
-		ClientNewTLSSessionRate   int `yaml:"client_new_tls_session_rate"`  // New TLS sessions per hour per client (0 = unlimited)
-		RecipientOvershootLimit   int `yaml:"recipient_overshoot_limit"`    // Allow RCPT commands beyond max_recipients before rejecting
+		ClientMessageRateLimit   int `yaml:"client_message_rate_limit"`   // Messages per hour per client (0 = unlimited)
+		ClientRecipientRateLimit int `yaml:"client_recipient_rate_limit"` // Recipients per hour per client (0 = unlimited)
+		ClientNewTLSSessionRate  int `yaml:"client_new_tls_session_rate"` // New TLS sessions per hour per client (0 = unlimited)
+		RecipientOvershootLimit  int `yaml:"recipient_overshoot_limit"`   // Allow RCPT commands beyond max_recipients before rejecting
 
 		// Local domains for delivery
-		LocalDomains      []string `yaml:"local_domains"`   // Domains handled locally
+		LocalDomains []string `yaml:"local_domains"` // Domains handled locally
 
 		// Proxy Protocol Support
-		ProxyProtocol     ProxyProtocolConfig `yaml:"proxy_protocol"`
+		ProxyProtocol ProxyProtocolConfig `yaml:"proxy_protocol"`
 
 		// DANE Configuration (RFC 6698, RFC 7672)
-		DANE              DANEConfig `yaml:"dane"`
+		DANE DANEConfig `yaml:"dane"`
 
 		// SPF Configuration (RFC 7208)
-		SPF               SPFPolicyConfig `yaml:"spf"`
+		SPF SPFPolicyConfig `yaml:"spf"`
 
 		// DMARC Configuration (RFC 7489)
-		DMARC             DMARCPolicyConfig `yaml:"dmarc"`
+		DMARC DMARCPolicyConfig `yaml:"dmarc"`
 
 		// Restrictions and Policies
-		DelayReject       bool `yaml:"delay_reject"`          // Delay rejection until RCPT TO (default: true)
+		DelayReject             bool `yaml:"delay_reject"`                // Delay rejection until RCPT TO (default: true)
 		DelayOpenUntilValidRcpt bool `yaml:"delay_open_until_valid_rcpt"` // Don't open queue file until valid RCPT (default: true)
 	} `yaml:"server"`
 
 	IMAP struct {
 		Addr       string     `yaml:"addr"`
 		TLS        *TLSConfig `yaml:"tls,omitempty"`
-		RequireTLS bool       `yaml:"require_tls"` // Require TLS for IMAP
+		RequireTLS bool       `yaml:"require_tls"` // Deprecated: require TLS before authentication
+		TLSMode    string     `yaml:"tls_mode"`    // "starttls", "implicit", or "disabled"
 	} `yaml:"imap"`
 
 	JMAP struct {
-		Addr             string `yaml:"addr"`               // JMAP HTTP listen address
+		Addr             string `yaml:"addr"`                // JMAP HTTP listen address
 		JWTPublicKeyPath string `yaml:"jwt_public_key_path"` // PEM RSA/ECDSA public key for Bearer token validation
 		JWTIssuer        string `yaml:"jwt_issuer"`          // Expected iss claim (empty = skip check)
 	} `yaml:"jmap"`
 
 	API struct {
-		RESTAddr      string   `yaml:"rest_addr"`
-		GRPCAddr      string   `yaml:"grpc_addr"`
-		APIKeys       []APIKeyConfig `yaml:"api_keys"` // API keys for programmatic access
-		AllowedIPs    []string `yaml:"allowed_ips"`    // IP whitelist for API access
-		RequireIPAuth bool     `yaml:"require_ip_auth"` // Require IP whitelist in addition to API key
+		RESTAddr      string         `yaml:"rest_addr"`
+		GRPCAddr      string         `yaml:"grpc_addr"`
+		APIKeys       []APIKeyConfig `yaml:"api_keys"`        // API keys for programmatic access
+		AllowedIPs    []string       `yaml:"allowed_ips"`     // IP whitelist for API access
+		RequireIPAuth bool           `yaml:"require_ip_auth"` // Require IP whitelist in addition to API key
 	} `yaml:"api"`
 
 	Auth struct {
@@ -92,26 +93,26 @@ type Config struct {
 
 	// SSO Configuration for external authentication providers
 	SSO struct {
-		Enabled      bool   `yaml:"enabled"`       // Enable SSO authentication
-		Provider     string `yaml:"provider"`      // Provider name (e.g., "afterdarksystems", "oidc", "oauth2")
-		ClientID     string `yaml:"client_id"`     // OAuth2 client ID
-		ClientSecret string `yaml:"client_secret"` // OAuth2 client secret
-		AuthURL      string `yaml:"auth_url"`      // Authorization endpoint
-		TokenURL     string `yaml:"token_url"`     // Token endpoint
-		UserInfoURL  string `yaml:"userinfo_url"`  // UserInfo endpoint
-		RedirectURL  string `yaml:"redirect_url"`  // OAuth2 redirect URL
-		Scopes       []string `yaml:"scopes"`      // OAuth2 scopes
+		Enabled      bool     `yaml:"enabled"`       // Enable SSO authentication
+		Provider     string   `yaml:"provider"`      // Provider name (e.g., "afterdarksystems", "oidc", "oauth2")
+		ClientID     string   `yaml:"client_id"`     // OAuth2 client ID
+		ClientSecret string   `yaml:"client_secret"` // OAuth2 client secret
+		AuthURL      string   `yaml:"auth_url"`      // Authorization endpoint
+		TokenURL     string   `yaml:"token_url"`     // Token endpoint
+		UserInfoURL  string   `yaml:"userinfo_url"`  // UserInfo endpoint
+		RedirectURL  string   `yaml:"redirect_url"`  // OAuth2 redirect URL
+		Scopes       []string `yaml:"scopes"`        // OAuth2 scopes
 		// AfterDark Systems specific
 		DirectoryURL string `yaml:"directory_url"` // Directory service URL (e.g., https://directory.afterdarksystems.com)
 	} `yaml:"sso"`
 
 	// AfterSMTP AMTP Next-Gen Protocol Integration
 	AfterSMTP struct {
-		Enabled     bool   `yaml:"enabled"`
-		LedgerURL   string `yaml:"ledger_url"`
-		QUICAddr    string `yaml:"quic_addr"`
-		GRPCAddr    string `yaml:"grpc_addr"`
-		FallbackDB  string `yaml:"fallback_db"`
+		Enabled    bool   `yaml:"enabled"`
+		LedgerURL  string `yaml:"ledger_url"`
+		QUICAddr   string `yaml:"quic_addr"`
+		GRPCAddr   string `yaml:"grpc_addr"`
+		FallbackDB string `yaml:"fallback_db"`
 	} `yaml:"aftersmtp"`
 
 	Logging struct {
@@ -127,9 +128,9 @@ type Config struct {
 		FlushInterval string   `yaml:"flush_interval"` // How often to flush bulk indexer (e.g., "5s")
 
 		// Authentication
-		APIKey       string `yaml:"api_key"`       // Elasticsearch API key
-		Username     string `yaml:"username"`      // Basic auth username
-		Password     string `yaml:"password"`      // Basic auth password
+		APIKey   string `yaml:"api_key"`  // Elasticsearch API key
+		Username string `yaml:"username"` // Basic auth username
+		Password string `yaml:"password"` // Basic auth password
 
 		// Index Lifecycle Management
 		RetentionDays int `yaml:"retention_days"` // How long to keep indices
@@ -137,8 +138,8 @@ type Config struct {
 		Shards        int `yaml:"shards"`         // Number of shards
 
 		// Performance
-		Workers       int     `yaml:"workers"`        // Number of bulk indexer workers
-		SamplingRate  float64 `yaml:"sampling_rate"`  // Sample rate (0.0-1.0, 1.0 = all events)
+		Workers      int     `yaml:"workers"`       // Number of bulk indexer workers
+		SamplingRate float64 `yaml:"sampling_rate"` // Sample rate (0.0-1.0, 1.0 = all events)
 
 		// Header Logging Configuration
 		HeaderLogging HeaderLoggingConfig `yaml:"header_logging"`
@@ -147,20 +148,20 @@ type Config struct {
 
 // HeaderLoggingConfig controls which message headers are logged to Elasticsearch
 type HeaderLoggingConfig struct {
-	Enabled       bool     `yaml:"enabled"`        // Global enable/disable for header logging
-	LogAllHeaders bool     `yaml:"log_all_headers"` // Log all headers or only specific ones
+	Enabled       bool `yaml:"enabled"`         // Global enable/disable for header logging
+	LogAllHeaders bool `yaml:"log_all_headers"` // Log all headers or only specific ones
 
 	// Allowlist/Denylist by domain
-	AllowDomains  []string `yaml:"allow_domains"`  // Domains to log headers for (empty = all)
-	DenyDomains   []string `yaml:"deny_domains"`   // Domains to never log headers for
+	AllowDomains []string `yaml:"allow_domains"` // Domains to log headers for (empty = all)
+	DenyDomains  []string `yaml:"deny_domains"`  // Domains to never log headers for
 
 	// Allowlist/Denylist by IP
-	AllowIPs      []string `yaml:"allow_ips"`      // IPs to log headers for (supports CIDR)
-	DenyIPs       []string `yaml:"deny_ips"`       // IPs to never log headers for (supports CIDR)
+	AllowIPs []string `yaml:"allow_ips"` // IPs to log headers for (supports CIDR)
+	DenyIPs  []string `yaml:"deny_ips"`  // IPs to never log headers for (supports CIDR)
 
 	// Allowlist/Denylist by MX record
-	AllowMXs      []string `yaml:"allow_mxs"`      // MX records to log headers for
-	DenyMXs       []string `yaml:"deny_mxs"`       // MX records to never log headers for
+	AllowMXs []string `yaml:"allow_mxs"` // MX records to log headers for
+	DenyMXs  []string `yaml:"deny_mxs"`  // MX records to never log headers for
 
 	// Specific headers to include (if log_all_headers = false)
 	IncludeHeaders []string `yaml:"include_headers"` // e.g., ["From", "To", "Subject", "Message-ID"]
@@ -174,23 +175,23 @@ type HeaderLoggingConfig struct {
 
 // TimeoutConfig defines granular timeout settings for SMTP operations
 type TimeoutConfig struct {
-	Connect       string `yaml:"connect"`        // Connection timeout (default: 30s)
-	Helo          string `yaml:"helo"`           // HELO/EHLO timeout (default: 300s)
-	Mail          string `yaml:"mail"`           // MAIL FROM timeout (default: 300s)
-	Rcpt          string `yaml:"rcpt"`           // RCPT TO timeout (default: 300s)
-	DataInit      string `yaml:"data_init"`      // DATA command timeout (default: 120s)
-	DataBlock     string `yaml:"data_block"`     // Data transfer timeout per block (default: 180s)
-	DataDone      string `yaml:"data_done"`      // Final "." timeout (default: 600s)
-	Rset          string `yaml:"rset"`           // RSET command timeout (default: 20s)
-	Quit          string `yaml:"quit"`           // QUIT command timeout (default: 300s)
-	Starttls      string `yaml:"starttls"`       // STARTTLS negotiation timeout (default: 300s)
-	Command       string `yaml:"command"`        // Generic command timeout (default: 300s)
+	Connect   string `yaml:"connect"`    // Connection timeout (default: 30s)
+	Helo      string `yaml:"helo"`       // HELO/EHLO timeout (default: 300s)
+	Mail      string `yaml:"mail"`       // MAIL FROM timeout (default: 300s)
+	Rcpt      string `yaml:"rcpt"`       // RCPT TO timeout (default: 300s)
+	DataInit  string `yaml:"data_init"`  // DATA command timeout (default: 120s)
+	DataBlock string `yaml:"data_block"` // Data transfer timeout per block (default: 180s)
+	DataDone  string `yaml:"data_done"`  // Final "." timeout (default: 600s)
+	Rset      string `yaml:"rset"`       // RSET command timeout (default: 20s)
+	Quit      string `yaml:"quit"`       // QUIT command timeout (default: 300s)
+	Starttls  string `yaml:"starttls"`   // STARTTLS negotiation timeout (default: 300s)
+	Command   string `yaml:"command"`    // Generic command timeout (default: 300s)
 }
 
 // ProxyProtocolConfig configures PROXY protocol support (HAProxy/nginx)
 type ProxyProtocolConfig struct {
-	Enabled bool     `yaml:"enabled"`          // Enable PROXY protocol support
-	Timeout string   `yaml:"timeout"`          // Timeout for PROXY header (default: 5s)
+	Enabled  bool     `yaml:"enabled"`          // Enable PROXY protocol support
+	Timeout  string   `yaml:"timeout"`          // Timeout for PROXY header (default: 5s)
 	Networks []string `yaml:"trusted_networks"` // Trusted proxy networks (CIDR format)
 }
 
@@ -245,11 +246,11 @@ type DMARCPolicyConfig struct {
 // DANEConfig configures DANE (DNS-Based Authentication of Named Entities)
 // RFC 6698, RFC 7672 - SMTP Security via DANE
 type DANEConfig struct {
-	Enabled      bool     `yaml:"enabled"`        // Enable DANE validation
-	StrictMode   bool     `yaml:"strict_mode"`    // Reject delivery if DANE validation fails
-	DNSServers   []string `yaml:"dns_servers"`    // DNS servers for DNSSEC queries (empty = use system defaults)
-	CacheTTL     int      `yaml:"cache_ttl"`      // TLSA cache TTL in seconds (0 = use DNS TTL)
-	Timeout      int      `yaml:"timeout"`        // DANE validation timeout in seconds
+	Enabled    bool     `yaml:"enabled"`     // Enable DANE validation
+	StrictMode bool     `yaml:"strict_mode"` // Reject delivery if DANE validation fails
+	DNSServers []string `yaml:"dns_servers"` // DNS servers for DNSSEC queries (empty = use system defaults)
+	CacheTTL   int      `yaml:"cache_ttl"`   // TLSA cache TTL in seconds (0 = use DNS TTL)
+	Timeout    int      `yaml:"timeout"`     // DANE validation timeout in seconds
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -300,7 +301,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.HeloRequired = false
 
 	// Client behavior limits
-	cfg.Server.ClientMessageRateLimit = 0      // 0 = unlimited
+	cfg.Server.ClientMessageRateLimit = 0 // 0 = unlimited
 	cfg.Server.ClientRecipientRateLimit = 0
 	cfg.Server.ClientNewTLSSessionRate = 0
 	cfg.Server.RecipientOvershootLimit = 1000
@@ -314,11 +315,11 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DelayReject = true
 	cfg.Server.DelayOpenUntilValidRcpt = true
 
-	cfg.Server.DANE.Enabled = true       // SECURITY: Enable DANE by default
-	cfg.Server.DANE.StrictMode = false   // Default to opportunistic DANE
+	cfg.Server.DANE.Enabled = true          // SECURITY: Enable DANE by default
+	cfg.Server.DANE.StrictMode = false      // Default to opportunistic DANE
 	cfg.Server.DANE.DNSServers = []string{} // Use system defaults
-	cfg.Server.DANE.CacheTTL = 3600      // 1 hour cache
-	cfg.Server.DANE.Timeout = 10         // 10 second timeout
+	cfg.Server.DANE.CacheTTL = 3600         // 1 hour cache
+	cfg.Server.DANE.Timeout = 10            // 10 second timeout
 
 	// SPF: evaluate by default, but in monitor mode — SPF feeds DMARC and is
 	// stamped/logged, never a standalone reject. Forwarding and misconfigured
@@ -333,8 +334,9 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.DMARC.Mode = "monitor"
 	cfg.Server.DMARC.QuarantineFolder = "Junk"
 	cfg.IMAP.Addr = ":1143"
-	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS for IMAP
-	
+	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS before authentication
+	cfg.IMAP.TLSMode = "starttls"
+
 	// AfterSMTP Defaults
 	cfg.AfterSMTP.Enabled = false
 	cfg.AfterSMTP.LedgerURL = "ws://127.0.0.1:9944"

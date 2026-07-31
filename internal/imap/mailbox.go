@@ -1,12 +1,16 @@
 package imap
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/emersion/go-imap"
+	"github.com/emersion/go-imap/backend/backendutil"
+	"github.com/emersion/go-message/textproto"
 	"go.uber.org/zap"
 )
 
@@ -99,13 +103,22 @@ func (m *Mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
 		}
 	}
 
+	uidValidity, err := m.store.GetUIDValidity(ctx, m.username, m.name)
+	if err != nil {
+		return nil, err
+	}
+	uidNext, err := m.store.GetUIDNext(ctx, m.username, m.name)
+	if err != nil {
+		return nil, err
+	}
+
 	status := &imap.MailboxStatus{
 		Name:        m.name,
 		Messages:    total,
 		Recent:      recent,
 		Unseen:      unseen,
-		UidNext:     total + 1,
-		UidValidity: uint32(time.Now().Unix()),
+		UidNext:     uidNext,
+		UidValidity: uidValidity,
 	}
 
 	return status, nil
@@ -113,10 +126,7 @@ func (m *Mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
 
 // SetSubscribed sets the subscription status
 func (m *Mailbox) SetSubscribed(subscribed bool) error {
-	m.logger.Info("Subscription changed",
-		zap.String("mailbox", m.name),
-		zap.Bool("subscribed", subscribed))
-	return nil
+	return errMailboxMutationUnsupported
 }
 
 // Check requests a checkpoint of the mailbox
@@ -137,30 +147,88 @@ func (m *Mailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.Fetch
 
 	// For each message in the sequence set
 	for seqNum, msg := range messages {
+		sequenceNumber := uint32(seqNum + 1)
+		requestedID := sequenceNumber
+		if uid {
+			requestedID = msg.UID
+		}
+		if seqSet != nil && !seqSet.Contains(requestedID) {
+			continue
+		}
+
 		// Create IMAP message
-		imapMsg := imap.NewMessage(uint32(seqNum+1), items)
-		imapMsg.Uid = uint32(seqNum + 1) // In production, use proper UID tracking
+		imapMsg := imap.NewMessage(sequenceNumber, items)
+		imapMsg.Uid = msg.UID
+		var raw []byte
+		loadRaw := func() ([]byte, error) {
+			if raw != nil {
+				return raw, nil
+			}
+			var fetchErr error
+			raw, fetchErr = m.store.FetchMessage(ctx, msg.ID)
+			return raw, fetchErr
+		}
 
 		// Populate requested items
 		for _, item := range items {
 			switch item {
 			case imap.FetchEnvelope:
-				// Would parse envelope from message
-				imapMsg.Envelope = &imap.Envelope{
-					Subject: "Message " + msg.ID,
+				data, err := loadRaw()
+				if err != nil {
+					return err
+				}
+				header, _, err := imapHeaderAndBody(data)
+				if err != nil {
+					return err
+				}
+				imapMsg.Envelope, err = backendutil.FetchEnvelope(header)
+				if err != nil {
+					return err
 				}
 			case imap.FetchBody, imap.FetchBodyStructure:
-				// Would parse body structure
+				data, err := loadRaw()
+				if err != nil {
+					return err
+				}
+				header, body, err := imapHeaderAndBody(data)
+				if err != nil {
+					return err
+				}
+				imapMsg.BodyStructure, err = backendutil.FetchBodyStructure(header, body, item == imap.FetchBodyStructure)
+				if err != nil {
+					return err
+				}
 			case imap.FetchFlags:
 				for _, flag := range msg.Flags {
 					imapMsg.Flags = append(imapMsg.Flags, imap.CanonicalFlag(flag))
 				}
 			case imap.FetchInternalDate:
-				imapMsg.InternalDate = time.Now()
+				imapMsg.InternalDate = msg.Date
+				if imapMsg.InternalDate.IsZero() {
+					imapMsg.InternalDate = time.Now()
+				}
 			case imap.FetchRFC822Size:
 				imapMsg.Size = uint32(msg.Size)
 			case imap.FetchUid:
-				imapMsg.Uid = uint32(seqNum + 1)
+				imapMsg.Uid = msg.UID
+			default:
+				section, err := imap.ParseBodySectionName(item)
+				if err != nil {
+					continue
+				}
+				data, err := loadRaw()
+				if err != nil {
+					return err
+				}
+				header, body, err := imapHeaderAndBody(data)
+				if err != nil {
+					return err
+				}
+				literal, err := backendutil.FetchBodySection(header, body, section)
+				if err != nil {
+					return err
+				}
+				imapMsg.Body[section] = literal
 			}
 		}
 
@@ -168,6 +236,12 @@ func (m *Mailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.Fetch
 	}
 
 	return nil
+}
+
+func imapHeaderAndBody(data []byte) (textproto.Header, io.Reader, error) {
+	reader := bufio.NewReader(bytes.NewReader(data))
+	header, err := textproto.ReadHeader(reader)
+	return header, reader, err
 }
 
 // SearchMessages searches for messages matching criteria.
@@ -284,6 +358,9 @@ func searchMatcher(seqNum uint32, msg MessageSummary, c *imap.SearchCriteria) bo
 // RFC 3501 Section 6.3.11 - APPEND Command
 func (m *Mailbox) CreateMessage(flags []string, date time.Time, body imap.Literal) error {
 	ctx := context.Background()
+	if len(flags) > 0 || !date.IsZero() {
+		return errMailboxMutationUnsupported
+	}
 
 	// Read message body
 	data, err := io.ReadAll(body)
@@ -341,11 +418,7 @@ func (m *Mailbox) UpdateMessagesFlags(uid bool, seqSet *imap.SeqSet, op imap.Fla
 // CopyMessages copies messages to another mailbox
 // RFC 3501 Section 6.4.7 - COPY Command
 func (m *Mailbox) CopyMessages(uid bool, seqSet *imap.SeqSet, destName string) error {
-	m.logger.Info("Messages copied",
-		zap.String("from", m.name),
-		zap.String("to", destName))
-	// In production, implement actual copy
-	return nil
+	return errMailboxMutationUnsupported
 }
 
 // Expunge permanently removes messages flagged for deletion.

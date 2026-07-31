@@ -2,10 +2,9 @@
 
 ## CRITICAL (Must Do Before Production) 🚨
 
-- [ ] **Implement real SMTP delivery** - Currently workers just sleep 10ms!
-  - File: `internal/smtpd/queue.go:149-153`
-  - Need: MX lookup, SMTP client, connection pooling
-  - Impact: Messages accepted but never actually delivered
+- [x] **Implement real SMTP delivery**
+  - MX lookup, SMTP client, connection pooling, and queue integration are present.
+  - Reliability follow-up: per-domain/per-recipient outcome tracking remains open in `CODEX_TODO.md`.
 
 ## HIGH Priority ⚠️
 
@@ -228,8 +227,8 @@
 
 - [x] Multi-tier queue system (1,050 workers)
 - [x] Persistent storage with WAL
-- [x] Deduplication via SHA256 hashing
-- [x] Retry scheduler with exponential backoff
+- [x] Distinct delivery transaction persistence (content-only SHA256 deduplication removed)
+- [x] Retry scheduler with durable requeue path
 - [x] Dead letter queue
 - [x] SPF verification (enforced)
 - [x] DKIM verification (logging)

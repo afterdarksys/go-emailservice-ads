@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 
@@ -98,6 +99,18 @@ func (s *MailboxStore) GetUIDValidity(ctx context.Context, username, mailbox str
 	return uint32(v), err
 }
 
+// GetUIDNext returns the next UID that will be allocated for a mailbox.
+func (s *MailboxStore) GetUIDNext(ctx context.Context, username, mailbox string) (uint32, error) {
+	if err := s.ensureMailboxState(ctx, username, mailbox); err != nil {
+		return 0, err
+	}
+	var next int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT uidnext FROM mailbox_state WHERE username=? AND mailbox=?`,
+		username, mailbox).Scan(&next)
+	return uint32(next), err
+}
+
 // AllocateUID atomically increments uidnext and returns the allocated UID.
 func (s *MailboxStore) AllocateUID(ctx context.Context, username, mailbox string) (uint32, error) {
 	if err := s.ensureMailboxState(ctx, username, mailbox); err != nil {
@@ -180,6 +193,7 @@ func (s *MailboxStore) GetMessages(ctx context.Context, username, folder string)
 		}
 		out = append(out, summary)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UID < out[j].UID })
 	return out, nil
 }
 
@@ -198,17 +212,24 @@ func (s *MailboxStore) StoreMessage(ctx context.Context, username, folder string
 
 	uid, err := s.AllocateUID(ctx, username, folder)
 	if err != nil {
-		// Non-fatal — message is stored, UID tracking just failed.
-		uid = 0
+		if discardErr := s.adapter.discardMessage(msgID); discardErr != nil {
+			return "", fmt.Errorf("allocate mailbox UID: %w (also failed to discard orphaned message: %v)", err, discardErr)
+		}
+		return "", fmt.Errorf("allocate mailbox UID: %w", err)
 	}
 
 	sender, subject, sentAt := parseHeaders(data)
 
-	s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO message_flags
 		 (msg_id, username, mailbox, uid, flags, sender, subject, size, sent_at)
 		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		msgID, username, folder, uid, sender, subject, int64(len(data)), sentAt.Unix())
+		msgID, username, folder, uid, sender, subject, int64(len(data)), sentAt.Unix()); err != nil {
+		if discardErr := s.adapter.discardMessage(msgID); discardErr != nil {
+			return "", fmt.Errorf("persist mailbox metadata: %w (also failed to discard orphaned message: %v)", err, discardErr)
+		}
+		return "", fmt.Errorf("persist mailbox metadata: %w", err)
+	}
 
 	// Non-blocking delivery notification for IMAP IDLE.
 	select {

@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/afterdarksys/go-emailservice-ads/msgfmt"
 )
 
 func main() {
-	fmt.Println("=== ADS Mail Format (AMF) Examples ===\n")
+	fmt.Println("=== ADS Mail Format (AMF) Examples ===")
+	fmt.Println()
 
 	// Example 1: Create a simple message
 	example1_SimpleMessage()
@@ -232,7 +235,7 @@ This is an email converted from RFC 5322 (.eml) format to AMF.
 
 	// Convert from EML
 	converter := msgfmt.NewConverter(nil)
-	msg, err := converter.FromEML([]byte(emlData))
+	msg, err := converter.FromEML(strings.NewReader(emlData))
 	if err != nil {
 		log.Fatalf("Failed to convert: %v", err)
 	}
@@ -263,11 +266,11 @@ func example7_ExtendedMessage() {
 
 	// Add calendar event
 	extMsg.CalendarEvent = &msgfmt.CalendarEvent{
-		Method:  "REQUEST",
-		UID:     "meeting-123",
-		Summary: "Project Discussion",
-		Start:   time.Now().Add(24 * time.Hour),
-		End:     time.Now().Add(25 * time.Hour),
+		Method:   "REQUEST",
+		UID:      "meeting-123",
+		Summary:  "Project Discussion",
+		Start:    time.Now().Add(24 * time.Hour),
+		End:      time.Now().Add(25 * time.Hour),
 		Location: "Conference Room A",
 		Organizer: &msgfmt.Address{
 			Address: "alice@example.com",
@@ -284,9 +287,9 @@ func example7_ExtendedMessage() {
 			Confidence: 0.92,
 		},
 		Classification: &msgfmt.Classification{
-			Category:   "business",
+			Category:    "business",
 			Subcategory: "meeting",
-			Confidence: 0.95,
+			Confidence:  0.95,
 		},
 		Entities: []*msgfmt.Entity{
 			{

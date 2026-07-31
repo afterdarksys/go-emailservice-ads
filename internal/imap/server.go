@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	imap "github.com/emersion/go-imap"
@@ -36,6 +38,7 @@ type Store interface {
 
 	// UID tracking — RFC 3501 §2.3.1.1
 	GetUIDValidity(ctx context.Context, username, mailbox string) (uint32, error)
+	GetUIDNext(ctx context.Context, username, mailbox string) (uint32, error)
 	AllocateUID(ctx context.Context, username, mailbox string) (uint32, error)
 
 	// Flag management — RFC 3501 §2.3.2
@@ -84,11 +87,17 @@ func (s *Server) Start() error {
 	// Create IMAP server
 	s.imapServer = server.New(backend)
 	s.imapServer.Addr = addr
+	s.imapServer.MaxLiteralSize = imapLiteralLimit(s.config.Server.MaxMessageBytes)
 
 	// Server allows authentication over unencrypted connections (set to false in production)
 	s.imapServer.AllowInsecureAuth = false
 
-	// Configure TLS if available
+	tlsMode, err := imapTLSMode(s.config.IMAP.TLSMode)
+	if err != nil {
+		return err
+	}
+
+	// Configure TLS if available.
 	if s.config.IMAP.TLS != nil && s.config.IMAP.TLS.Cert != "" && s.config.IMAP.TLS.Key != "" {
 		cert, err := tls.LoadX509KeyPair(s.config.IMAP.TLS.Cert, s.config.IMAP.TLS.Key)
 		if err != nil {
@@ -116,7 +125,7 @@ func (s *Server) Start() error {
 
 		s.imapServer.TLSConfig = tlsConfig
 
-		if s.config.IMAP.RequireTLS {
+		if tlsMode == "implicit" {
 			s.logger.Info("IMAP server configured with mandatory TLS (IMAPS mode)")
 			// For implicit TLS (port 993), use ListenAndServeTLS
 			go func() {
@@ -125,7 +134,7 @@ func (s *Server) Start() error {
 					s.logger.Error("IMAP server error", zap.Error(err))
 				}
 			}()
-		} else {
+		} else if tlsMode == "starttls" {
 			s.logger.Info("IMAP server configured with STARTTLS support")
 			go func() {
 				s.logger.Info("IMAP server listening (STARTTLS)", zap.String("addr", addr))
@@ -133,10 +142,12 @@ func (s *Server) Start() error {
 					s.logger.Error("IMAP server error", zap.Error(err))
 				}
 			}()
+		} else {
+			return fmt.Errorf("IMAP TLS mode disabled but TLS configuration was supplied")
 		}
 	} else {
-		if s.config.IMAP.RequireTLS {
-			return fmt.Errorf("IMAP RequireTLS is enabled but no TLS certificates configured")
+		if tlsMode != "disabled" {
+			return fmt.Errorf("IMAP TLS mode %q requires TLS certificates", tlsMode)
 		}
 
 		// No TLS configured - run insecure (only for testing)
@@ -150,6 +161,29 @@ func (s *Server) Start() error {
 
 	s.logger.Info("IMAP4rev1 server started successfully", zap.String("addr", addr))
 	return nil
+}
+
+func imapTLSMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "starttls":
+		return "starttls", nil
+	case "implicit":
+		return "implicit", nil
+	case "disabled":
+		return "disabled", nil
+	default:
+		return "", fmt.Errorf("invalid IMAP tls_mode %q (want starttls, implicit, or disabled)", mode)
+	}
+}
+
+func imapLiteralLimit(maxMessageBytes int) uint32 {
+	if maxMessageBytes <= 0 {
+		return 0
+	}
+	if uint64(maxMessageBytes) > uint64(math.MaxUint32) {
+		return math.MaxUint32
+	}
+	return uint32(maxMessageBytes)
 }
 
 // Shutdown gracefully stops the IMAP server

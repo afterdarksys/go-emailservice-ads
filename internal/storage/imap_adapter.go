@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
+	"github.com/google/uuid"
 )
 
 // IMAPAdapter adapts MessageStore to work with IMAP interface
@@ -22,18 +22,18 @@ func NewIMAPAdapter(store *MessageStore) *IMAPAdapter {
 
 // GetMessages retrieves all messages for a user's folder
 func (a *IMAPAdapter) GetMessages(ctx context.Context, username, folder string) ([]imap.MessageSummary, error) {
-	// For now, this is a stub that returns pending messages
-	// In a full implementation, this would query user-specific mailboxes
-	pending := a.store.ListPending("")
+	stored := a.store.ListByStatus("stored", "mailbox")
 
 	var summaries []imap.MessageSummary
-	for _, entry := range pending {
-		// Filter by user if the recipient matches
-		// This is simplified - a real implementation would have proper mailbox storage
+	for _, entry := range stored {
+		if entry.Metadata["username"] != username || entry.Metadata["mailbox"] != folder {
+			continue
+		}
 		summaries = append(summaries, imap.MessageSummary{
 			ID:    entry.MessageID,
 			Flags: []string{},
 			Size:  int64(len(entry.Data)),
+			Date:  entry.CreatedAt,
 		})
 	}
 
@@ -50,17 +50,24 @@ func (a *IMAPAdapter) FetchMessage(ctx context.Context, msgID string) ([]byte, e
 	return entry.Data, nil
 }
 
+// discardMessage removes an orphaned mailbox blob after its associated mailbox
+// metadata could not be made durable.
+func (a *IMAPAdapter) discardMessage(msgID string) error {
+	return a.store.UpdateStatus(msgID, "delivered", "mailbox metadata persistence failed")
+}
+
 // StoreMessage stores a new message in a user's folder
 func (a *IMAPAdapter) StoreMessage(ctx context.Context, username, folder string, data []byte) (string, error) {
 	// Create a journal entry for the message
 	entry := &JournalEntry{
 		MessageID: generateMessageID(),
 		Data:      data,
-		Tier:      "user", // User-stored messages use "user" tier
+		Tier:      "mailbox",
 		Status:    "stored",
-		// Recipients would need to be parsed from the message data
-		// For now, storing with username as recipient
-		To: []string{username},
+		Metadata: map[string]string{
+			"username": username,
+			"mailbox":  folder,
+		},
 	}
 
 	msgID, _, err := a.store.Store(entry)

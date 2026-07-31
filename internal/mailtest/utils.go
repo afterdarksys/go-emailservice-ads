@@ -1,6 +1,7 @@
 package mailtest
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -30,7 +31,7 @@ func printSuccess(format string, args ...interface{}) {
 func printError(format string, args ...interface{}) error {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("%s✗ %s%s\n", colorRed, msg, colorReset)
-	return fmt.Errorf(msg)
+	return errors.New(msg)
 }
 
 func printWarning(format string, args ...interface{}) {

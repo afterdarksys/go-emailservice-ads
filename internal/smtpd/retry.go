@@ -119,8 +119,11 @@ func (rs *RetryScheduler) processRetries() {
 			continue
 		}
 
-		// Re-enqueue for processing
-		rs.qm.Enqueue(msg)
+		// Re-enqueue the already durable entry without attempting another Store.
+		if err := rs.qm.RequeueStored(msg); err != nil {
+			rs.logger.Error("Failed to requeue message", zap.String("msg_id", entry.MessageID), zap.Error(err))
+			rs.store.UpdateStatus(entry.MessageID, "pending", err.Error())
+		}
 	}
 }
 

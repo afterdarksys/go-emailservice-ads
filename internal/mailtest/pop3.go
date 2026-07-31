@@ -35,7 +35,7 @@ func POP3Connect(cfg Config) error {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	
+
 	// Read greeting
 	greeting, err := reader.ReadString('\n')
 	if err != nil {
@@ -55,7 +55,7 @@ func POP3Connect(cfg Config) error {
 
 	// Send QUIT
 	fmt.Fprintf(conn, "QUIT\r\n")
-	
+
 	return nil
 }
 
@@ -78,7 +78,7 @@ func POP3Auth(cfg Config) error {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	
+
 	// Read greeting
 	greeting, _ := reader.ReadString('\n')
 	if cfg.Verbose {
@@ -90,7 +90,7 @@ func POP3Auth(cfg Config) error {
 	if cfg.Verbose {
 		printProtocol(">", fmt.Sprintf("USER %s", cfg.Username))
 	}
-	
+
 	response, _ := reader.ReadString('\n')
 	if cfg.Verbose {
 		printProtocol("<", response)
@@ -105,7 +105,7 @@ func POP3Auth(cfg Config) error {
 	if cfg.Verbose {
 		printProtocol(">", "PASS ********")
 	}
-	
+
 	response, _ = reader.ReadString('\n')
 	if cfg.Verbose {
 		printProtocol("<", response)
@@ -142,17 +142,17 @@ func POP3Stat(cfg Config) error {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	
+
 	// Read greeting
 	reader.ReadString('\n')
 
 	// Login
 	fmt.Fprintf(conn, "USER %s\r\n", cfg.Username)
 	reader.ReadString('\n')
-	
+
 	fmt.Fprintf(conn, "PASS %s\r\n", cfg.Password)
 	response, _ := reader.ReadString('\n')
-	
+
 	if !strings.HasPrefix(response, "+OK") {
 		return printError("Authentication failed")
 	}
@@ -162,7 +162,7 @@ func POP3Stat(cfg Config) error {
 	if cfg.Verbose {
 		printProtocol(">", "STAT")
 	}
-	
+
 	response, _ = reader.ReadString('\n')
 	if cfg.Verbose {
 		printProtocol("<", response)
@@ -173,7 +173,7 @@ func POP3Stat(cfg Config) error {
 	}
 
 	printSuccess("✓ Mailbox statistics:")
-	printInfo(strings.TrimSpace(response[4:]))
+	printInfo("%s", strings.TrimSpace(response[4:]))
 
 	// Send QUIT
 	fmt.Fprintf(conn, "QUIT\r\n")

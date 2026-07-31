@@ -18,26 +18,38 @@ import (
 
 // DeliveryResult represents the outcome of a delivery attempt
 type DeliveryResult struct {
-	Success      bool
-	SMTPCode     int
-	Message      string
-	IsPermanent  bool
-	RemoteHost   string
-	DeliveredAt  time.Time
-	DANEUsed     bool   // Whether DANE was available and used
-	DANEValid    bool   // Whether DANE validation succeeded
+	Success     bool
+	SMTPCode    int
+	Message     string
+	IsPermanent bool
+	RemoteHost  string
+	DeliveredAt time.Time
+	DANEUsed    bool // Whether DANE was available and used
+	DANEValid   bool // Whether DANE validation succeeded
+	Recipients  []RecipientResult
+}
+
+// RecipientResult records the individual recipient outcome of an SMTP
+// transaction, allowing callers to distinguish accepted mail from permanent
+// and temporary RCPT failures.
+type RecipientResult struct {
+	Recipient   string
+	Success     bool
+	SMTPCode    int
+	IsPermanent bool
+	Message     string
 }
 
 // MailDelivery handles outbound SMTP mail delivery
 // RFC 5321 - Simple Mail Transfer Protocol
 type MailDelivery struct {
-	logger      *zap.Logger
-	resolver    *dns.Resolver
-	hostname    string
+	logger   *zap.Logger
+	resolver *dns.Resolver
+	hostname string
 
 	// Connection pooling
-	pools       map[string]*connectionPool
-	poolsMu     sync.RWMutex
+	pools   map[string]*connectionPool
+	poolsMu sync.RWMutex
 
 	// DANE validator for DNS-Based Authentication (RFC 7672)
 	daneValidator *dane.DANEValidator
@@ -60,19 +72,19 @@ type connectionPool struct {
 
 // smtpConnection wraps an SMTP client with metadata
 type smtpConnection struct {
-	client      *smtp.Client
-	host        string
-	createdAt   time.Time
-	lastUsed    time.Time
+	client    *smtp.Client
+	host      string
+	createdAt time.Time
+	lastUsed  time.Time
 }
 
 // NewMailDelivery creates a new outbound mail delivery handler
 func NewMailDelivery(logger *zap.Logger, resolver *dns.Resolver, hostname string) *MailDelivery {
 	return &MailDelivery{
-		logger:         logger,
-		resolver:       resolver,
-		hostname:       hostname,
-		pools:          make(map[string]*connectionPool),
+		logger:   logger,
+		resolver: resolver,
+		hostname: hostname,
+		pools:    make(map[string]*connectionPool),
 		// Per-connection TLS configs are built in dialSMTP: DANE-authenticated
 		// when TLSA records exist, otherwise encrypt-only opportunistic TLS.
 		daneEnabled:    false, // Will be enabled via SetDANEValidator
@@ -102,7 +114,7 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 	recipientsByDomain := d.groupByDomain(to)
 
 	var lastResult *DeliveryResult
-	var lastError error
+	var failures []string
 
 	// Deliver to each domain
 	for domain, recipients := range recipientsByDomain {
@@ -112,8 +124,8 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 				zap.String("domain", domain),
 				zap.Int("recipients", len(recipients)),
 				zap.Error(err))
-			lastError = err
 			lastResult = result
+			failures = append(failures, fmt.Sprintf("%s: %v", domain, err))
 			continue
 		}
 
@@ -124,9 +136,13 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 		lastResult = result
 	}
 
-	// If all deliveries failed, return the last error
-	if lastError != nil && lastResult != nil && !lastResult.Success {
-		return lastResult, lastError
+	// A later successful domain must never hide an earlier failure.
+	if len(failures) > 0 {
+		if lastResult == nil {
+			lastResult = &DeliveryResult{}
+		}
+		lastResult.Success = false
+		return lastResult, fmt.Errorf("delivery incomplete: %s", strings.Join(failures, "; "))
 	}
 
 	return lastResult, nil
@@ -218,6 +234,8 @@ func (d *MailDelivery) deliverToMX(ctx context.Context, mxHost, from string, rec
 	}
 
 	// RCPT TO for each recipient
+	accepted := make([]string, 0, len(recipients))
+	outcomes := make([]RecipientResult, 0, len(recipients))
 	for _, rcpt := range recipients {
 		if err := client.client.Rcpt(rcpt); err != nil {
 			code, isPermanent := parseSMTPError(err)
@@ -228,16 +246,24 @@ func (d *MailDelivery) deliverToMX(ctx context.Context, mxHost, from string, rec
 
 			// Continue with other recipients even if one fails
 			if isPermanent {
+				outcomes = append(outcomes, RecipientResult{Recipient: rcpt, SMTPCode: code, IsPermanent: true, Message: err.Error()})
 				continue
 			}
+			outcomes = append(outcomes, RecipientResult{Recipient: rcpt, SMTPCode: code, IsPermanent: false, Message: err.Error()})
 			return &DeliveryResult{
 				Success:     false,
 				SMTPCode:    code,
 				Message:     err.Error(),
 				IsPermanent: isPermanent,
 				RemoteHost:  mxHost,
+				Recipients:  outcomes,
 			}, err
 		}
+		accepted = append(accepted, rcpt)
+		outcomes = append(outcomes, RecipientResult{Recipient: rcpt, Success: true, SMTPCode: 250})
+	}
+	if len(accepted) == 0 {
+		return &DeliveryResult{Success: false, SMTPCode: 550, Message: "all recipients rejected", IsPermanent: true, RemoteHost: mxHost, Recipients: outcomes}, fmt.Errorf("all recipients rejected by %s", mxHost)
 	}
 
 	// DATA
@@ -282,6 +308,7 @@ func (d *MailDelivery) deliverToMX(ctx context.Context, mxHost, from string, rec
 		IsPermanent: false,
 		RemoteHost:  mxHost,
 		DeliveredAt: time.Now(),
+		Recipients:  outcomes,
 	}, nil
 }
 
@@ -371,15 +398,18 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 	daneMandatory := false
 	if d.daneEnabled && d.daneValidator != nil {
 		d.logger.Debug("Checking DANE availability", zap.String("mx_host", mxHost))
-		if tlsaResult, derr := d.daneValidator.CheckDANEAvailability(ctx, mxHost, 25); derr == nil && len(tlsaResult.Records) > 0 {
+		tlsaResult, derr := d.daneValidator.CheckDANEAvailability(ctx, mxHost, 25)
+		mandatory, decisionErr := daneTLSRequirement(tlsaResult, derr)
+		if decisionErr != nil {
+			client.Close()
+			return nil, fmt.Errorf("cannot determine DANE policy for %s: %w", mxHost, decisionErr)
+		}
+		if mandatory {
 			daneMandatory = true
 			d.logger.Info("DANE records found, TLS is mandatory for this MX",
 				zap.String("mx_host", mxHost),
 				zap.Int("tlsa_records", len(tlsaResult.Records)),
 				zap.Bool("dnssec_valid", tlsaResult.DNSSECValid))
-		} else if derr != nil {
-			d.logger.Debug("DANE lookup failed, treating as opportunistic",
-				zap.String("mx_host", mxHost), zap.Error(derr))
 		}
 	}
 
@@ -427,6 +457,29 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 		createdAt: time.Now(),
 		lastUsed:  time.Now(),
 	}, nil
+}
+
+// daneTLSRequirement determines whether SMTP can safely use opportunistic TLS.
+// RFC 7672 requires a delivery attempt to fail closed when the TLSA lookup or
+// DNSSEC validation is indeterminate. Otherwise, an attacker can turn a DANE
+// lookup failure into a cleartext delivery downgrade.
+func daneTLSRequirement(result *dane.TLSALookupResult, lookupErr error) (bool, error) {
+	if lookupErr != nil {
+		return false, lookupErr
+	}
+	if result == nil {
+		return false, fmt.Errorf("empty TLSA lookup result")
+	}
+	if result.DNSSECBogus {
+		if result.ErrorReason != "" {
+			return false, fmt.Errorf("DNSSEC validation is bogus: %s", result.ErrorReason)
+		}
+		return false, fmt.Errorf("DNSSEC validation is bogus")
+	}
+
+	// Authenticated TLSA records make TLS mandatory. Insecure DNS has no DANE
+	// authority, so it is safe to continue with ordinary opportunistic TLS.
+	return result.DNSSECValid && len(result.Records) > 0, nil
 }
 
 // returnConnection returns a connection to the pool

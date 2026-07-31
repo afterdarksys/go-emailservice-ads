@@ -13,20 +13,20 @@ import (
 
 // Pipeline integrates divert and screen systems into mail flow
 type Pipeline struct {
-	logger        *zap.Logger
-	groupManager  *groups.Manager
-	divertEngine  *divert.Engine
-	screenEngine  *screen.Engine
-	enabled       bool
+	logger       *zap.Logger
+	groupManager *groups.Manager
+	divertEngine *divert.Engine
+	screenEngine *screen.Engine
+	enabled      bool
 }
 
 // PipelineConfig configures the routing pipeline
 type PipelineConfig struct {
-	GroupsConfigPath  string
-	DivertConfigPath  string
-	ScreenConfigPath  string
-	EnableDivert      bool
-	EnableScreen      bool
+	GroupsConfigPath string
+	DivertConfigPath string
+	ScreenConfigPath string
+	EnableDivert     bool
+	EnableScreen     bool
 }
 
 // NewPipeline creates a new routing pipeline
@@ -79,26 +79,26 @@ func NewPipeline(config *PipelineConfig, logger *zap.Logger) (*Pipeline, error) 
 	return p, nil
 }
 
-// RoutingDecision represents the result of routing checks
-type RoutingDecision struct {
+// PipelineDecision represents the result of routing checks.
+type PipelineDecision struct {
 	// Divert decision
-	ShouldDivert   bool
-	DivertTo       string
-	DivertReason   string
-	DivertedData   []byte
+	ShouldDivert bool
+	DivertTo     string
+	DivertReason string
+	DivertedData []byte
 
 	// Screen decision
-	ShouldScreen   bool
-	Watchers       []string
+	ShouldScreen bool
+	Watchers     []string
 
 	// Error
 	Error error
 }
 
 // Process checks a message through the routing pipeline
-// Returns a RoutingDecision indicating what should happen
-func (p *Pipeline) Process(ctx context.Context, from, to string, data []byte) *RoutingDecision {
-	decision := &RoutingDecision{}
+// Returns a PipelineDecision indicating what should happen.
+func (p *Pipeline) Process(ctx context.Context, from, to string, data []byte) *PipelineDecision {
+	decision := &PipelineDecision{}
 
 	if !p.enabled {
 		return decision // No routing configured
@@ -227,7 +227,7 @@ func (p *Pipeline) IsEnabled() bool {
 // GetStats returns routing pipeline statistics
 func (p *Pipeline) GetStats() map[string]interface{} {
 	stats := map[string]interface{}{
-		"enabled": p.enabled,
+		"enabled":        p.enabled,
 		"divert_enabled": p.divertEngine != nil,
 		"screen_enabled": p.screenEngine != nil,
 		"groups_enabled": p.groupManager != nil,

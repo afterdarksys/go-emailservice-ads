@@ -7,11 +7,31 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
 	"go.uber.org/zap"
 )
+
+func TestTLSARecordFromDNSDecodesAssociationData(t *testing.T) {
+	record, err := tlsaRecordFromDNS(&dns.TLSA{
+		Usage:        TLSAUsageDANEEE,
+		Selector:     TLSASelectorSPKI,
+		MatchingType: TLSAMatchingSHA256,
+		Certificate:  strings.Repeat("ab", 32),
+	}, "mx.example.test", 25)
+	if err != nil {
+		t.Fatalf("tlsaRecordFromDNS() error = %v", err)
+	}
+	if len(record.Certificate) != 32 {
+		t.Fatalf("decoded association data length = %d, want 32", len(record.Certificate))
+	}
+	if err := record.IsValid(); err != nil {
+		t.Fatalf("decoded record IsValid() error = %v", err)
+	}
+}
 
 // TestTLSARecordValidation tests TLSA record validation
 func TestTLSARecordValidation(t *testing.T) {
@@ -539,11 +559,11 @@ func TestDANEResultString(t *testing.T) {
 		{
 			name: "Successful validation",
 			result: &DANEResult{
-				Valid:       true,
-				DNSSECValid: true,
-				TLSARecords: []*TLSARecord{{Usage: 3, Selector: 1, MatchingType: 1, Certificate: make([]byte, 32)}},
+				Valid:         true,
+				DNSSECValid:   true,
+				TLSARecords:   []*TLSARecord{{Usage: 3, Selector: 1, MatchingType: 1, Certificate: make([]byte, 32)}},
 				MatchedRecord: &TLSARecord{Usage: 3, Selector: 1, MatchingType: 1, Certificate: make([]byte, 32)},
-				MatchedUsage: 3,
+				MatchedUsage:  3,
 			},
 		},
 		{

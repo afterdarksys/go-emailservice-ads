@@ -40,12 +40,12 @@ type Journal struct {
 
 // NewJournal creates a new journal instance
 func NewJournal(basePath string, logger *zap.Logger) (*Journal, error) {
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create journal directory: %w", err)
 	}
 
 	journalFile := filepath.Join(basePath, fmt.Sprintf("journal-%s.log", time.Now().Format("20060102-150405")))
-	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open journal file: %w", err)
 	}
@@ -96,8 +96,7 @@ func (j *Journal) Replay() ([]*JournalEntry, error) {
 	for _, file := range files {
 		fileEntries, err := j.replayFile(file)
 		if err != nil {
-			j.logger.Error("Failed to replay journal file", zap.String("file", file), zap.Error(err))
-			continue
+			return nil, fmt.Errorf("replay journal file %s: %w", file, err)
 		}
 		entries = append(entries, fileEntries...)
 	}
@@ -121,6 +120,14 @@ func (j *Journal) replayFile(filename string) ([]*JournalEntry, error) {
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
 		} else if err != nil {
+			// A process crash can leave an incomplete final JSON line after one or
+			// more valid, fsynced records. Keep the valid prefix; any other decode
+			// failure is corruption that must halt recovery rather than silently
+			// dropping a whole journal file.
+			if err == io.ErrUnexpectedEOF {
+				j.logger.Warn("Ignoring truncated final journal record", zap.String("file", filename))
+				break
+			}
 			return nil, fmt.Errorf("failed to decode journal entry: %w", err)
 		}
 		entries = append(entries, &entry)
@@ -139,7 +146,7 @@ func (j *Journal) Rotate() error {
 	}
 
 	journalFile := filepath.Join(j.basePath, fmt.Sprintf("journal-%s.log", time.Now().Format("20060102-150405")))
-	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open new journal file: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -38,25 +39,25 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
-	ID            string
-	TraceID       string    // Global correlation ID for tracking across instances
-	ParentTraceID string    // Parent trace ID for related messages (bounces, retries)
-	InstanceID    string    // Pod/instance identifier for Kubernetes deployments
-	From          string
-	To            []string
-	Data          []byte
-	CreatedAt     time.Time
-	Tier          QueueTier
-	ContentHash   string    // SHA256 hash of message content
-	ClientIP      string    // Client IP address
-	HeloHostname  string    // HELO/EHLO hostname
-	DKIMResult    string            // Result of DKIM verification ("pass", "fail", "none")
-	SPFResult     string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
-	DMARCResult   string            // Result of DMARC evaluation ("pass", "fail", "none")
-	ExtraHeaders  map[string]string // Additional headers to prepend to message
-	IsBounce      bool              // True if this message is a bounce/DSN
-	Quarantine      bool            // True if DMARC enforce mode quarantined this message
-	QuarantineFolder string         // Target folder for quarantined local delivery (e.g. "Junk")
+	ID               string
+	TraceID          string // Global correlation ID for tracking across instances
+	ParentTraceID    string // Parent trace ID for related messages (bounces, retries)
+	InstanceID       string // Pod/instance identifier for Kubernetes deployments
+	From             string
+	To               []string
+	Data             []byte
+	CreatedAt        time.Time
+	Tier             QueueTier
+	ContentHash      string            // SHA256 hash of message content
+	ClientIP         string            // Client IP address
+	HeloHostname     string            // HELO/EHLO hostname
+	DKIMResult       string            // Result of DKIM verification ("pass", "fail", "none")
+	SPFResult        string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
+	DMARCResult      string            // Result of DMARC evaluation ("pass", "fail", "none")
+	ExtraHeaders     map[string]string // Additional headers to prepend to message
+	IsBounce         bool              // True if this message is a bounce/DSN
+	Quarantine       bool              // True if DMARC enforce mode quarantined this message
+	QuarantineFolder string            // Target folder for quarantined local delivery (e.g. "Junk")
 }
 
 // QueueManager handles the multi-tier queuing system
@@ -93,7 +94,7 @@ type QueueManager struct {
 	policyManager *policy.Manager
 
 	// Metrics
-	metrics *QueueMetrics
+	metrics   *QueueMetrics
 	metricsMu sync.RWMutex
 
 	wg     sync.WaitGroup
@@ -103,12 +104,12 @@ type QueueManager struct {
 
 // QueueMetrics tracks queue performance
 type QueueMetrics struct {
-	Enqueued    map[QueueTier]int64
-	Processed   map[QueueTier]int64
-	Failed      map[QueueTier]int64
-	Duplicates  int64
+	Enqueued     map[QueueTier]int64
+	Processed    map[QueueTier]int64
+	Failed       map[QueueTier]int64
+	Duplicates   int64
 	Backpressure int64
-	LastUpdate  time.Time
+	LastUpdate   time.Time
 }
 
 // NewQueueManager initializes queue channels and starts workers
@@ -230,14 +231,34 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 		}
 	}
 
+	var deliveryErr error
+
 	// Process local delivery (to IMAP/Maildir)
 	if len(localRecipients) > 0 {
-		qm.deliverLocal(msg, localRecipients)
+		deliveryErr = errors.Join(deliveryErr, qm.deliverLocal(msg, localRecipients))
 	}
 
 	// Process remote delivery (via SMTP)
 	if len(remoteRecipients) > 0 {
-		qm.deliverRemote(msg, remoteRecipients)
+		deliveryErr = errors.Join(deliveryErr, qm.deliverRemote(msg, remoteRecipients))
+	}
+
+	qm.finalizeDelivery(msg, deliveryErr)
+}
+
+// finalizeDelivery commits queue state only after every attempted delivery path
+// has reported its result. A transient failure must remain durable for retry;
+// it must never be overwritten by a successful sibling path.
+func (qm *QueueManager) finalizeDelivery(msg *Message, deliveryErr error) {
+	if deliveryErr != nil {
+		qm.logger.Error("Message delivery incomplete; retaining for retry",
+			zap.String("msg_id", msg.ID),
+			zap.Error(deliveryErr))
+		if err := qm.store.UpdateStatus(msg.ID, "pending", deliveryErr.Error()); err != nil {
+			qm.logger.Error("Failed to retain message for retry", zap.String("msg_id", msg.ID), zap.Error(err))
+		}
+		qm.updateMetrics(msg.Tier, "failed")
+		return
 	}
 
 	// Update message status in store
@@ -252,7 +273,8 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 }
 
 // deliverLocal handles local message delivery via IMAP store.
-func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
+func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
+	var deliveryErr error
 	for _, rcpt := range recipients {
 		username := strings.Split(rcpt, "@")[0]
 		folder := "INBOX"
@@ -311,7 +333,7 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
 			qm.logger.Error("Local delivery failed",
 				zap.String("recipient", rcpt),
 				zap.Error(err))
-			qm.store.UpdateStatus(msg.ID, "pending", err.Error())
+			deliveryErr = errors.Join(deliveryErr, fmt.Errorf("local delivery to %s: %w", rcpt, err))
 			continue
 		}
 		qm.logger.Info("Local delivery succeeded",
@@ -321,10 +343,11 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) {
 			zap.String("folder", folder))
 		qm.publishEvent(elasticsearch.EventDelivered, msg, nil)
 	}
+	return deliveryErr
 }
 
 // deliverRemote handles remote SMTP delivery
-func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
+func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 	ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
 	defer cancel()
 
@@ -360,13 +383,7 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
 			qm.generateBounce(msg, result, recipients)
 		}
 
-		// Update status for retry
-		errorMsg := "delivery failed"
-		if result != nil {
-			errorMsg = result.Message
-		}
-		qm.store.UpdateStatus(msg.ID, "pending", errorMsg)
-		return
+		return fmt.Errorf("remote delivery: %w", err)
 	}
 
 	// Publish success event to Elasticsearch
@@ -386,6 +403,7 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) {
 		zap.String("msg_id", msg.ID),
 		zap.String("remote_host", result.RemoteHost),
 		zap.Int("recipients", len(recipients)))
+	return nil
 }
 
 // generateBounce creates and sends a bounce message
@@ -544,6 +562,13 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	return qm.enqueueToChannel(msg.Tier, msg)
 }
 
+// RequeueStored puts an already durable delivery transaction back on its
+// in-memory queue. Retry paths must use this instead of Enqueue so they do not
+// attempt a second persistence write for the same message ID.
+func (qm *QueueManager) RequeueStored(msg *Message) error {
+	return qm.enqueueToChannel(msg.Tier, msg)
+}
+
 // enqueueToChannel sends msg to the appropriate tier channel with a 100ms backpressure timeout.
 // The message is already persisted to the store, so it is safe to return without blocking
 // the SMTP session — the retry scheduler will reprocess it from the store.
@@ -557,6 +582,9 @@ func (qm *QueueManager) enqueueToChannel(tier QueueTier, msg *Message) error {
 			zap.String("tier", string(tier)),
 			zap.String("msg_id", msg.ID))
 		qm.updateMetrics(tier, "backpressure")
+		if err := qm.store.UpdateStatus(msg.ID, "pending", "queue channel full"); err != nil {
+			qm.logger.Error("Failed to retain backpressured message", zap.String("msg_id", msg.ID), zap.Error(err))
+		}
 		return nil
 	case <-qm.ctx.Done():
 		return fmt.Errorf("queue shutting down")

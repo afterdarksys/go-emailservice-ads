@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -23,6 +24,13 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
+const (
+	maxJMAPRequestBytes = 10 * 1024 * 1024
+	maxJMAPCalls        = 16
+	maxJMAPObjects      = 500
+	maxJMAPConcurrent   = 4
+)
+
 // RFC 8620 - JSON Meta Application Protocol (JMAP)
 // RFC 8621 - JMAP for Mail
 // Modern alternative to IMAP with better performance and simpler API
@@ -35,16 +43,18 @@ type JMAPServer struct {
 	store        *storage.IMAPAdapter
 	jwtPublicKey crypto.PublicKey
 	httpServer   *http.Server
+	requestSem   chan struct{}
 }
 
 // NewJMAPServer creates a new JMAP server.
 // store may be nil if JMAP Email/get is not required.
 func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Validator, store *storage.IMAPAdapter) *JMAPServer {
 	s := &JMAPServer{
-		logger:    logger,
-		config:    cfg,
-		validator: validator,
-		store:     store,
+		logger:     logger,
+		config:     cfg,
+		validator:  validator,
+		store:      store,
+		requestSem: make(chan struct{}, maxJMAPConcurrent),
 	}
 
 	if cfg.JMAP.JWTPublicKeyPath != "" {
@@ -188,29 +198,27 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 	session := Session{
 		Capabilities: map[string]interface{}{
 			"urn:ietf:params:jmap:core": CoreCapability{
-				MaxSizeUpload:           50 * 1024 * 1024, // 50MB
-				MaxConcurrentUpload:     4,
-				MaxSizeRequest:          10 * 1024 * 1024, // 10MB
-				MaxConcurrentRequests:   4,
-				MaxCallsInRequest:       16,
-				MaxObjectsInGet:         500,
-				MaxObjectsInSet:         500,
-				CollationAlgorithms:     []string{"i;ascii-numeric", "i;ascii-casemap"},
+				MaxSizeRequest:        10 * 1024 * 1024, // 10MB
+				MaxConcurrentRequests: maxJMAPConcurrent,
+				MaxCallsInRequest:     16,
+				MaxObjectsInGet:       500,
+				MaxObjectsInSet:       500,
+				CollationAlgorithms:   []string{"i;ascii-numeric", "i;ascii-casemap"},
 			},
 			"urn:ietf:params:jmap:mail": MailCapability{
-				MaxMailboxesPerEmail:    nil, // unlimited
-				MaxMailboxDepth:         10,
-				MaxSizeMailboxName:      255,
+				MaxMailboxesPerEmail:       nil, // unlimited
+				MaxMailboxDepth:            10,
+				MaxSizeMailboxName:         255,
 				MaxSizeAttachmentsPerEmail: 50 * 1024 * 1024,
-				EmailQuerySortOptions:   []string{"receivedAt", "from", "to", "subject"},
-				MayCreateTopLevelMailbox: true,
+				EmailQuerySortOptions:      []string{"receivedAt", "from", "to", "subject"},
+				MayCreateTopLevelMailbox:   true,
 			},
 		},
 		Accounts: map[string]Account{
 			"primary": {
-				Name:            "Primary Account",
-				IsPersonal:      true,
-				IsReadOnly:      false,
+				Name:       "Primary Account",
+				IsPersonal: true,
+				IsReadOnly: false,
 				AccountCapabilities: map[string]interface{}{
 					"urn:ietf:params:jmap:mail": map[string]interface{}{},
 				},
@@ -219,10 +227,10 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		PrimaryAccounts: map[string]string{
 			"urn:ietf:params:jmap:mail": "primary",
 		},
-		Username: authUserFromContext(r.Context()),
-		APIUrl:   fmt.Sprintf("https://%s/jmap/api/", r.Host),
-		DownloadUrl: fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?accept={type}", r.Host),
-		UploadUrl:   fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
+		Username:       authUserFromContext(r.Context()),
+		APIUrl:         fmt.Sprintf("https://%s/jmap/api/", r.Host),
+		DownloadUrl:    fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?accept={type}", r.Host),
+		UploadUrl:      fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
 		EventSourceUrl: fmt.Sprintf("https://%s/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}", r.Host),
 	}
 
@@ -237,11 +245,32 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Match maxConcurrentRequests advertised by the Session resource. Refuse
+	// excess work instead of accumulating unbounded blocked HTTP handlers.
+	select {
+	case j.requestSem <- struct{}{}:
+		defer func() { <-j.requestSem }()
+	default:
+		http.Error(w, "too many concurrent JMAP requests", http.StatusTooManyRequests)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJMAPRequestBytes)
+	defer r.Body.Close()
 
 	var req Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "JMAP request exceeds maximum size", http.StatusRequestEntityTooLarge)
+			return
+		}
 		j.logger.Warn("Invalid JMAP request", zap.Error(err))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if len(req.MethodCalls) > maxJMAPCalls {
+		http.Error(w, "JMAP request exceeds maximum method calls", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -256,7 +285,10 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 func (j *JMAPServer) processRequest(ctx context.Context, req *Request) *Response {
 	resp := &Response{
 		MethodResponses: make([]MethodResponse, 0),
-		SessionState:    req.Using,
+		// sessionState is an opaque server state token, not the request's list of
+		// capabilities. This implementation has no mutable session state yet, so
+		// use a stable initial token.
+		SessionState: "0",
 	}
 
 	authUser := authUserFromContext(ctx)
@@ -348,14 +380,14 @@ func (j *JMAPServer) handleMailboxSet(args map[string]interface{}, callID string
 	return MethodResponse{
 		Name: "Mailbox/set",
 		Arguments: map[string]interface{}{
-			"accountId":  "primary",
-			"oldState":   "0",
-			"newState":   "1",
-			"created":    map[string]interface{}{},
-			"updated":    map[string]interface{}{},
-			"destroyed":  []string{},
-			"notCreated": map[string]interface{}{},
-			"notUpdated": map[string]interface{}{},
+			"accountId":    "primary",
+			"oldState":     "0",
+			"newState":     "1",
+			"created":      map[string]interface{}{},
+			"updated":      map[string]interface{}{},
+			"destroyed":    []string{},
+			"notCreated":   map[string]interface{}{},
+			"notUpdated":   map[string]interface{}{},
 			"notDestroyed": map[string]interface{}{},
 		},
 		CallID: callID,
@@ -407,7 +439,18 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 
 	if rawIDs, ok := args["ids"]; ok && rawIDs != nil {
 		// Specific IDs requested: only return those the user owns.
-		for _, id := range toStringSlice(rawIDs) {
+		ids := toStringSlice(rawIDs)
+		if len(ids) > maxJMAPObjects {
+			return MethodResponse{
+				Name: "error",
+				Arguments: map[string]interface{}{
+					"type":        "tooManyObjectsInGet",
+					"description": "request exceeds maxObjectsInGet",
+				},
+				CallID: callID,
+			}
+		}
+		for _, id := range ids {
 			if _, ok := owned[id]; !ok {
 				notFound = append(notFound, id)
 				continue
@@ -502,12 +545,12 @@ func (j *JMAPServer) handleEmailQuery(args map[string]interface{}, callID string
 	return MethodResponse{
 		Name: "Email/query",
 		Arguments: map[string]interface{}{
-			"accountId":  "primary",
-			"queryState": "0",
+			"accountId":           "primary",
+			"queryState":          "0",
 			"canCalculateChanges": true,
-			"position":   0,
-			"total":      0,
-			"ids":        []string{},
+			"position":            0,
+			"total":               0,
+			"ids":                 []string{},
 		},
 		CallID: callID,
 	}
@@ -517,13 +560,13 @@ func (j *JMAPServer) handleEmailChanges(args map[string]interface{}, callID stri
 	return MethodResponse{
 		Name: "Email/changes",
 		Arguments: map[string]interface{}{
-			"accountId":  "primary",
-			"oldState":   "0",
-			"newState":   "0",
+			"accountId":      "primary",
+			"oldState":       "0",
+			"newState":       "0",
 			"hasMoreChanges": false,
-			"created":    []string{},
-			"updated":    []string{},
-			"destroyed":  []string{},
+			"created":        []string{},
+			"updated":        []string{},
+			"destroyed":      []string{},
 		},
 		CallID: callID,
 	}
@@ -600,14 +643,14 @@ type Session struct {
 }
 
 type CoreCapability struct {
-	MaxSizeUpload           int      `json:"maxSizeUpload"`
-	MaxConcurrentUpload     int      `json:"maxConcurrentUpload"`
-	MaxSizeRequest          int      `json:"maxSizeRequest"`
-	MaxConcurrentRequests   int      `json:"maxConcurrentRequests"`
-	MaxCallsInRequest       int      `json:"maxCallsInRequest"`
-	MaxObjectsInGet         int      `json:"maxObjectsInGet"`
-	MaxObjectsInSet         int      `json:"maxObjectsInSet"`
-	CollationAlgorithms     []string `json:"collationAlgorithms"`
+	MaxSizeUpload         int      `json:"maxSizeUpload,omitempty"`
+	MaxConcurrentUpload   int      `json:"maxConcurrentUpload,omitempty"`
+	MaxSizeRequest        int      `json:"maxSizeRequest"`
+	MaxConcurrentRequests int      `json:"maxConcurrentRequests"`
+	MaxCallsInRequest     int      `json:"maxCallsInRequest"`
+	MaxObjectsInGet       int      `json:"maxObjectsInGet"`
+	MaxObjectsInSet       int      `json:"maxObjectsInSet"`
+	CollationAlgorithms   []string `json:"collationAlgorithms"`
 }
 
 type MailCapability struct {
@@ -627,8 +670,8 @@ type Account struct {
 }
 
 type Request struct {
-	Using       []string     `json:"using"`
-	MethodCalls []MethodCall `json:"methodCalls"`
+	Using       []string          `json:"using"`
+	MethodCalls []MethodCall      `json:"methodCalls"`
 	CreatedIds  map[string]string `json:"createdIds,omitempty"`
 }
 
@@ -639,9 +682,9 @@ type MethodCall struct {
 }
 
 type Response struct {
-	MethodResponses []MethodResponse `json:"methodResponses"`
+	MethodResponses []MethodResponse  `json:"methodResponses"`
 	CreatedIds      map[string]string `json:"createdIds,omitempty"`
-	SessionState    []string         `json:"sessionState"`
+	SessionState    string            `json:"sessionState"`
 }
 
 type MethodResponse struct {

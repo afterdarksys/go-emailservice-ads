@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,28 +8,28 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-// MessageStore provides persistent storage with deduplication
+// MessageStore provides persistent storage for delivery transactions and mailbox blobs.
 type MessageStore struct {
 	basePath string
 	logger   *zap.Logger
 	journal  *Journal
 
-	// In-memory index for fast lookups and deduplication
-	index      map[string]*JournalEntry // message_id -> entry
-	hashIndex  map[string]string        // content_hash -> message_id (for dedup)
-	indexMu    sync.RWMutex
+	// In-memory index for fast lookups.
+	index   map[string]*JournalEntry // message_id -> entry
+	indexMu sync.RWMutex
 
 	// Dead letter queue
-	dlq map[string]*JournalEntry
+	dlq   map[string]*JournalEntry
 	dlqMu sync.RWMutex
 }
 
 // NewMessageStore creates a new persistent message store
 func NewMessageStore(basePath string, logger *zap.Logger) (*MessageStore, error) {
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
@@ -41,12 +39,11 @@ func NewMessageStore(basePath string, logger *zap.Logger) (*MessageStore, error)
 	}
 
 	store := &MessageStore{
-		basePath:  basePath,
-		logger:    logger,
-		journal:   journal,
-		index:     make(map[string]*JournalEntry),
-		hashIndex: make(map[string]string),
-		dlq:       make(map[string]*JournalEntry),
+		basePath: basePath,
+		logger:   logger,
+		journal:  journal,
+		index:    make(map[string]*JournalEntry),
+		dlq:      make(map[string]*JournalEntry),
 	}
 
 	// Replay journal for disaster recovery
@@ -69,23 +66,32 @@ func (s *MessageStore) recover() error {
 
 	recovered := 0
 	for _, entry := range entries {
-		if entry.Status == "delivered" {
-			continue // Skip already delivered messages
+		if entry.MessageID == "" {
+			s.logger.Warn("Skipping journal entry without message ID", zap.String("journal_id", entry.ID))
+			continue
 		}
 
-		s.index[entry.MessageID] = entry
-
-		// Rebuild hash index for deduplication
-		if len(entry.Data) > 0 {
-			hash := s.hashContent(entry.Data)
-			s.hashIndex[hash] = entry.MessageID
-		}
-
-		// Move failed messages to DLQ
-		if entry.Status == "failed" {
+		// The journal is an append-only state log. Apply records in order so the
+		// final record for a message wins; a delivered record is a tombstone for
+		// any earlier pending record.
+		switch entry.Status {
+		case "delivered":
+			delete(s.index, entry.MessageID)
+			s.dlqMu.Lock()
+			delete(s.dlq, entry.MessageID)
+			s.dlqMu.Unlock()
+		case "failed":
+			s.index[entry.MessageID] = entry
 			s.dlqMu.Lock()
 			s.dlq[entry.MessageID] = entry
 			s.dlqMu.Unlock()
+		case "processing":
+			// A worker may have crashed after claiming this message. Requeue it
+			// for at-least-once delivery rather than stranding it indefinitely.
+			entry.Status = "pending"
+			s.index[entry.MessageID] = entry
+		default:
+			s.index[entry.MessageID] = entry
 		}
 
 		recovered++
@@ -95,24 +101,27 @@ func (s *MessageStore) recover() error {
 	return nil
 }
 
-// Store persists a message and checks for duplicates
+// Store persists a distinct accepted message transaction. Content-addressable
+// blobs may be introduced below this layer, but matching message bytes do not
+// make separate SMTP transactions duplicates.
 func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
-	// Check for duplicate by content hash
-	hash := s.hashContent(entry.Data)
+	if entry.MessageID == "" {
+		entry.MessageID = uuid.NewString()
+	}
+	if entry.Status == "" {
+		entry.Status = "pending"
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
 
 	s.indexMu.Lock()
-	if existingID, exists := s.hashIndex[hash]; exists {
+	if _, exists := s.index[entry.MessageID]; exists {
 		s.indexMu.Unlock()
-		s.logger.Debug("Duplicate message detected",
-			zap.String("existing_id", existingID),
-			zap.String("hash", hash))
-		return existingID, true, nil
+		return "", false, fmt.Errorf("message ID already exists: %s", entry.MessageID)
 	}
 
 	// Store in journal first (WAL pattern)
-	entry.Status = "pending"
-	entry.CreatedAt = time.Now()
-
 	if err := s.journal.Write(entry); err != nil {
 		s.indexMu.Unlock()
 		return "", false, fmt.Errorf("failed to journal message: %w", err)
@@ -120,7 +129,6 @@ func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
 
 	// Update in-memory index
 	s.index[entry.MessageID] = entry
-	s.hashIndex[hash] = entry.MessageID
 	s.indexMu.Unlock()
 
 	// Write to tier-specific storage file for efficient recovery
@@ -171,14 +179,15 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 		s.dlqMu.Lock()
 		s.dlq[messageID] = entry
 		s.dlqMu.Unlock()
+	} else {
+		s.dlqMu.Lock()
+		delete(s.dlq, messageID)
+		s.dlqMu.Unlock()
 	}
 
 	// Remove from index if delivered
 	if status == "delivered" {
 		delete(s.index, messageID)
-		// Clean up hash index
-		hash := s.hashContent(entry.Data)
-		delete(s.hashIndex, hash)
 	}
 
 	s.indexMu.Unlock()
@@ -187,19 +196,25 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 
 // ListPending returns all pending messages for a tier
 func (s *MessageStore) ListPending(tier string) []*JournalEntry {
+	return s.ListByStatus("pending", tier)
+}
+
+// ListByStatus returns entries with a requested state, optionally scoped to a
+// tier. Mailbox blobs are deliberately not pending delivery work.
+func (s *MessageStore) ListByStatus(status, tier string) []*JournalEntry {
 	s.indexMu.RLock()
 	defer s.indexMu.RUnlock()
 
-	var pending []*JournalEntry
+	var entries []*JournalEntry
 	for _, entry := range s.index {
 		if tier == "" || entry.Tier == tier {
-			if entry.Status == "pending" {
-				pending = append(pending, entry)
+			if entry.Status == status {
+				entries = append(entries, entry)
 			}
 		}
 	}
 
-	return pending
+	return entries
 }
 
 // GetDLQ returns all messages in the dead letter queue
@@ -246,10 +261,10 @@ func (s *MessageStore) Stats() map[string]int {
 	defer s.dlqMu.RUnlock()
 
 	stats := map[string]int{
-		"pending":   0,
+		"pending":    0,
 		"processing": 0,
-		"dlq":       len(s.dlq),
-		"total":     len(s.index),
+		"dlq":        len(s.dlq),
+		"total":      len(s.index),
 	}
 
 	for _, entry := range s.index {
@@ -263,16 +278,10 @@ func (s *MessageStore) Stats() map[string]int {
 	return stats
 }
 
-// hashContent generates a SHA256 hash of message content for deduplication
-func (s *MessageStore) hashContent(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
-}
-
 // writeToTierFile writes message to tier-specific file for efficient bulk recovery
 func (s *MessageStore) writeToTierFile(entry *JournalEntry) error {
 	tierPath := filepath.Join(s.basePath, "tiers", entry.Tier)
-	if err := os.MkdirAll(tierPath, 0755); err != nil {
+	if err := os.MkdirAll(tierPath, 0700); err != nil {
 		return err
 	}
 
@@ -282,7 +291,7 @@ func (s *MessageStore) writeToTierFile(entry *JournalEntry) error {
 		return err
 	}
 
-	return os.WriteFile(filename, data, 0644)
+	return os.WriteFile(filename, data, 0600)
 }
 
 // Close gracefully shuts down the store

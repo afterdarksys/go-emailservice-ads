@@ -2,6 +2,7 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -65,7 +66,7 @@ func NewFailMap(params map[string]string, logger *zap.Logger) (*FailMap, error) 
 }
 
 func (fm *FailMap) Lookup(ctx context.Context, key string) (string, error) {
-	return "", fmt.Errorf(fm.message)
+	return "", errors.New(fm.message)
 }
 
 func (fm *FailMap) Type() string { return "fail" }

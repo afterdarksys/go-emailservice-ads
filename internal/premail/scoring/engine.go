@@ -23,6 +23,7 @@ type Repository interface {
 	GetHourlyStats(ip net.IP, hour time.Time) (*HourlyStats, error)
 	UpdateHourlyStats(stats *HourlyStats) error
 	IsInTopSpammers(ip net.IP) (bool, error)
+	GetTopSpammers(hour time.Time, limit int) ([]*HourlyStats, error)
 	RecordConnectionEvent(ip net.IP, eventType string, score int, action Action, details map[string]interface{}) error
 }
 
@@ -124,7 +125,7 @@ func (e *Engine) CalculateScore(metrics *ConnectionMetrics) (*ScoringDecision, e
 
 	// Record event
 	details := map[string]interface{}{
-		"score_components": components,
+		"score_components":    components,
 		"connection_duration": metrics.ConnectionDuration.Seconds(),
 	}
 	if err := e.repo.RecordConnectionEvent(metrics.IP, "score_calculated", decision.Score, action, details); err != nil {

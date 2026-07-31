@@ -53,15 +53,27 @@ const (
 // RFC 7208 - Sender Policy Framework (SPF)
 // RFC 7489 - Domain-based Message Authentication, Reporting, and Conformance (DMARC)
 type PolicyEngine struct {
-	logger   *zap.Logger
-	resolver *dns.Resolver
+	logger    *zap.Logger
+	resolver  *dns.Resolver
+	lookupTXT func(context.Context, string) ([]string, error)
 }
 
 func NewPolicyEngine(logger *zap.Logger, resolver *dns.Resolver) *PolicyEngine {
 	return &PolicyEngine{
-		logger:   logger,
-		resolver: resolver,
+		logger:    logger,
+		resolver:  resolver,
+		lookupTXT: resolver.LookupTXT,
 	}
+}
+
+func (p *PolicyEngine) lookupTXTRecords(ctx context.Context, domain string) ([]string, error) {
+	if p.lookupTXT != nil {
+		return p.lookupTXT(ctx, domain)
+	}
+	if p.resolver == nil {
+		return nil, fmt.Errorf("DNS resolver is not configured")
+	}
+	return p.resolver.LookupTXT(ctx, domain)
 }
 
 // VerifySPF performs SPF verification
@@ -73,7 +85,7 @@ func (p *PolicyEngine) VerifySPF(ctx context.Context, ip net.IP, domain, sender 
 		zap.String("sender", sender))
 
 	// Lookup SPF record (TXT record starting with "v=spf1")
-	txtRecords, err := p.resolver.LookupTXT(ctx, domain)
+	txtRecords, err := p.lookupTXTRecords(ctx, domain)
 	if err != nil {
 		p.logger.Warn("SPF TXT lookup failed", zap.String("domain", domain), zap.Error(err))
 		return SPFTempError, err
@@ -215,7 +227,7 @@ func (p *PolicyEngine) evaluateSPF(ctx context.Context, spfRecord string, ip net
 
 // evaluateSPFDomain performs SPF evaluation for a specific domain
 func (p *PolicyEngine) evaluateSPFDomain(ctx context.Context, domain string, ip net.IP, sender string, depth int) SPFResult {
-	txtRecords, err := p.resolver.LookupTXT(ctx, domain)
+	txtRecords, err := p.lookupTXTRecords(ctx, domain)
 	if err != nil {
 		return SPFTempError
 	}
@@ -314,13 +326,14 @@ func (p *PolicyEngine) matchMX(ctx context.Context, ip net.IP, domain string, de
 
 // DMARCRecord holds parsed fields from a DMARC TXT record (RFC 7489 §6.3).
 type DMARCRecord struct {
-	Policy    DMARCPolicy // p=
-	SubPolicy DMARCPolicy // sp= (subdomain policy, defaults to Policy)
-	ADKIM     string      // adkim= "r" (relaxed) or "s" (strict), default "r"
-	ASPF      string      // aspf= "r" (relaxed) or "s" (strict), default "r"
-	Pct       int         // pct= percentage of messages to apply policy to, default 100
-	RUA       string      // rua= aggregate report URI
-	RI        int         // ri= report interval in seconds, default 86400
+	Policy       DMARCPolicy // p=
+	SubPolicy    DMARCPolicy // sp= (subdomain policy, defaults to Policy)
+	HasSubPolicy bool        // distinguishes an explicit sp=none from an omitted tag
+	ADKIM        string      // adkim= "r" (relaxed) or "s" (strict), default "r"
+	ASPF         string      // aspf= "r" (relaxed) or "s" (strict), default "r"
+	Pct          int         // pct= percentage of messages to apply policy to, default 100
+	RUA          string      // rua= aggregate report URI
+	RI           int         // ri= report interval in seconds, default 86400
 }
 
 // parseDMARCRecord parses all standard tags from a DMARC TXT record.
@@ -345,6 +358,7 @@ func parseDMARCRecord(raw string) DMARCRecord {
 			rec.Policy = parseDMARCPolicyStr(val)
 		case "sp":
 			rec.SubPolicy = parseDMARCPolicyStr(val)
+			rec.HasSubPolicy = true
 		case "adkim":
 			if val == "s" {
 				rec.ADKIM = "s"
@@ -369,7 +383,7 @@ func parseDMARCRecord(raw string) DMARCRecord {
 	}
 
 	// sp= defaults to p= when absent
-	if rec.SubPolicy == DMARCPolicyNone && rec.Policy != DMARCPolicyNone {
+	if !rec.HasSubPolicy {
 		rec.SubPolicy = rec.Policy
 	}
 
@@ -399,34 +413,44 @@ func (p *PolicyEngine) VerifyDMARC(
 	spfResult SPFResult,
 	dkimResults []DKIMVerification,
 ) (DMARCResult, DMARCPolicy, error) {
+	result, policy, _, err := p.EvaluateDMARC(ctx, fromHeaderDomain, spfDomain, spfResult, dkimResults)
+	return result, policy, err
+}
+
+// EvaluateDMARC verifies DMARC and returns the effective policy and its pct=
+// rollout percentage. Callers must apply that percentage before enforcing a
+// failing policy (RFC 7489 §6.3).
+func (p *PolicyEngine) EvaluateDMARC(
+	ctx context.Context,
+	fromHeaderDomain string,
+	spfDomain string,
+	spfResult SPFResult,
+	dkimResults []DKIMVerification,
+) (DMARCResult, DMARCPolicy, int, error) {
 	p.logger.Debug("Verifying DMARC",
 		zap.String("from_header_domain", fromHeaderDomain),
 		zap.String("spf_domain", spfDomain),
 		zap.String("spf_result", string(spfResult)))
 
-	// Lookup DMARC record (_dmarc.domain.com)
-	dmarcDomain := "_dmarc." + fromHeaderDomain
-	txtRecords, err := p.resolver.LookupTXT(ctx, dmarcDomain)
+	// RFC 7489 §6.6.3: check the exact From domain first, then its
+	// organizational domain. A policy found at the latter applies sp= to a
+	// subdomain (or p= when sp= is omitted).
+	rawRecord, policyDomain, err := p.lookupDMARCRecord(ctx, fromHeaderDomain)
 	if err != nil {
-		p.logger.Debug("DMARC TXT lookup failed", zap.String("domain", dmarcDomain))
-		return DMARCNone, DMARCPolicyNone, nil
-	}
-
-	// Find DMARC record
-	var rawRecord string
-	for _, record := range txtRecords {
-		if strings.HasPrefix(record, "v=DMARC1") {
-			rawRecord = record
-			break
-		}
+		p.logger.Debug("DMARC TXT lookup failed", zap.String("domain", fromHeaderDomain), zap.Error(err))
+		return DMARCNone, DMARCPolicyNone, 100, nil
 	}
 
 	if rawRecord == "" {
 		p.logger.Debug("No DMARC record found", zap.String("domain", fromHeaderDomain))
-		return DMARCNone, DMARCPolicyNone, nil
+		return DMARCNone, DMARCPolicyNone, 100, nil
 	}
 
 	rec := parseDMARCRecord(rawRecord)
+	effectivePolicy := rec.Policy
+	if !strings.EqualFold(policyDomain, fromHeaderDomain) {
+		effectivePolicy = rec.SubPolicy
+	}
 
 	// aspf/adkim tags specify alignment mode: "r" → relaxed, "s" → strict
 	spfAlignMode := "relaxed"
@@ -460,11 +484,32 @@ func (p *PolicyEngine) VerifyDMARC(
 	p.logger.Info("DMARC verification complete",
 		zap.String("from_header_domain", fromHeaderDomain),
 		zap.String("result", string(result)),
-		zap.String("policy", string(rec.Policy)),
+		zap.String("policy", string(effectivePolicy)),
 		zap.Bool("spf_aligned", spfAligned),
 		zap.Bool("dkim_pass", dkimPass))
 
-	return result, rec.Policy, nil
+	return result, effectivePolicy, rec.Pct, nil
+}
+
+func (p *PolicyEngine) lookupDMARCRecord(ctx context.Context, fromHeaderDomain string) (string, string, error) {
+	lookupDomains := []string{fromHeaderDomain}
+	if organizationalDomain := orgDomain(fromHeaderDomain); !strings.EqualFold(organizationalDomain, fromHeaderDomain) {
+		lookupDomains = append(lookupDomains, organizationalDomain)
+	}
+
+	for _, domain := range lookupDomains {
+		txtRecords, err := p.lookupTXTRecords(ctx, "_dmarc."+domain)
+		if err != nil {
+			return "", "", err
+		}
+		for _, record := range txtRecords {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(record)), "v=dmarc1") {
+				return record, domain, nil
+			}
+		}
+	}
+
+	return "", "", nil
 }
 
 // domainsAlign returns true if authDomain satisfies DMARC alignment with fromDomain.

@@ -3,6 +3,7 @@ package smtpd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/emersion/go-smtp"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
@@ -39,6 +41,8 @@ type Server struct {
 	greylisting   *greylisting.Greylisting
 	policyManager *policy.Manager
 	spreadPrev    *security.SpreadPrevention
+	limiter       *connectionLimiter
+	messageRates  *ipMessageLimiter
 
 	// Connection tracking for limits
 	connections   map[string]int // IP -> connection count
@@ -105,13 +109,16 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 		greylisting:   greylist,
 		policyManager: policyMgr,
 		spreadPrev:    spreadPrev,
+		limiter:       newConnectionLimiter(cfg.Server.MaxConnections, cfg.Server.MaxPerIP),
+		messageRates:  newIPMessageLimiter(cfg.Server.RateLimitPerIP),
 	}
 	s := smtp.NewServer(be)
 
 	s.Addr = cfg.Server.Addr
 	s.Domain = cfg.Server.Domain
-	s.ReadTimeout = 10 * time.Minute
-	s.WriteTimeout = 10 * time.Minute
+	commandTimeout := configuredDuration(cfg.Server.Timeouts.Command, 5*time.Minute)
+	s.ReadTimeout = commandTimeout
+	s.WriteTimeout = commandTimeout
 	s.MaxMessageBytes = int64(cfg.Server.MaxMessageBytes)
 	s.MaxRecipients = cfg.Server.MaxRecipients
 	s.AllowInsecureAuth = cfg.Server.AllowInsecureAuth
@@ -138,11 +145,11 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,   // ChaCha20 for better mobile performance
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, // ChaCha20 for better mobile performance
 				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 			},
 			CurvePreferences: []tls.CurveID{
-				tls.X25519,    // Modern, fast curve
+				tls.X25519, // Modern, fast curve
 				tls.CurveP256,
 			},
 		}
@@ -195,6 +202,69 @@ type Backend struct {
 	greylisting   *greylisting.Greylisting
 	policyManager *policy.Manager
 	spreadPrev    *security.SpreadPrevention
+	limiter       *connectionLimiter
+	messageRates  *ipMessageLimiter
+}
+
+type ipMessageLimiter struct {
+	mu      sync.Mutex
+	perHour int
+	byIP    map[string]*rate.Limiter
+}
+
+func newIPMessageLimiter(perHour int) *ipMessageLimiter {
+	return &ipMessageLimiter{perHour: perHour, byIP: make(map[string]*rate.Limiter)}
+}
+func (l *ipMessageLimiter) allow(ip string) bool {
+	if l == nil || l.perHour <= 0 {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	limiter := l.byIP[ip]
+	if limiter == nil {
+		limiter = rate.NewLimiter(rate.Limit(float64(l.perHour)/3600), l.perHour)
+		l.byIP[ip] = limiter
+	}
+	return limiter.Allow()
+}
+
+type connectionLimiter struct {
+	mu                        sync.Mutex
+	total, maxTotal, maxPerIP int
+	byIP                      map[string]int
+}
+
+func newConnectionLimiter(maxTotal, maxPerIP int) *connectionLimiter {
+	return &connectionLimiter{maxTotal: maxTotal, maxPerIP: maxPerIP, byIP: make(map[string]int)}
+}
+func (l *connectionLimiter) acquire(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.maxTotal > 0 && l.total >= l.maxTotal || l.maxPerIP > 0 && l.byIP[ip] >= l.maxPerIP {
+		return false
+	}
+	l.total++
+	l.byIP[ip]++
+	return true
+}
+func (l *connectionLimiter) release(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.byIP[ip] > 0 {
+		l.byIP[ip]--
+		l.total--
+		if l.byIP[ip] == 0 {
+			delete(l.byIP, ip)
+		}
+	}
+}
+func configuredDuration(raw string, fallback time.Duration) time.Duration {
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // NewSession is called after client greeting (EHLO/HELO)
@@ -205,9 +275,15 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	}
 
 	bkd.logger.Debug("New SMTP session started", zap.String("remote_addr", ip), zap.String("hostname", c.Hostname()))
+	if bkd.limiter != nil && !bkd.limiter.acquire(ip) {
+		return nil, smtp.ErrAuthRequired
+	}
 
 	res := bkd.validator.ValidateIPAndEHLO(ip, c.Hostname())
 	if res == auth.ResultFail {
+		if bkd.limiter != nil {
+			bkd.limiter.release(ip)
+		}
 		return nil, smtp.ErrAuthRequired // basic rejection
 	}
 
@@ -225,6 +301,8 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		ehlo:          c.Hostname(),
 		authenticated: false,
 		config:        bkd.config,
+		limiter:       bkd.limiter,
+		messageRates:  bkd.messageRates,
 	}, nil
 }
 
@@ -245,6 +323,8 @@ type Session struct {
 	authenticated bool
 	username      string
 	config        *config.Config
+	limiter       *connectionLimiter
+	messageRates  *ipMessageLimiter
 }
 
 func (s *Session) AuthPlain(username, password string) error {
@@ -335,15 +415,13 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Extract domain from FROM address
-		fromDomain := ""
-		if parts := strings.Split(from, "@"); len(parts) == 2 {
-			fromDomain = parts[1]
-		}
+		// RFC 7208 §2.4: a null reverse-path is authenticated using the HELO
+		// identity. Supplying postmaster@HELO keeps SPF macro expansion valid.
+		fromDomain, spfIdentity := spfIdentityForMailFrom(from, s.ehlo)
 
 		ipAddr := net.ParseIP(s.ip)
 		if ipAddr != nil && fromDomain != "" {
-			spfResult, err := s.policyEngine.VerifySPF(ctx, ipAddr, fromDomain, from)
+			spfResult, err := s.policyEngine.VerifySPF(ctx, ipAddr, fromDomain, spfIdentity)
 			if err == nil {
 				spfResultStr = string(spfResult)
 				enforce := strings.EqualFold(s.config.Server.SPF.Mode, "enforce")
@@ -392,6 +470,16 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	return nil
 }
 
+func spfIdentityForMailFrom(from, ehlo string) (domain, identity string) {
+	if domain = addressDomain(from); domain != "" {
+		return domain, from
+	}
+	if ehlo == "" {
+		return "", ""
+	}
+	return ehlo, "postmaster@" + ehlo
+}
+
 func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 	s.logger.Debug("RCPT TO", zap.String("to", to))
 
@@ -422,6 +510,9 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 }
 
 func (s *Session) Data(r io.Reader) error {
+	if !s.messageRates.allow(s.ip) {
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 7, 0}, Message: "message rate limit exceeded"}
+	}
 	s.logger.Debug("DATA block stream reading")
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -488,7 +579,7 @@ func (s *Session) Data(r io.Reader) error {
 			}
 
 			dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
-			dmarcResult, dmarcPolicy, derr := s.policyEngine.VerifyDMARC(
+			dmarcResult, dmarcPolicy, dmarcPct, derr := s.policyEngine.EvaluateDMARC(
 				dctx, fromHeaderDomain, spfDomain, security.SPFResult(s.msg.SPFResult), dkimResults)
 			dcancel()
 			if derr != nil {
@@ -506,6 +597,12 @@ func (s *Session) Data(r io.Reader) error {
 				zap.String("ip", s.ip))
 
 			if dmarcResult == security.DMARCFail {
+				if !dmarcPolicyApplies(b, dmarcPct) {
+					s.logger.Info("DMARC policy skipped by pct rollout",
+						zap.String("from_header_domain", fromHeaderDomain),
+						zap.Int("pct", dmarcPct))
+					dmarcPolicy = security.DMARCPolicyNone
+				}
 				switch dmarcPolicy {
 				case security.DMARCPolicyReject:
 					if enforce {
@@ -659,12 +756,31 @@ func (s *Session) Data(r io.Reader) error {
 	return nil
 }
 
+// dmarcPolicyApplies deterministically samples a message into a DMARC pct=
+// rollout. A digest keeps retries and duplicate deliveries from receiving
+// inconsistent treatment while still distributing messages across 100 buckets.
+func dmarcPolicyApplies(message []byte, pct int) bool {
+	if pct <= 0 {
+		return false
+	}
+	if pct >= 100 {
+		return true
+	}
+	digest := sha256.Sum256(message)
+	bucket := (uint16(digest[0])<<8 | uint16(digest[1])) % 100
+	return int(bucket) < pct
+}
+
 func (s *Session) Reset() {
 	s.logger.Debug("Session reset")
 	s.msg = nil
 }
 
 func (s *Session) Logout() error {
+	if s.limiter != nil {
+		s.limiter.release(s.ip)
+		s.limiter = nil
+	}
 	s.logger.Debug("Session logout")
 	return nil
 }
