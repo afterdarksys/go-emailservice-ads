@@ -1,0 +1,21 @@
+[Unit]
+Description=gomeow.media end-to-end mail flow synthetic monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mailflowprobe
+Group=mailflowprobe
+EnvironmentFile=/etc/goemailservices/mailflow-probe.env
+ExecStart=/usr/local/bin/mailflow-probe
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mailflow-probe
+
+[Install]
+WantedBy=multi-user.target

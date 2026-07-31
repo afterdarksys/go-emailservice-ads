@@ -50,6 +50,15 @@ type Config struct {
 		DelayOpenUntilValidRcpt bool `yaml:"delay_open_until_valid_rcpt"` // Don't open queue file until valid RCPT (default: true)
 	} `yaml:"server"`
 
+	// ContentFilter defines the trust boundary for a perimeter SMTP proxy such
+	// as MailScript. The SMTP listener must be private when this is enabled.
+	ContentFilter struct {
+		Enabled              bool     `yaml:"enabled"`
+		TrustedProxyNetworks []string `yaml:"trusted_proxy_networks"`
+		QuarantineHeader     string   `yaml:"quarantine_header"`
+		QuarantineFolder     string   `yaml:"quarantine_folder"`
+	} `yaml:"content_filter"`
+
 	IMAP struct {
 		Addr       string     `yaml:"addr"`
 		TLS        *TLSConfig `yaml:"tls,omitempty"`

@@ -1,0 +1,50 @@
+# Backend configuration for the gomeow.media MailScript integration.
+# Bind this listener only to the private network used by MailScript.
+server:
+  addr: ":2525"
+  domain: "mail.gomeow.media"
+  banner: "mail.gomeow.media ESMTP"
+  max_message_bytes: 26214400
+  max_recipients: 50
+  allow_insecure_auth: false
+  require_auth: true
+  require_tls: false # private MailScript-to-backend hop only
+  mode: "prod"
+  max_connections: 100
+  max_per_ip: 20
+  rate_limit_per_ip: 1000
+  disable_vrfy: true
+  disable_expn: true
+  local_domains:
+    - "gomeow.media"
+    - "mail.gomeow.media"
+  spf:
+    enabled: true
+    mode: "monitor"
+  dmarc:
+    enabled: true
+    mode: "monitor"
+    quarantine_folder: "Junk"
+
+content_filter:
+  enabled: true
+  # Compose uses this subnet. Change this to the exact host/pod CIDR in production.
+  trusted_proxy_networks: ["172.30.0.0/24"]
+  quarantine_header: "X-MailScript-Quarantine"
+  quarantine_folder: "Junk"
+
+imap:
+  addr: ":1143"
+  require_tls: false
+jmap:
+  enabled: false
+api:
+  rest_addr: ":8080"
+  grpc_addr: ":50051"
+  require_ip_auth: false
+auth:
+  default_users: []
+aftersmtp:
+  enabled: false
+logging:
+  level: "info"

@@ -206,6 +206,26 @@ type Backend struct {
 	messageRates  *ipMessageLimiter
 }
 
+// isTrustedContentFilterProxy is deliberately CIDR-based rather than header
+// based: SMTP clients can forge headers, but they cannot forge their source IP
+// on the private network. Invalid entries fail closed.
+func (b *Backend) isTrustedContentFilterProxy(ip string) bool {
+	if !b.config.ContentFilter.Enabled || len(b.config.ContentFilter.TrustedProxyNetworks) == 0 {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, raw := range b.config.ContentFilter.TrustedProxyNetworks {
+		_, network, err := net.ParseCIDR(raw)
+		if err == nil && network.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
 type ipMessageLimiter struct {
 	mu      sync.Mutex
 	perHour int
@@ -303,6 +323,7 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		config:        bkd.config,
 		limiter:       bkd.limiter,
 		messageRates:  bkd.messageRates,
+		trustedFilter: bkd.isTrustedContentFilterProxy(ip),
 	}, nil
 }
 
@@ -325,6 +346,7 @@ type Session struct {
 	config        *config.Config
 	limiter       *connectionLimiter
 	messageRates  *ipMessageLimiter
+	trustedFilter bool
 }
 
 func (s *Session) AuthPlain(username, password string) error {
@@ -367,7 +389,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	s.logger.Debug("MAIL FROM", zap.String("from", from))
 
 	// Enforce authentication requirement
-	if s.config.Server.RequireAuth && !s.authenticated {
+	if s.config.Server.RequireAuth && !s.authenticated && !s.trustedFilter {
 		s.logger.Warn("Mail rejected - authentication required",
 			zap.String("from", from),
 			zap.String("ip", s.ip))
@@ -394,7 +416,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	}
 
 	// Validate FROM address against whitelist (for unauthenticated)
-	if !s.authenticated {
+	if !s.authenticated && !s.trustedFilter {
 		if res := s.validator.ValidateWhitelistFrom(from); res == auth.ResultFail {
 			return &smtp.SMTPError{
 				Code:         550,
@@ -520,6 +542,25 @@ func (s *Session) Data(r io.Reader) error {
 	}
 	s.logger.Debug("Received message data", zap.Int("length", len(b)))
 	s.msg.Data = b
+
+	// A quarantine request is honored only from the configured private
+	// MailScript proxy. Remove the control header before storing the message so
+	// it cannot be replayed or exposed as a client-controlled signal later.
+	if s.trustedFilter && s.config.ContentFilter.Enabled {
+		marker := s.config.ContentFilter.QuarantineHeader
+		if marker == "" {
+			marker = "X-MailScript-Quarantine"
+		}
+		if hasHeader(s.msg.Data, marker, "true") {
+			s.msg.Quarantine = true
+			s.msg.QuarantineFolder = s.config.ContentFilter.QuarantineFolder
+			if s.msg.QuarantineFolder == "" {
+				s.msg.QuarantineFolder = "Junk"
+			}
+			s.msg.Data = removeHeader(s.msg.Data, marker)
+			s.logger.Info("MailScript requested quarantine", zap.String("ip", s.ip), zap.String("folder", s.msg.QuarantineFolder))
+		}
+	}
 
 	// Spread Prevention Check
 	if s.spreadPrev != nil && s.spreadPrev.Evaluate(b) {
@@ -769,6 +810,30 @@ func dmarcPolicyApplies(message []byte, pct int) bool {
 	digest := sha256.Sum256(message)
 	bucket := (uint16(digest[0])<<8 | uint16(digest[1])) % 100
 	return int(bucket) < pct
+}
+
+func hasHeader(raw []byte, name, want string) bool {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		parts := bytes.SplitN(bytes.TrimSpace(line), []byte(":"), 2)
+		if len(parts) == 2 && strings.EqualFold(string(parts[0]), name) {
+			return strings.EqualFold(strings.TrimSpace(string(parts[1])), want)
+		}
+	}
+	return false
+}
+
+func removeHeader(raw []byte, name string) []byte {
+	lines := bytes.SplitAfter(raw, []byte("\n"))
+	filtered := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		parts := bytes.SplitN(trimmed, []byte(":"), 2)
+		if len(parts) == 2 && strings.EqualFold(string(parts[0]), name) {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return bytes.Join(filtered, nil)
 }
 
 func (s *Session) Reset() {

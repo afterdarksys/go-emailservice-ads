@@ -17,6 +17,7 @@ COPY . .
 # Build both binaries
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/goemailservices ./cmd/goemailservices
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailctl ./cmd/mailctl
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailflow-probe ./cmd/mailflow-probe
 
 # Final stage
 FROM alpine:latest
@@ -34,6 +35,7 @@ WORKDIR /opt/goemailservices
 # Copy binaries from builder
 COPY --from=builder /build/bin/goemailservices /usr/local/bin/
 COPY --from=builder /build/bin/mailctl /usr/local/bin/
+COPY --from=builder /build/bin/mailflow-probe /usr/local/bin/
 
 # Copy default configuration
 COPY config.yaml /opt/goemailservices/config.yaml
