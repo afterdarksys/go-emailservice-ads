@@ -58,6 +58,7 @@ type Config struct {
 	} `yaml:"imap"`
 
 	JMAP struct {
+		Enabled          bool   `yaml:"enabled"`             // Start the JMAP HTTP service
 		Addr             string `yaml:"addr"`                // JMAP HTTP listen address
 		JWTPublicKeyPath string `yaml:"jwt_public_key_path"` // PEM RSA/ECDSA public key for Bearer token validation
 		JWTIssuer        string `yaml:"jwt_issuer"`          // Expected iss claim (empty = skip check)
@@ -283,6 +284,8 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS before authentication
 	cfg.IMAP.TLSMode = "starttls"
+	cfg.JMAP.Enabled = false
+	cfg.JMAP.Addr = ":8443"
 
 	// AfterSMTP Defaults
 	cfg.AfterSMTP.Enabled = false

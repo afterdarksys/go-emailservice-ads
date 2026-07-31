@@ -49,6 +49,10 @@ imap:
     cert: "/var/lib/mail-storage/certs/server.crt"
     key: "/var/lib/mail-storage/certs/server.key"
 
+jmap:
+  enabled: false # Expose only behind the HTTPS reverse proxy until enabled intentionally
+  addr: ":8443"
+
 api:
   rest_addr: ":8080"
   grpc_addr: ":50051"

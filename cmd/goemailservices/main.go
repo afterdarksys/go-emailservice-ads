@@ -18,6 +18,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
+	"github.com/afterdarksys/go-emailservice-ads/internal/jmap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
 	"github.com/afterdarksys/go-emailservice-ads/internal/netutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
@@ -65,6 +66,9 @@ func main() {
 	portChecker := netutil.NewPortChecker()
 	portChecker.Check("SMTP", cfg.Server.Addr)
 	portChecker.Check("IMAP", cfg.IMAP.Addr)
+	if cfg.JMAP.Enabled {
+		portChecker.Check("JMAP", cfg.JMAP.Addr)
+	}
 	portChecker.Check("REST API", cfg.API.RESTAddr)
 	portChecker.Check("gRPC API", cfg.API.GRPCAddr)
 
@@ -222,6 +226,16 @@ func main() {
 		}
 	}()
 
+	// JMAP shares the authenticated mailbox store with IMAP. It is disabled by
+	// default so operators can place it behind an HTTPS reverse proxy explicitly.
+	var jmapServer *jmap.JMAPServer
+	if cfg.JMAP.Enabled {
+		jmapServer = jmap.NewJMAPServer(logger, cfg, imapValidator, imapAdapter)
+		if err := jmapServer.Start(cfg.JMAP.Addr); err != nil {
+			logger.Fatal("JMAP server failed", zap.Error(err))
+		}
+	}
+
 	// Graceful Shutdown Handling
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -237,6 +251,11 @@ func main() {
 	}
 	if err := imapServer.Shutdown(ctx); err != nil {
 		logger.Error("Error during IMAP server shutdown", zap.Error(err))
+	}
+	if jmapServer != nil {
+		if err := jmapServer.Shutdown(ctx); err != nil {
+			logger.Error("Error during JMAP server shutdown", zap.Error(err))
+		}
 	}
 	if err := apiServer.Shutdown(ctx); err != nil {
 		logger.Error("Error during API server shutdown", zap.Error(err))
