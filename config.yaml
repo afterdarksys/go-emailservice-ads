@@ -56,9 +56,12 @@ jmap:
 api:
   rest_addr: ":8080"
   grpc_addr: ":50051"
+  # NOTE: read literally — unlike elasticsearch.api_key, this field is NOT
+  # passed through os.ExpandEnv, so "${VAR}" would become the key itself.
+  # Set the real value in your deployed config, never in git.
   api_keys:
   - name: "Web Platform"
-    key: "1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH"
+    key: "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
     description: "API key for web platform integration"
     permissions: ["read", "write"]
   # IP Whitelist - Only these IPs can access the API (even with valid API key)
@@ -70,12 +73,11 @@ api:
   require_ip_auth: true        # Enforce IP whitelist
 
 auth:
+  # NOTE: passwords are read literally (no ${ENV} expansion — see
+  # internal/smtpd/server.go). Set real values in your deployed config only.
   default_users:
-  - username: "testuser"
-    password: "testpass123" # WARNING: Change in production! Use strong passwords.
-    email: "testuser@localhost.local"
   - username: "admin"
-    password: "admin123" # WARNING: Change in production!
+    password: "REPLACE_ME_USE_A_STRONG_PASSWORD" # WARNING: Change in production!
     email: "admin@localhost.local"
 
 # SSO Configuration for After Dark Systems

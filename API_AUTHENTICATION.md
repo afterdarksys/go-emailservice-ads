@@ -15,7 +15,7 @@ The go-emailservice-ads REST API supports **two authentication methods**:
 ### Your API Key
 
 ```
-1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH
+REPLACE_ME_SEE_DEPLOYMENT_DOCS
 ```
 
 **Name:** Web Platform
@@ -26,7 +26,7 @@ The go-emailservice-ads REST API supports **two authentication methods**:
 
 #### cURL Example
 ```bash
-curl -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   http://apps.afterdarksys.com:8080/api/v1/queue/stats
 ```
 
@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfu
 ```javascript
 fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
   headers: {
-    'Authorization': 'Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH'
+    'Authorization': 'Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS'
   }
 })
 .then(response => response.json())
@@ -46,7 +46,7 @@ fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
 import requests
 
 headers = {
-    'Authorization': 'Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH'
+    'Authorization': 'Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS'
 }
 
 response = requests.get(
@@ -59,7 +59,7 @@ print(response.json())
 #### Go
 ```go
 req, _ := http.NewRequest("GET", "http://apps.afterdarksys.com:8080/api/v1/queue/stats", nil)
-req.Header.Set("Authorization", "Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH")
+req.Header.Set("Authorization", "Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS")
 
 client := &http.Client{}
 resp, err := client.Do(req)
@@ -75,27 +75,27 @@ resp, err := client.Do(req)
 
 #### User 1: testuser
 - **Username:** `testuser`
-- **Password:** `testpass123`
+- **Password:** `REPLACE_ME_USE_A_STRONG_PASSWORD`
 - **Email:** `testuser@localhost.local`
 
 #### User 2: admin
 - **Username:** `admin`
-- **Password:** `admin123`
+- **Password:** `REPLACE_ME_USE_A_STRONG_PASSWORD`
 - **Email:** `admin@localhost.local`
 
 ### Usage
 
 #### cURL Example
 ```bash
-curl -u testuser:testpass123 http://apps.afterdarksys.com:8080/api/v1/queue/stats
+curl -u testuser:REPLACE_ME_USE_A_STRONG_PASSWORD http://apps.afterdarksys.com:8080/api/v1/queue/stats
 # or
-curl -u admin:admin123 http://apps.afterdarksys.com:8080/api/v1/queue/stats
+curl -u admin:REPLACE_ME_USE_A_STRONG_PASSWORD http://apps.afterdarksys.com:8080/api/v1/queue/stats
 ```
 
 #### JavaScript (Fetch API)
 ```javascript
 // Method 1: Using basic auth header
-const credentials = btoa('testuser:testpass123');
+const credentials = btoa('testuser:REPLACE_ME_USE_A_STRONG_PASSWORD');
 fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
   headers: {
     'Authorization': 'Basic ' + credentials
@@ -105,7 +105,7 @@ fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
 .then(data => console.log(data));
 
 // Method 2: Using URL
-fetch('http://testuser:testpass123@apps.afterdarksys.com:8080/api/v1/queue/stats')
+fetch('http://testuser:REPLACE_ME_USE_A_STRONG_PASSWORD@apps.afterdarksys.com:8080/api/v1/queue/stats')
   .then(response => response.json())
   .then(data => console.log(data));
 ```
@@ -116,7 +116,7 @@ import requests
 
 response = requests.get(
     'http://apps.afterdarksys.com:8080/api/v1/queue/stats',
-    auth=('testuser', 'testpass123')
+    auth=('testuser', 'REPLACE_ME_USE_A_STRONG_PASSWORD')
 )
 print(response.json())
 ```
@@ -173,7 +173,7 @@ GET /api/v1/queue/stats
 
 **Example with API Key:**
 ```bash
-curl -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   http://apps.afterdarksys.com:8080/api/v1/queue/stats
 ```
 
@@ -206,7 +206,7 @@ GET /api/v1/queue/pending?tier=<tier>
 
 **Example:**
 ```bash
-curl -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   "http://apps.afterdarksys.com:8080/api/v1/queue/pending?tier=out"
 ```
 
@@ -242,7 +242,7 @@ POST /api/v1/dlq/retry/<message_id>
 **Example:**
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+  -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   http://apps.afterdarksys.com:8080/api/v1/dlq/retry/msg-12345
 ```
 
@@ -255,7 +255,7 @@ GET /api/v1/message/<message_id>
 
 **Example:**
 ```bash
-curl -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   http://apps.afterdarksys.com:8080/api/v1/message/msg-12345
 ```
 
@@ -267,7 +267,7 @@ DELETE /api/v1/message/<message_id>
 **Example:**
 ```bash
 curl -X DELETE \
-  -H "Authorization: Bearer 1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH" \
+  -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
   http://apps.afterdarksys.com:8080/api/v1/message/msg-12345
 ```
 
@@ -335,7 +335,7 @@ api:
   grpc_addr: ":50051"
   api_keys:
   - name: "Web Platform"
-    key: "1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH"
+    key: "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
     description: "API key for web platform integration"
     permissions: ["read", "write"]
   - name: "Mobile App"
@@ -395,14 +395,14 @@ Incorrect HTTP method for the endpoint.
 
 ```bash
 #!/bin/bash
-API_KEY="1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH"
+API_KEY="REPLACE_ME_SEE_DEPLOYMENT_DOCS"
 BASE_URL="http://apps.afterdarksys.com:8080"
 
 echo "Testing API Key authentication..."
 curl -H "Authorization: Bearer $API_KEY" "$BASE_URL/api/v1/queue/stats"
 
 echo -e "\n\nTesting Basic Auth..."
-curl -u testuser:testpass123 "$BASE_URL/api/v1/queue/stats"
+curl -u testuser:REPLACE_ME_USE_A_STRONG_PASSWORD "$BASE_URL/api/v1/queue/stats"
 
 echo -e "\n\nTesting invalid credentials..."
 curl -u wrong:credentials "$BASE_URL/api/v1/queue/stats"
@@ -414,7 +414,7 @@ curl -u wrong:credentials "$BASE_URL/api/v1/queue/stats"
 import requests
 import json
 
-API_KEY = "1lHlAbGYzOtDn2F1Muw2hkpktgNcQ1aCPA57s6DUfXSTHaDfuzN+YXMADUW2BIoH"
+API_KEY = "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
 BASE_URL = "http://apps.afterdarksys.com:8080"
 
 def test_api_key_auth():
@@ -429,7 +429,7 @@ def test_basic_auth():
     """Test basic authentication"""
     response = requests.get(
         f"{BASE_URL}/api/v1/queue/stats",
-        auth=("testuser", "testpass123")
+        auth=("testuser", "REPLACE_ME_USE_A_STRONG_PASSWORD")
     )
     assert response.status_code == 200
     print("✓ Basic authentication works")

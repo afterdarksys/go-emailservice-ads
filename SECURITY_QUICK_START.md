@@ -212,7 +212,7 @@ telnet localhost 1143
 # Commands:
 > a1 CAPABILITY
 < * CAPABILITY IMAP4rev1 ...
-> a2 LOGIN testuser testpass123
+> a2 LOGIN testuser REPLACE_ME_USE_A_STRONG_PASSWORD
 < a2 OK LOGIN completed
 > a3 SELECT INBOX
 < * FLAGS (\Seen \Answered \Flagged \Deleted \Draft)
@@ -225,7 +225,7 @@ telnet localhost 1143
 Server: localhost
 Port: 1143
 Username: testuser
-Password: testpass123
+Password: REPLACE_ME_USE_A_STRONG_PASSWORD
 Encryption: STARTTLS
 ```
 

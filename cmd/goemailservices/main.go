@@ -315,7 +315,7 @@ api:
 auth:
   default_users:
     - username: "testuser"
-      password: "testpass123"
+      password: "REPLACE_ME_USE_A_STRONG_PASSWORD"
       email: "testuser@localhost.local"
 aftersmtp:
   enabled: false

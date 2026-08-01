@@ -379,7 +379,7 @@ QUIT
 ### View Queue Stats
 ```bash
 curl http://localhost:8080/api/v1/queue/stats \
-  -H "Authorization: Basic $(echo -n 'admin:admin123' | base64)"
+  -H "Authorization: Basic $(echo -n 'admin:REPLACE_ME_USE_A_STRONG_PASSWORD' | base64)"
 ```
 
 ---

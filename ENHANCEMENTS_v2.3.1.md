@@ -274,7 +274,7 @@ go build ./internal/config/...
 ./mail-test smtp connect --host localhost --port 2525 -v
 
 # Full diagnostic
-./mail-test diag full --host localhost -u testuser -p testpass123
+./mail-test diag full --host localhost -u testuser -p REPLACE_ME_USE_A_STRONG_PASSWORD
 ```
 
 ## 9. Documentation Updates

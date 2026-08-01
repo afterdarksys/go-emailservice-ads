@@ -265,7 +265,7 @@ Local users in `config.yaml` continue to work normally:
 auth:
   default_users:
     - username: "admin"
-      password: "admin123"
+      password: "REPLACE_ME_USE_A_STRONG_PASSWORD"
       email: "admin@localhost.local"
 ```
 

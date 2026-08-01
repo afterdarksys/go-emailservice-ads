@@ -140,12 +140,12 @@
 ### Email Users
 - **User 1:**
   - Username: `testuser`
-  - Password: `testpass123`
+  - Password: `REPLACE_ME_USE_A_STRONG_PASSWORD`
   - Email: `testuser@localhost.local`
 
 - **User 2:**
   - Username: `admin`
-  - Password: `admin123`
+  - Password: `REPLACE_ME_USE_A_STRONG_PASSWORD`
   - Email: `admin@localhost.local`
 
 ### Grafana Admin
