@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/smtp"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // SMTPConnect tests SMTP connection and greeting
 func SMTPConnect(cfg Config) error {
 	port := cfg.GetPort("smtp", 25)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP Connection Test")
 	printInfo("Connecting to: %s", addr)
@@ -26,7 +27,7 @@ func SMTPConnect(cfg Config) error {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	
+
 	// Read greeting
 	greeting, err := reader.ReadString('\n')
 	if err != nil {
@@ -50,7 +51,7 @@ func SMTPConnect(cfg Config) error {
 // SMTPEhlo tests EHLO and displays capabilities
 func SMTPEhlo(cfg Config) error {
 	port := cfg.GetPort("smtp", 25)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP EHLO Test")
 	printInfo("Connecting to: %s", addr)
@@ -118,7 +119,7 @@ func SMTPEhlo(cfg Config) error {
 // SMTPStartTLS tests STARTTLS negotiation
 func SMTPStartTLS(cfg Config) error {
 	port := cfg.GetPort("smtp", 587)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP STARTTLS Test")
 	printInfo("Connecting to: %s", addr)
@@ -175,7 +176,7 @@ func SMTPAuth(cfg Config) error {
 	}
 
 	port := cfg.GetPort("smtp", 587)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP AUTH Test")
 	printInfo("Connecting to: %s", addr)
@@ -216,7 +217,7 @@ func SMTPSend(cfg Config) error {
 	}
 
 	port := cfg.GetPort("smtp", 587)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP Send Test")
 	printInfo("Connecting to: %s", addr)
@@ -229,7 +230,7 @@ func SMTPSend(cfg Config) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n", from, to[0], subject, body)
 
 	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	
+
 	if err := smtp.SendMail(addr, auth, from, to, []byte(msg)); err != nil {
 		return printError("Failed to send message: %v", err)
 	}
@@ -245,7 +246,7 @@ func SMTPSend(cfg Config) error {
 // SMTPInteractive runs an interactive SMTP session
 func SMTPInteractive(cfg Config) error {
 	port := cfg.GetPort("smtp", 25)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("SMTP Interactive Session")
 	printInfo("Connecting to: %s", addr)

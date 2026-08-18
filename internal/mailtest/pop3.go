@@ -5,13 +5,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
 // POP3Connect tests POP3 connection
 func POP3Connect(cfg Config) error {
 	port := cfg.GetPort("pop3", 110)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("POP3 Connection Test")
 	printInfo("Connecting to: %s", addr)
@@ -66,7 +67,7 @@ func POP3Auth(cfg Config) error {
 	}
 
 	port := cfg.GetPort("pop3", 110)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("POP3 Authentication Test")
 	printInfo("Connecting to: %s", addr)
@@ -130,7 +131,7 @@ func POP3Stat(cfg Config) error {
 	}
 
 	port := cfg.GetPort("pop3", 110)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
 
 	printHeader("POP3 Statistics")
 	printInfo("Connecting to: %s", addr)
