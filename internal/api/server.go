@@ -179,21 +179,14 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// getClientIP extracts the client IP from the request
+// getClientIP extracts the client IP from the request for allowlist checks.
+//
+// Threats: this feeds the require_ip_auth allowlist, so it must not be
+// attacker-influenced. X-Forwarded-For and X-Real-IP are client-supplied
+// headers — the REST port is published directly (no trusted reverse proxy
+// strips them), so honoring them let any caller spoof an allowlisted address
+// with a single header. Only the TCP peer address is trusted.
 func (s *Server) getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxied requests)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		// Return the first IP (original client)
-		return strings.TrimSpace(ips[0])
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
 	ip := r.RemoteAddr
 	// Strip port if present
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {

@@ -260,6 +260,32 @@ func TestMailboxIPAllowlistEnforced(t *testing.T) {
 	}
 }
 
+// TestMailboxIPAllowlistIgnoresSpoofedHeaders proves a caller from a
+// non-allowlisted address cannot bypass require_ip_auth by supplying
+// X-Forwarded-For / X-Real-IP headers naming an allowlisted address.
+func TestMailboxIPAllowlistIgnoresSpoofedHeaders(t *testing.T) {
+	s, store := newMailboxTestServer(t, true) // allowlist = 10.9.9.9 only
+
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		raw, _ := json.Marshal(map[string]string{
+			"username": "evil@example.com", "password": "a-long-enough-password",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/mailboxes", bytes.NewReader(raw))
+		req.RemoteAddr = "203.0.113.50:44444" // not allowlisted
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set(header, "10.9.9.9") // spoofed allowlisted address
+
+		rec := httptest.NewRecorder()
+		s.buildMux().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("spoofed %s: got %d, want 403", header, rec.Code)
+		}
+	}
+	if _, ok := store.GetUser("evil@example.com"); ok {
+		t.Fatal("spoofed-header request created a user")
+	}
+}
+
 func TestMailboxOversizedBodyRejected(t *testing.T) {
 	s, _ := newMailboxTestServer(t, false)
 
