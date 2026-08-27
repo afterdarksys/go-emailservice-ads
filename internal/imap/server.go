@@ -81,8 +81,15 @@ func (s *Server) Start() error {
 	addr := s.config.IMAP.Addr
 	s.logger.Info("Starting IMAP4rev1 server (go-imap)", zap.String("addr", addr))
 
-	// Create backend
-	backend := NewBackend(s.logger, s.store, s.validator)
+	// Create backend, passing master (proxy) auth config for trusted
+	// control-plane services (e.g. the msgs.global mail-read gateway).
+	master := MasterAuthConfig{
+		User:       s.config.Auth.MasterUser,
+		Password:   s.config.Auth.MasterPassword,
+		AllowedIPs: s.config.Auth.MasterAllowedIPs,
+		Separator:  s.config.Auth.MasterSeparator,
+	}
+	backend := NewBackend(s.logger, s.store, s.validator, master)
 
 	// Create IMAP server
 	s.imapServer = server.New(backend)

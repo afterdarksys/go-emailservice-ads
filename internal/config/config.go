@@ -101,6 +101,14 @@ type Config struct {
 
 	Auth struct {
 		DefaultUsers []UserConfig `yaml:"default_users"`
+		// Master (proxy) IMAP login for trusted control-plane services
+		// (msgs.global mail-read gateway). Login form: "<user><sep><master_user>"
+		// with master_password. Disabled unless user, password, AND a non-empty
+		// IP allowlist are all configured — fail closed.
+		MasterUser       string   `yaml:"master_user"`
+		MasterPassword   string   `yaml:"master_password"`
+		MasterAllowedIPs []string `yaml:"master_allowed_ips"`
+		MasterSeparator  string   `yaml:"master_separator"` // default "*"
 	} `yaml:"auth"`
 
 	// SSO Configuration for external authentication providers
