@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -449,6 +450,83 @@ func (s *UserStore) GetUser(username string) (*User, bool) {
 	defer s.mu.RUnlock()
 	user, exists := s.users[username]
 	return user, exists
+}
+
+// ListUsers returns a snapshot of all users sorted by username. The returned
+// slice holds copies so callers cannot mutate store state (and cannot leak a
+// pointer to a live PasswordHash that later changes under them).
+func (s *UserStore) ListUsers() []User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	users := make([]User, 0, len(s.users))
+	for _, u := range s.users {
+		users = append(users, *u)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
+	return users
+}
+
+// UpdateEmail changes a user's email without touching the password hash.
+// The persisted copy is updated first so a failed write never leaves memory
+// and database out of sync in favor of the unsaved value.
+func (s *UserStore) UpdateEmail(username, email string) error {
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return ErrUserNotFound
+	}
+
+	updated := *user
+	updated.Email = email
+
+	if s.repository != nil {
+		ctx := context.Background()
+		if err := s.repository.SaveUser(ctx, &updated); err != nil {
+			if s.logger != nil {
+				s.logger.Error("Failed to persist email update",
+					zap.String("username", username),
+					zap.Error(err))
+			}
+			return fmt.Errorf("failed to persist email update: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	s.users[username] = &updated
+	s.mu.Unlock()
+	return nil
+}
+
+// DeleteUser removes a user from the store and, when persistence is
+// configured, from the database (which cascades entitlements and quotas).
+// The database delete runs first so a failed persistence layer never leaves
+// a user deleted in memory but resurrected on the next restart.
+func (s *UserStore) DeleteUser(username string) error {
+	s.mu.RLock()
+	_, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return ErrUserNotFound
+	}
+
+	if s.repository != nil {
+		ctx := context.Background()
+		if err := s.repository.DeleteUser(ctx, username); err != nil && !errors.Is(err, ErrUserNotFound) {
+			if s.logger != nil {
+				s.logger.Error("Failed to delete user from database",
+					zap.String("username", username),
+					zap.Error(err))
+			}
+			return fmt.Errorf("failed to delete user from database: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	delete(s.users, username)
+	s.mu.Unlock()
+	return nil
 }
 
 // Validator handles IP, EHLO, and Sender validation

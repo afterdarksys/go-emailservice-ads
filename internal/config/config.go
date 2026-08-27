@@ -101,6 +101,14 @@ type Config struct {
 
 	Auth struct {
 		DefaultUsers []UserConfig `yaml:"default_users"`
+		// UserDatabaseURL enables the persistent user store. Empty (default)
+		// keeps the legacy behavior: users live in memory and only
+		// default_users exist. A postgres:// URL uses PostgreSQL; anything
+		// else is treated as a SQLite file path (e.g. ./data/users.db).
+		// When set, default_users become bootstrap-only: they are created if
+		// missing but never overwrite users managed via the admin API.
+		// Startup fails closed if the database cannot be opened.
+		UserDatabaseURL string `yaml:"user_database_url"`
 		// Master (proxy) IMAP login for trusted control-plane services
 		// (msgs.global mail-read gateway). Login form: "<user><sep><master_user>"
 		// with master_password. Disabled unless user, password, AND a non-empty

@@ -3,40 +3,77 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite"
 )
 
-// UserRepository provides PostgreSQL persistence for users and their entitlements
+// UserRepository provides persistence for users and their entitlements.
+//
+// Two backends are supported, selected by the connection string:
+//   - postgres:// or postgresql:// URLs (or key=value DSNs) use PostgreSQL
+//   - anything else is treated as a SQLite file path (e.g. ./data/users.db),
+//     matching the mailbox store's local-storage model
 type UserRepository struct {
 	db     *sql.DB
+	driver string // "postgres" or "sqlite"
 	logger *zap.Logger
 }
 
-// NewUserRepository creates a new PostgreSQL-backed user repository
+func isPostgresDSN(connStr string) bool {
+	return strings.HasPrefix(connStr, "postgres://") ||
+		strings.HasPrefix(connStr, "postgresql://") ||
+		strings.Contains(connStr, "host=") ||
+		strings.Contains(connStr, "dbname=")
+}
+
+// NewUserRepository creates a new user repository backed by PostgreSQL or SQLite.
 func NewUserRepository(connStr string, logger *zap.Logger) (*UserRepository, error) {
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	driver := "sqlite"
+	dsn := connStr
+	if isPostgresDSN(connStr) {
+		driver = "postgres"
+	} else if !strings.HasPrefix(connStr, "file:") {
+		// Plain file path: ensure the parent directory exists and enable the
+		// pragmas a concurrent server needs (FK cascades, WAL, busy timeout).
+		if dir := filepath.Dir(connStr); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("failed to create user db directory: %w", err)
+			}
+		}
+		dsn = "file:" + connStr + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	}
 
-	// Configure connection pool
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(1 * time.Minute)
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open user database: %w", err)
+	}
+
+	// Configure connection pool. SQLite gets a single connection: it has one
+	// writer, and a pool of connections just manufactures SQLITE_BUSY errors.
+	if driver == "postgres" {
+		db.SetMaxOpenConns(50)
+		db.SetMaxIdleConns(10)
+		db.SetConnMaxLifetime(5 * time.Minute)
+		db.SetConnMaxIdleTime(1 * time.Minute)
+	} else {
+		db.SetMaxOpenConns(1)
+	}
 
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping user database: %w", err)
 	}
 
 	repo := &UserRepository{
 		db:     db,
+		driver: driver,
 		logger: logger,
 	}
 
@@ -46,58 +83,92 @@ func NewUserRepository(connStr string, logger *zap.Logger) (*UserRepository, err
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	logger.Info("Connected to user database",
-		zap.Int("max_open_conns", 50),
-		zap.Int("max_idle_conns", 10))
-
+	logger.Info("Connected to user database", zap.String("driver", driver))
 	return repo, nil
 }
 
 // initSchema creates tables if they don't exist
 func (r *UserRepository) initSchema() error {
-	schema := `
-		-- Users table
-		CREATE TABLE IF NOT EXISTS users (
-			username VARCHAR(255) PRIMARY KEY,
-			password_hash VARCHAR(255) NOT NULL,
-			email VARCHAR(255) NOT NULL,
-			enabled BOOLEAN NOT NULL DEFAULT TRUE,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			last_login TIMESTAMP,
-			metadata JSONB
-		);
+	var schema string
+	if r.driver == "postgres" {
+		schema = `
+			CREATE TABLE IF NOT EXISTS users (
+				username VARCHAR(255) PRIMARY KEY,
+				password_hash VARCHAR(255) NOT NULL,
+				email VARCHAR(255) NOT NULL,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				last_login TIMESTAMP,
+				metadata JSONB
+			);
 
-		CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-		CREATE INDEX IF NOT EXISTS idx_users_enabled ON users(enabled);
+			CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+			CREATE INDEX IF NOT EXISTS idx_users_enabled ON users(enabled);
 
-		-- Domain entitlements table
-		CREATE TABLE IF NOT EXISTS user_domain_entitlements (
-			id BIGSERIAL PRIMARY KEY,
-			username VARCHAR(255) NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-			domain VARCHAR(255) NOT NULL,
-			granted_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			granted_by VARCHAR(255),
-			notes TEXT,
-			UNIQUE(username, domain)
-		);
+			CREATE TABLE IF NOT EXISTS user_domain_entitlements (
+				id BIGSERIAL PRIMARY KEY,
+				username VARCHAR(255) NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+				domain VARCHAR(255) NOT NULL,
+				granted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				granted_by VARCHAR(255),
+				notes TEXT,
+				UNIQUE(username, domain)
+			);
 
-		CREATE INDEX IF NOT EXISTS idx_domain_entitlements_username ON user_domain_entitlements(username);
-		CREATE INDEX IF NOT EXISTS idx_domain_entitlements_domain ON user_domain_entitlements(domain);
+			CREATE INDEX IF NOT EXISTS idx_domain_entitlements_username ON user_domain_entitlements(username);
+			CREATE INDEX IF NOT EXISTS idx_domain_entitlements_domain ON user_domain_entitlements(domain);
 
-		-- User quotas/limits table
-		CREATE TABLE IF NOT EXISTS user_quotas (
-			username VARCHAR(255) PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
-			max_messages_per_hour INTEGER DEFAULT 100,
-			max_messages_per_day INTEGER DEFAULT 1000,
-			max_recipients_per_message INTEGER DEFAULT 50,
-			max_message_size_bytes BIGINT DEFAULT 26214400, -- 25MB
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-		);
-	`
+			CREATE TABLE IF NOT EXISTS user_quotas (
+				username VARCHAR(255) PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+				max_messages_per_hour INTEGER DEFAULT 100,
+				max_messages_per_day INTEGER DEFAULT 1000,
+				max_recipients_per_message INTEGER DEFAULT 50,
+				max_message_size_bytes BIGINT DEFAULT 26214400, -- 25MB
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+		`
+	} else {
+		schema = `
+			CREATE TABLE IF NOT EXISTS users (
+				username TEXT PRIMARY KEY,
+				password_hash TEXT NOT NULL,
+				email TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_login TIMESTAMP,
+				metadata TEXT
+			);
 
-	_, err := r.db.Exec(schema)
-	if err != nil {
+			CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+			CREATE INDEX IF NOT EXISTS idx_users_enabled ON users(enabled);
+
+			CREATE TABLE IF NOT EXISTS user_domain_entitlements (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+				domain TEXT NOT NULL,
+				granted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				granted_by TEXT,
+				notes TEXT,
+				UNIQUE(username, domain)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_domain_entitlements_username ON user_domain_entitlements(username);
+			CREATE INDEX IF NOT EXISTS idx_domain_entitlements_domain ON user_domain_entitlements(domain);
+
+			CREATE TABLE IF NOT EXISTS user_quotas (
+				username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+				max_messages_per_hour INTEGER DEFAULT 100,
+				max_messages_per_day INTEGER DEFAULT 1000,
+				max_recipients_per_message INTEGER DEFAULT 50,
+				max_message_size_bytes INTEGER DEFAULT 26214400, -- 25MB
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+		`
+	}
+
+	if _, err := r.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
 
@@ -107,17 +178,19 @@ func (r *UserRepository) initSchema() error {
 
 // SaveUser creates or updates a user
 func (r *UserRepository) SaveUser(ctx context.Context, user *User) error {
+	// Timestamps are computed in Go so the statement is portable across
+	// PostgreSQL and SQLite.
 	query := `
 		INSERT INTO users (username, password_hash, email, enabled, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (username) DO UPDATE SET
 			password_hash = EXCLUDED.password_hash,
 			email = EXCLUDED.email,
 			enabled = EXCLUDED.enabled,
-			updated_at = NOW()
+			updated_at = EXCLUDED.updated_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query, user.Username, user.PasswordHash, user.Email, user.Enabled)
+	_, err := r.db.ExecContext(ctx, query, user.Username, user.PasswordHash, user.Email, user.Enabled, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to save user: %w", err)
 	}
@@ -203,15 +276,15 @@ func (r *UserRepository) DeleteUser(ctx context.Context, username string) error 
 // GrantDomainEntitlement grants a user permission to send from a domain
 func (r *UserRepository) GrantDomainEntitlement(ctx context.Context, username, domain, grantedBy, notes string) error {
 	query := `
-		INSERT INTO user_domain_entitlements (username, domain, granted_by, notes)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO user_domain_entitlements (username, domain, granted_by, notes, granted_at)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (username, domain) DO UPDATE SET
 			granted_by = EXCLUDED.granted_by,
 			notes = EXCLUDED.notes,
-			granted_at = NOW()
+			granted_at = EXCLUDED.granted_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query, username, domain, grantedBy, notes)
+	_, err := r.db.ExecContext(ctx, query, username, domain, grantedBy, notes, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to grant domain entitlement: %w", err)
 	}
@@ -317,16 +390,16 @@ func (r *UserRepository) ListDomainEntitlements(ctx context.Context) ([]DomainEn
 func (r *UserRepository) SetUserQuota(ctx context.Context, username string, quota *UserQuota) error {
 	query := `
 		INSERT INTO user_quotas (username, max_messages_per_hour, max_messages_per_day, max_recipients_per_message, max_message_size_bytes, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (username) DO UPDATE SET
 			max_messages_per_hour = EXCLUDED.max_messages_per_hour,
 			max_messages_per_day = EXCLUDED.max_messages_per_day,
 			max_recipients_per_message = EXCLUDED.max_recipients_per_message,
 			max_message_size_bytes = EXCLUDED.max_message_size_bytes,
-			updated_at = NOW()
+			updated_at = EXCLUDED.updated_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query, username, quota.MaxMessagesPerHour, quota.MaxMessagesPerDay, quota.MaxRecipientsPerMessage, quota.MaxMessageSizeBytes)
+	_, err := r.db.ExecContext(ctx, query, username, quota.MaxMessagesPerHour, quota.MaxMessagesPerDay, quota.MaxRecipientsPerMessage, quota.MaxMessageSizeBytes, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to set user quota: %w", err)
 	}
@@ -354,10 +427,10 @@ func (r *UserRepository) GetUserQuota(ctx context.Context, username string) (*Us
 	if err == sql.ErrNoRows {
 		// Return default quota
 		return &UserQuota{
-			MaxMessagesPerHour:       100,
-			MaxMessagesPerDay:        1000,
-			MaxRecipientsPerMessage:  50,
-			MaxMessageSizeBytes:      26214400, // 25MB
+			MaxMessagesPerHour:      100,
+			MaxMessagesPerDay:       1000,
+			MaxRecipientsPerMessage: 50,
+			MaxMessageSizeBytes:     26214400, // 25MB
 		}, nil
 	}
 	if err != nil {
@@ -369,9 +442,9 @@ func (r *UserRepository) GetUserQuota(ctx context.Context, username string) (*Us
 
 // UpdateLastLogin updates the user's last login timestamp
 func (r *UserRepository) UpdateLastLogin(ctx context.Context, username string) error {
-	query := `UPDATE users SET last_login = NOW() WHERE username = $1`
+	query := `UPDATE users SET last_login = $2 WHERE username = $1`
 
-	_, err := r.db.ExecContext(ctx, query, username)
+	_, err := r.db.ExecContext(ctx, query, username, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to update last login: %w", err)
 	}
@@ -395,12 +468,14 @@ func (r *UserRepository) LoadAllUsers(ctx context.Context) (map[string]*User, er
 	return userMap, nil
 }
 
-// LoadAllDomainEntitlements loads all domain entitlements from database into memory
+// LoadAllDomainEntitlements loads all domain entitlements from database into
+// memory. Rows are scanned individually — no engine-specific aggregation — so
+// the same query works on PostgreSQL and SQLite.
 func (r *UserRepository) LoadAllDomainEntitlements(ctx context.Context) (map[string][]string, error) {
 	query := `
-		SELECT username, array_agg(domain ORDER BY domain) as domains
+		SELECT username, domain
 		FROM user_domain_entitlements
-		GROUP BY username
+		ORDER BY username, domain
 	`
 
 	rows, err := r.db.QueryContext(ctx, query)
@@ -411,19 +486,14 @@ func (r *UserRepository) LoadAllDomainEntitlements(ctx context.Context) (map[str
 
 	domainMap := make(map[string][]string)
 	for rows.Next() {
-		var username string
-		var domainsJSON []byte
-
-		if err := rows.Scan(&username, &domainsJSON); err != nil {
+		var username, domain string
+		if err := rows.Scan(&username, &domain); err != nil {
 			return nil, fmt.Errorf("failed to scan domain entitlements: %w", err)
 		}
-
-		var domains []string
-		if err := json.Unmarshal(domainsJSON, &domains); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal domains: %w", err)
-		}
-
-		domainMap[username] = domains
+		domainMap[username] = append(domainMap[username], domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to load domain entitlements: %w", err)
 	}
 
 	r.logger.Info("Loaded domain entitlements from database", zap.Int("users", len(domainMap)))

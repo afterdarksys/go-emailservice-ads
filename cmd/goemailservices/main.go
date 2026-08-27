@@ -197,8 +197,54 @@ func main() {
 		queueManager.SetPolicyManager(policyMgr)
 	}
 
+	// Create the shared auth validator/user store before the API server so
+	// the REST mailbox-management endpoints operate on the same store the
+	// IMAP server authenticates against.
+	imapValidator := auth.NewValidator(logger)
+	imapUserStore := imapValidator.GetUserStore()
+	imapUserStore.SetLogger(logger)
+
+	// Persistent user store (optional). Fail closed: a configured database
+	// that cannot be opened must stop startup rather than silently running
+	// with an empty in-memory user set.
+	if cfg.Auth.UserDatabaseURL != "" {
+		userRepo, err := auth.NewUserRepository(cfg.Auth.UserDatabaseURL, logger)
+		if err != nil {
+			logger.Fatal("Failed to open user database", zap.Error(err))
+		}
+		defer userRepo.Close()
+		if err := imapUserStore.SetRepository(userRepo); err != nil {
+			logger.Fatal("Failed to load users from database", zap.Error(err))
+		}
+		if err := imapValidator.LoadDomainEntitlements(); err != nil {
+			logger.Fatal("Failed to load domain entitlements", zap.Error(err))
+		}
+	}
+
+	// Initialize SSO for IMAP if enabled
+	if cfg.SSO.Enabled {
+		ssoProvider := auth.NewSSOProvider(cfg, logger)
+		if ssoProvider != nil {
+			imapUserStore.SetSSOProvider(ssoProvider)
+		}
+	}
+
+	// Load default users. With a persistent store these are bootstrap-only:
+	// created when missing, but never overwriting an existing user, so
+	// password changes made through the admin API survive restarts.
+	for _, userCfg := range cfg.Auth.DefaultUsers {
+		if cfg.Auth.UserDatabaseURL != "" {
+			if _, exists := imapUserStore.GetUser(userCfg.Username); exists {
+				continue
+			}
+		}
+		if err := imapUserStore.AddUser(userCfg.Username, userCfg.Password, userCfg.Email); err != nil {
+			logger.Error("Failed to add IMAP user", zap.String("username", userCfg.Username), zap.Error(err))
+		}
+	}
+
 	// Start API Servers with full dependencies
-	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr)
+	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
 	apiServer.Start()
 
 	// Start AfterSMTP Bridge Service (if enabled)
@@ -220,27 +266,7 @@ func main() {
 		}
 	}()
 
-	// Start IMAP Server (if enabled)
-	// Create a validator for IMAP authentication (could share with SMTP in production)
-	imapValidator := auth.NewValidator(logger)
-	imapUserStore := imapValidator.GetUserStore()
-	imapUserStore.SetLogger(logger)
-
-	// Initialize SSO for IMAP if enabled
-	if cfg.SSO.Enabled {
-		ssoProvider := auth.NewSSOProvider(cfg, logger)
-		if ssoProvider != nil {
-			imapUserStore.SetSSOProvider(ssoProvider)
-		}
-	}
-
-	// Load default users for IMAP as well
-	for _, userCfg := range cfg.Auth.DefaultUsers {
-		if err := imapUserStore.AddUser(userCfg.Username, userCfg.Password, userCfg.Email); err != nil {
-			logger.Error("Failed to add IMAP user", zap.String("username", userCfg.Username), zap.Error(err))
-		}
-	}
-
+	// Start IMAP Server (if enabled) — shares imapValidator with the REST API.
 	// Reuse the mailbox store already created for the queue manager
 	imapServer := imap.NewServer(logger, imapStore, cfg, imapValidator)
 	go func() {

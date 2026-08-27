@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"text/tabwriter"
 
@@ -25,6 +31,38 @@ func mailboxCmd() *cobra.Command {
 	return cmd
 }
 
+type mailboxEntry struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// mailboxAPIError turns a non-2xx API response into a readable error.
+func mailboxAPIError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	msg := string(bytes.TrimSpace(body))
+	if msg == "" {
+		msg = resp.Status
+	}
+	return fmt.Errorf("API error (%d): %s", resp.StatusCode, msg)
+}
+
+// generatePassword returns a 24-character password from the OS CSPRNG. The
+// alphabet is exactly 64 symbols so the modulo mapping is bias-free.
+func generatePassword() (string, error) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	const length = 24
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("failed to generate password: %w", err)
+	}
+	out := make([]byte, length)
+	for i, b := range raw {
+		out[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(out), nil
+}
+
 func mailboxListCmd() *cobra.Command {
 	var domain string
 
@@ -32,15 +70,47 @@ func mailboxListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all mailboxes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			url := "/api/v1/mailboxes"
-			if domain != "" {
-				url += "?domain=" + domain
+			resp, err := apiRequest("GET", "/api/v1/mailboxes", nil)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return mailboxAPIError(resp)
 			}
 
-			// TODO: Implement API call
-			fmt.Println("Mailbox List")
-			fmt.Println("============")
-			fmt.Println("(API endpoint not yet implemented)")
+			var mailboxes []mailboxEntry
+			if err := json.NewDecoder(resp.Body).Decode(&mailboxes); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			if domain != "" {
+				filtered := mailboxes[:0]
+				for _, m := range mailboxes {
+					if hasDomainSuffix(m.Username, domain) || hasDomainSuffix(m.Email, domain) {
+						filtered = append(filtered, m)
+					}
+				}
+				mailboxes = filtered
+			}
+
+			if jsonOutput {
+				out, err := json.MarshalIndent(mailboxes, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(out))
+				return nil
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "USERNAME\tEMAIL\tENABLED")
+			fmt.Fprintln(w, "--------\t-----\t-------")
+			for _, m := range mailboxes {
+				fmt.Fprintf(w, "%s\t%s\t%v\n", m.Username, m.Email, m.Enabled)
+			}
+			w.Flush()
+			fmt.Printf("\n%d mailbox(es)\n", len(mailboxes))
 			return nil
 		},
 	}
@@ -50,28 +120,70 @@ func mailboxListCmd() *cobra.Command {
 	return cmd
 }
 
+func hasDomainSuffix(addr, domain string) bool {
+	suffix := "@" + domain
+	return len(addr) > len(suffix) && addr[len(addr)-len(suffix):] == suffix
+}
+
 func mailboxCreateCmd() *cobra.Command {
 	var password string
-	var quota int64
+	var email string
 
 	cmd := &cobra.Command{
-		Use:   "create <email>",
+		Use:   "create <username>",
 		Short: "Create a new mailbox",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a new mailbox on the running server (no restart needed).
+
+The username is normally the full address (e.g. hello@purrr.email). When
+--password is omitted, a random 24-character password is generated and
+printed ONCE — record it immediately.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			email := args[0]
-			fmt.Printf("Creating mailbox: %s\n", email)
-			if password != "" {
-				fmt.Println("Password: (set)")
+			username := args[0]
+
+			generated := false
+			if password == "" {
+				var err error
+				password, err = generatePassword()
+				if err != nil {
+					return err
+				}
+				generated = true
 			}
-			fmt.Printf("Quota: %d MB\n", quota)
-			fmt.Println("✓ Mailbox created")
+
+			payload, err := json.Marshal(map[string]string{
+				"username": username,
+				"password": password,
+				"email":    email,
+			})
+			if err != nil {
+				return err
+			}
+
+			resp, err := apiRequest("POST", "/api/v1/mailboxes", bytes.NewReader(payload))
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				return mailboxAPIError(resp)
+			}
+
+			var created mailboxEntry
+			if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			fmt.Printf("✓ Mailbox created: %s (email: %s)\n", created.Username, created.Email)
+			if generated {
+				fmt.Printf("Generated password (shown once): %s\n", password)
+			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&password, "password", "p", "", "Set mailbox password")
-	cmd.Flags().Int64VarP(&quota, "quota", "q", 5000, "Mailbox quota in MB")
+	cmd.Flags().StringVarP(&password, "password", "p", "", "Mailbox password (generated when omitted)")
+	cmd.Flags().StringVarP(&email, "email", "e", "", "Email address (defaults to the username)")
 
 	return cmd
 }
@@ -80,12 +192,14 @@ func mailboxDeleteCmd() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <email>",
+		Use:   "delete <username>",
 		Short: "Delete a mailbox",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			username := args[0]
+
 			if !force {
-				fmt.Print("Are you sure you want to delete this mailbox? (yes/no): ")
+				fmt.Printf("Are you sure you want to delete mailbox %s? (yes/no): ", username)
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "yes" {
@@ -93,7 +207,16 @@ func mailboxDeleteCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Printf("✓ Mailbox %s deleted\n", args[0])
+			resp, err := apiRequest("DELETE", "/api/v1/mailboxes/"+url.PathEscape(username), nil)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return mailboxAPIError(resp)
+			}
+
+			fmt.Printf("✓ Mailbox %s deleted\n", username)
 			return nil
 		},
 	}
@@ -103,10 +226,17 @@ func mailboxDeleteCmd() *cobra.Command {
 	return cmd
 }
 
+// The commands below are not backed by server endpoints yet. They fail
+// honestly instead of printing fake success output.
+
+func notImplemented(feature string) error {
+	return fmt.Errorf("%s is not implemented by the server yet", feature)
+}
+
 func mailboxQuotaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quota",
-		Short: "Manage mailbox quotas",
+		Short: "Manage mailbox quotas (not yet implemented)",
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -114,11 +244,7 @@ func mailboxQuotaCmd() *cobra.Command {
 		Short: "Show quota usage",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Quota for %s:\n", args[0])
-			fmt.Println("  Used:  1.2 GB")
-			fmt.Println("  Limit: 5.0 GB")
-			fmt.Println("  %:     24%%")
-			return nil
+			return notImplemented("quota reporting")
 		},
 	})
 
@@ -127,8 +253,7 @@ func mailboxQuotaCmd() *cobra.Command {
 		Short: "Set mailbox quota (e.g., 5G, 500M)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("✓ Set quota for %s to %s\n", args[0], args[1])
-			return nil
+			return notImplemented("quota management")
 		},
 	})
 
@@ -138,7 +263,7 @@ func mailboxQuotaCmd() *cobra.Command {
 func mailboxAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
-		Short: "Manage email aliases",
+		Short: "Manage email aliases (not yet implemented)",
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -146,8 +271,7 @@ func mailboxAliasCmd() *cobra.Command {
 		Short: "Add email alias",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("✓ Added alias: %s → %s\n", args[0], args[1])
-			return nil
+			return notImplemented("alias management")
 		},
 	})
 
@@ -156,8 +280,7 @@ func mailboxAliasCmd() *cobra.Command {
 		Short: "Remove email alias",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("✓ Removed alias: %s\n", args[0])
-			return nil
+			return notImplemented("alias management")
 		},
 	})
 
@@ -165,13 +288,7 @@ func mailboxAliasCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all aliases",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ALIAS\tTARGET")
-			fmt.Fprintln(w, "-----\t------")
-			fmt.Fprintln(w, "info@company.com\tsupport@company.com")
-			fmt.Fprintln(w, "sales@company.com\tsales-team@company.com")
-			w.Flush()
-			return nil
+			return notImplemented("alias management")
 		},
 	})
 
@@ -181,7 +298,7 @@ func mailboxAliasCmd() *cobra.Command {
 func mailboxRoutingCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "routing",
-		Short: "Manage message routing",
+		Short: "Manage message routing (not yet implemented)",
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -189,11 +306,7 @@ func mailboxRoutingCmd() *cobra.Command {
 		Short: "Show routing for email address",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Routing for %s:\n", args[0])
-			fmt.Println("  Type:   Local")
-			fmt.Println("  Server: mail1.company.com")
-			fmt.Println("  Folder: INBOX")
-			return nil
+			return notImplemented("routing inspection")
 		},
 	})
 

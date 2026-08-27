@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
@@ -29,6 +30,7 @@ type Server struct {
 	replicator *replication.Replicator
 	metrics    *metrics.Metrics
 	policyMgr  *policy.Manager
+	userStore  *auth.UserStore
 
 	httpServer *http.Server
 	startTime  time.Time
@@ -38,7 +40,7 @@ type Server struct {
 }
 
 // NewServer initializes the API layer
-func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageStore, qm *smtpd.QueueManager, replicator *replication.Replicator, metricsCollector *metrics.Metrics, policyMgr *policy.Manager) *Server {
+func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageStore, qm *smtpd.QueueManager, replicator *replication.Replicator, metricsCollector *metrics.Metrics, policyMgr *policy.Manager, userStore *auth.UserStore) *Server {
 	return &Server{
 		config:     cfg,
 		logger:     logger,
@@ -47,6 +49,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageSto
 		replicator: replicator,
 		metrics:    metricsCollector,
 		policyMgr:  policyMgr,
+		userStore:  userStore,
 		startTime:  time.Now(),
 	}
 }
@@ -62,6 +65,22 @@ func (s *Server) Start() {
 
 func (s *Server) startREST() {
 	defer s.wg.Done()
+
+	s.httpServer = &http.Server{
+		Addr:    s.config.API.RESTAddr,
+		Handler: s.buildMux(),
+	}
+
+	s.logger.Info("Starting REST API server", zap.String("addr", s.config.API.RESTAddr))
+	err := s.httpServer.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		s.logger.Fatal("REST API server crashed", zap.Error(err))
+	}
+}
+
+// buildMux assembles the REST routing table. Extracted from startREST so
+// tests can exercise the real routes and middleware without binding a port.
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health and readiness endpoints (public)
@@ -98,16 +117,11 @@ func (s *Server) startREST() {
 	mux.HandleFunc("/api/v1/replication/status", s.authMiddleware(s.handleReplicationStatus))
 	mux.HandleFunc("/api/v1/replication/promote", s.authMiddleware(s.handleReplicationPromote))
 
-	s.httpServer = &http.Server{
-		Addr:    s.config.API.RESTAddr,
-		Handler: mux,
-	}
+	// Mailbox management (requires auth)
+	mux.HandleFunc("/api/v1/mailboxes", s.authMiddleware(s.handleMailboxes))
+	mux.HandleFunc("/api/v1/mailboxes/", s.authMiddleware(s.handleMailbox))
 
-	s.logger.Info("Starting REST API server", zap.String("addr", s.config.API.RESTAddr))
-	err := s.httpServer.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
-		s.logger.Fatal("REST API server crashed", zap.Error(err))
-	}
+	return mux
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
