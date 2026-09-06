@@ -2,8 +2,43 @@ package storage
 
 import (
 	"go.uber.org/zap"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestIncompleteReleaseTransactionHasNoPartialEffect(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewMessageStore(root, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.Store(&JournalEntry{MessageID: "case", Status: "compliance", Tier: "compliance", Metadata: map[string]string{"compliance": "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	files, err := filepath.Glob(filepath.Join(root, "journal", "journal-*.log"))
+	if err != nil || len(files) != 1 {
+		t.Fatal(files, err)
+	}
+	f, err := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.WriteString(`{"status":"transaction","transaction":[{"message_id":"case","status":"compliance_released"},`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	s, err = NewMessageStore(root, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	entry, err := s.Get("case")
+	if err != nil || entry.Status != "compliance" {
+		t.Fatal("partial release applied", entry, err)
+	}
+}
 
 func TestComplianceReleaseSurvivesRecoveryAndCompaction(t *testing.T) {
 	root := t.TempDir()

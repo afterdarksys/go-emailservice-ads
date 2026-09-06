@@ -27,6 +27,9 @@ func (s *MessageStore) ReleaseCompliance(id, actor, reason string, child *Journa
 	if child == nil || child.MessageID != "release-"+id || child.Metadata["compliance"] == "true" || (child.Status != "pending" && child.Status != "held") {
 		return fmt.Errorf("invalid release transaction")
 	}
+	if EvidenceHash(child.From, child.To, child.Data) != parent.Metadata["evidence_sha256"] {
+		return fmt.Errorf("release envelope or bytes differ from preserved evidence")
+	}
 	if _, exists := s.index[child.MessageID]; exists {
 		return fmt.Errorf("release transaction already exists")
 	}

@@ -26,6 +26,8 @@ func (s *MessageStore) StoreNotification(source, key string, child *JournalEntry
 		return false, err
 	}
 	s.index[source] = saved
-	s.index[child.MessageID] = cloneEntry(child)
+	if child.Status != "delivered" {
+		s.index[child.MessageID] = cloneEntry(child)
+	}
 	return true, nil
 }

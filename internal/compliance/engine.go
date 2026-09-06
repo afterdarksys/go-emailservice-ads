@@ -60,6 +60,23 @@ type Rule struct {
 }
 
 func (c Config) Validate() error {
+	for _, grant := range c.Access {
+		if grant.Principal == "" || len(grant.Domains) == 0 || len(grant.Actions) == 0 {
+			return fmt.Errorf("compliance grants require principal, domains and actions")
+		}
+		for _, domain := range grant.Domains {
+			if domain == "" || strings.ContainsAny(domain, " ,@/\r\n") {
+				return fmt.Errorf("invalid compliance access domain")
+			}
+		}
+		for _, action := range grant.Actions {
+			switch action {
+			case "*", "read", "export", "release", "delete", "legal-hold":
+			default:
+				return fmt.Errorf("invalid compliance access action")
+			}
+		}
+	}
 	names := map[string]bool{}
 	for _, r := range c.Rules {
 		if r.Name == "" || len(r.Name) > 128 || names[r.Name] || strings.ContainsAny(r.Name, "/\r\n") {

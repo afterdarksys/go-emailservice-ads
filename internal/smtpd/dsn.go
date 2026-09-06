@@ -28,6 +28,14 @@ func (qm *QueueManager) sendDSN(msg *Message, recipient, event, action string) e
 	if qm.platform.Bounce.Suppress || msg.IsBounce || msg.From == "" || msg.From == "<>" || !msg.wantsDSN(recipient, event) {
 		return nil
 	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(event+"\x00"+recipient)))
+	source, err := qm.store.Get(msg.ID)
+	if err != nil {
+		return err
+	}
+	if source.Metadata["notice:"+key] != "" {
+		return nil
+	}
 	code, status := 250, "2.0.0"
 	if event == "DELAY" {
 		code, status = 451, "4.4.1"
@@ -37,6 +45,10 @@ func (qm *QueueManager) sendDSN(msg *Message, recipient, event, action string) e
 		return err
 	}
 	notice := &Message{ID: uuid.NewString(), From: "", To: []string{msg.From}, Data: raw, Tier: TierEmergency, IsBounce: true, CreatedAt: time.Now()}
+	held, err := qm.applyCompliance(notice)
+	if err != nil {
+		return err
+	}
 	saved := *notice
 	saved.Data = nil
 	metadata, err := json.Marshal(saved)
@@ -44,10 +56,16 @@ func (qm *QueueManager) sendDSN(msg *Message, recipient, event, action string) e
 		return err
 	}
 	child := &storage.JournalEntry{MessageID: notice.ID, From: "", To: notice.To, Data: raw, Tier: "emergency", Status: "pending", CreatedAt: notice.CreatedAt, Metadata: map[string]string{"message": string(metadata)}}
-	key := fmt.Sprintf("%x", sha256.Sum256([]byte(event+"\x00"+recipient)))
+	if held {
+		child.Status = "delivered"
+		child.Data = nil
+	}
 	fresh, err := qm.store.StoreNotification(msg.ID, key, child)
 	if err != nil || !fresh {
 		return err
+	}
+	if held {
+		return nil
 	}
 	if ok, err := qm.store.Transition(notice.ID, "pending", "queued"); err != nil || !ok {
 		return nil
