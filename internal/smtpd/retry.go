@@ -110,6 +110,14 @@ func (rs *RetryScheduler) processRetries() {
 			continue
 		}
 
+		warningAfter := rs.qm.platform.Bounce.DelayWarningAfter
+		if warningAfter > 0 && entry.Attempts > 0 && time.Since(entry.CreatedAt) >= warningAfter {
+			for _, recipient := range entry.To {
+				if err := rs.qm.sendDSN(messageFromEntry(entry), recipient, "DELAY", "delayed"); err != nil {
+					rs.logger.Error("Delay notification failed", zap.Error(err))
+				}
+			}
+		}
 		// Calculate next retry time using exponential backoff
 		base := entry.LastAttempt
 		if base.IsZero() {

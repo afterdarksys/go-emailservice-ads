@@ -11,6 +11,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
+	"github.com/emersion/go-smtp"
 	"net"
 	"os"
 	"strings"
@@ -49,6 +50,8 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
+	DSNMail             smtp.MailOptions
+	DSNRecipients       map[string]smtp.RcptOptions
 	complianceBypass    bool
 	ComplianceReleaseID string // Set only by the compliance release workflow; not a message header.
 	AdmissionKey        string `json:"admission_key,omitempty"`
@@ -309,7 +312,9 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 		}
 		startedAt := time.Now()
 		var err error
-		if local {
+		if qm.RecipientSuppressed(rcpt) {
+			err = qm.generateBounce(&attempt, &delivery.DeliveryResult{SMTPCode: 550, IsPermanent: true, Message: "Recipient suppressed by administrator"}, []string{rcpt})
+		} else if local {
 			err = qm.deliverLocal(&attempt, []string{rcpt})
 		} else {
 			err = qm.deliverRemote(&attempt, []string{rcpt})
@@ -449,6 +454,9 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 			deliveryErr = errors.Join(deliveryErr, fmt.Errorf("local delivery to %s: %w", rcpt, err))
 			continue
 		}
+		if err := qm.sendDSN(msg, rcpt, "SUCCESS", "delivered"); err != nil {
+			return err
+		}
 		qm.logger.Info("Local delivery succeeded",
 			zap.String("msg_id", msg.ID),
 			zap.String("imap_id", msgID),
@@ -508,6 +516,13 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		data = append([]byte("X-Mailhub-Original-IP: "+msg.ClientIP+"\r\n"), data...)
 	}
 	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, data)
+	if err == nil && result != nil && result.Success {
+		for _, rcpt := range recipients {
+			if e := qm.sendDSN(msg, rcpt, "SUCCESS", "relayed"); e != nil {
+				return e
+			}
+		}
+	}
 	if qm.destinations != nil && len(recipients) > 0 {
 		success := err == nil && result != nil && result.Success
 		temporary := err != nil && (result == nil || !result.IsPermanent)
@@ -635,13 +650,19 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 	}
 
 	for _, rcpt := range recipients {
+		if !msg.wantsDSN(rcpt, "FAILURE") {
+			continue
+		}
 		reason := &bounce.BounceReason{
-			SMTPCode:     result.SMTPCode,
-			EnhancedCode: bounce.GetEnhancedStatusCode(result.SMTPCode, result.Message),
-			Message:      result.Message,
-			IsPermanent:  result.IsPermanent,
-			RemoteHost:   result.RemoteHost,
-			Recipient:    rcpt,
+			EnvelopeID:        msg.DSNMail.EnvelopeID,
+			OriginalRecipient: msg.DSNRecipients[rcpt].OriginalRecipient,
+			ReturnFull:        msg.DSNMail.Return == smtp.DSNReturnFull,
+			SMTPCode:          result.SMTPCode,
+			EnhancedCode:      bounce.GetEnhancedStatusCode(result.SMTPCode, result.Message),
+			Message:           result.Message,
+			IsPermanent:       result.IsPermanent,
+			RemoteHost:        result.RemoteHost,
+			Recipient:         rcpt,
 		}
 
 		bounceMsg, err := qm.bounceGenerator.GenerateBounce(msg.From, reason, msg.Data)
@@ -746,6 +767,22 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	}
 	if held {
 		return nil
+	}
+	if qm.platform.Bounce.TrackIncoming && !msg.IsBounce {
+		reports, parseErr := bounce.ParseReport(msg.Data)
+		if parseErr != nil {
+			qm.logger.Warn("Malformed incoming DSN", zap.Error(parseErr))
+		}
+		if len(reports) > 0 {
+			raw, err := json.Marshal(reports)
+			if err != nil {
+				return err
+			}
+			_, _, err = qm.store.Store(&storage.JournalEntry{MessageID: uuid.NewString(), Tier: "bounce_reports", Status: "bounce_report", Metadata: map[string]string{"source_id": msg.ID, "reports": string(raw), "trusted": "false"}})
+			if err != nil {
+				return err
+			}
+		}
 	}
 	// Generate trace ID if not set
 	if msg.TraceID == "" {

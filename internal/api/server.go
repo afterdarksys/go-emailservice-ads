@@ -148,6 +148,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/compliance", s.authMiddleware(s.handleCompliance))
 	mux.HandleFunc("/api/v1/compliance/", s.authMiddleware(s.handleCompliance))
 	mux.HandleFunc("/api/v1/bounce/config", s.authMiddleware(s.handleBounceConfig))
+	mux.HandleFunc("/api/v1/bounce/reports", s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, "GET required", 405)
+			return
+		}
+		s.jsonResponse(w, 200, s.store.ListByStatus("bounce_report", "bounce_reports"))
+	}))
 	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
 	return mux
 }

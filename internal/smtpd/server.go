@@ -120,6 +120,7 @@ func NewServerWithValidator(cfg *config.Config, logger *zap.Logger, qm *QueueMan
 		messageRates:  newIPMessageLimiter(cfg.Server.RateLimitPerIP),
 	}
 	s := smtp.NewServer(be)
+	s.EnableDSN = cfg.Platform.Bounce.EnableDSN
 
 	s.Addr = cfg.Server.Addr
 	s.Domain = cfg.Server.Domain
@@ -557,6 +558,10 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		DKIMResult:   "none",
 		ExtraHeaders: extraHeaders,
 	}
+	if opts != nil {
+		s.msg.DSNMail = *opts
+	}
+	s.msg.DSNRecipients = map[string]smtp.RcptOptions{}
 	return nil
 }
 
@@ -613,6 +618,19 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 	}
 	if s.config.Server.MaxRecipients > 0 && len(s.msg.To)+len(targets) > s.config.Server.MaxRecipients {
 		return &smtp.SMTPError{Code: 452, Message: "Too many expanded recipients"}
+	}
+	for _, target := range targets {
+		for _, blocked := range s.config.Platform.Bounce.SuppressedRecipients {
+			if strings.EqualFold(blocked, target) {
+				return &smtp.SMTPError{Code: 550, Message: "Recipient suppressed"}
+			}
+		}
+		if opts != nil {
+			if s.msg.DSNRecipients == nil {
+				s.msg.DSNRecipients = map[string]smtp.RcptOptions{}
+			}
+			s.msg.DSNRecipients[target] = *opts
+		}
 	}
 	s.msg.To = append(s.msg.To, targets...)
 	return nil

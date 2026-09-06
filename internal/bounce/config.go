@@ -8,6 +8,11 @@ import (
 )
 
 type Config struct {
+	TrackIncoming          bool          `yaml:"track_incoming" json:"track_incoming"`
+	EnableDSN              bool          `yaml:"enable_dsn" json:"enable_dsn"`
+	DelayWarningAfter      time.Duration `yaml:"delay_warning_after" json:"delay_warning_after"`
+	FullReturnMaxBytes     int           `yaml:"full_return_max_bytes" json:"full_return_max_bytes"`
+	SuppressedRecipients   []string      `yaml:"suppressed_recipients" json:"suppressed_recipients"`
 	Suppress               bool          `yaml:"suppress" json:"suppress"`
 	Postmaster             string        `yaml:"postmaster" json:"postmaster"`
 	IncludeOriginalHeaders *bool         `yaml:"include_original_headers" json:"include_original_headers"`
@@ -33,6 +38,15 @@ func (c Config) Defaults() Config {
 	return c
 }
 func (c Config) Validate() error {
+	if c.DelayWarningAfter < 0 || c.FullReturnMaxBytes < 0 || c.FullReturnMaxBytes > 25<<20 {
+		return fmt.Errorf("invalid DSN limits")
+	}
+	for _, address := range c.SuppressedRecipients {
+		a, e := mail.ParseAddress(address)
+		if e != nil || a.Address != address {
+			return fmt.Errorf("invalid suppressed recipient")
+		}
+	}
 	c = c.Defaults()
 	if c.MaxHeaderBytes < 1 || c.MaxHeaderBytes > 65536 || c.MaxAttempts < 1 || c.MaxAttempts > 100 || c.InitialDelay < time.Second || c.MaxDelay < c.InitialDelay || c.MaxDelay > 7*24*time.Hour {
 		return fmt.Errorf("invalid bounce limits")

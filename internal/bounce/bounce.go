@@ -29,12 +29,16 @@ func NewBounceGenerator(hostname, postmaster string) *BounceGenerator {
 
 // BounceReason represents the reason for bounce
 type BounceReason struct {
-	SMTPCode     int
-	EnhancedCode string // e.g., "5.1.1"
-	Message      string
-	IsPermanent  bool
-	RemoteHost   string
-	Recipient    string
+	Action            string
+	EnvelopeID        string
+	OriginalRecipient string
+	ReturnFull        bool
+	SMTPCode          int
+	EnhancedCode      string // e.g., "5.1.1"
+	Message           string
+	IsPermanent       bool
+	RemoteHost        string
+	Recipient         string
 }
 
 // GenerateBounce creates an RFC 3464 compliant bounce message
@@ -56,6 +60,9 @@ func (bg *BounceGenerator) GenerateBounce(originalFrom string, reason *BounceRea
 	action := "failed"
 	if !reason.IsPermanent {
 		action = "delayed"
+	}
+	if reason.Action != "" {
+		action = reason.Action
 	}
 
 	// Build the multipart/report message
@@ -90,11 +97,17 @@ func (bg *BounceGenerator) GenerateBounce(originalFrom string, reason *BounceRea
 
 	// Per-Message DSN fields
 	buf.WriteString(fmt.Sprintf("Reporting-MTA: dns; %s\r\n", bg.hostname))
+	if reason.EnvelopeID != "" {
+		buf.WriteString("Original-Envelope-Id: " + cleanField(reason.EnvelopeID) + "\r\n")
+	}
 	buf.WriteString(fmt.Sprintf("Arrival-Date: %s\r\n", timestamp))
 	buf.WriteString("\r\n")
 
 	// Per-Recipient DSN fields
 	buf.WriteString(fmt.Sprintf("Final-Recipient: rfc822; %s\r\n", reason.Recipient))
+	if reason.OriginalRecipient != "" {
+		buf.WriteString("Original-Recipient: rfc822; " + cleanField(reason.OriginalRecipient) + "\r\n")
+	}
 	buf.WriteString(fmt.Sprintf("Action: %s\r\n", action))
 	buf.WriteString(fmt.Sprintf("Status: %s\r\n", reason.EnhancedCode))
 	if reason.RemoteHost != "" {
@@ -105,11 +118,19 @@ func (bg *BounceGenerator) GenerateBounce(originalFrom string, reason *BounceRea
 
 	// Part 3: Original message headers (RFC 3464 Section 2.4)
 	buf.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-	buf.WriteString("Content-Type: text/rfc822-headers\r\n")
+	full := reason.ReturnFull && action == "failed" && bg.config.FullReturnMaxBytes > 0 && len(originalMessage) <= bg.config.FullReturnMaxBytes
+	if full {
+		buf.WriteString("Content-Type: message/rfc822\r\n")
+	} else {
+		buf.WriteString("Content-Type: text/rfc822-headers\r\n")
+	}
 	buf.WriteString("\r\n")
 
 	// Extract and include original headers (first 1KB)
 	originalHeaders := bg.extractHeaders(originalMessage)
+	if full {
+		originalHeaders = string(originalMessage)
+	}
 	buf.WriteString(originalHeaders)
 	buf.WriteString("\r\n")
 
@@ -121,6 +142,9 @@ func (bg *BounceGenerator) GenerateBounce(originalFrom string, reason *BounceRea
 
 // getBounceSubject generates an appropriate subject line
 func (bg *BounceGenerator) getBounceSubject(reason *BounceReason) string {
+	if reason.Action == "delivered" || reason.Action == "relayed" {
+		return "Delivery status: " + reason.Action
+	}
 	if reason.IsPermanent {
 		return fmt.Sprintf("Delivery failure: %s", reason.Message)
 	}
@@ -129,6 +153,13 @@ func (bg *BounceGenerator) getBounceSubject(reason *BounceReason) string {
 
 // getHumanReadableMessage creates the human-readable part of the bounce
 func (bg *BounceGenerator) getHumanReadableMessage(reason *BounceReason) string {
+	if reason.Action == "delivered" || reason.Action == "relayed" {
+		var result bytes.Buffer
+		writer := quotedprintable.NewWriter(&result)
+		fmt.Fprintf(writer, "Your message was %s for %s.\r\n", reason.Action, reason.Recipient)
+		writer.Close()
+		return result.String()
+	}
 	var buf bytes.Buffer
 	qpWriter := quotedprintable.NewWriter(&buf)
 
