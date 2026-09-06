@@ -87,7 +87,7 @@ func main() {
 		portChecker.Check("JMAP", cfg.JMAP.Addr)
 	}
 	portChecker.Check("REST API", cfg.API.RESTAddr)
-	portChecker.Check("gRPC API", cfg.API.GRPCAddr)
+	// gRPC is not implemented; no port is opened.
 
 	if !portChecker.AllAvailable() {
 		logger.Error("Port conflict detected:\n" + portChecker.FormatReport())
@@ -268,7 +268,9 @@ func main() {
 	retryScheduler.Start()
 	// Start API Servers with full dependencies
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
-	apiServer.Start()
+	if err := apiServer.Start(); err != nil {
+		logger.Fatal("API startup failed", zap.Error(err))
+	}
 
 	// Start AfterSMTP Bridge Service (if enabled)
 	var amtpSrv *aftersmtp.Service

@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"net"
 	"net/http"
@@ -33,8 +35,11 @@ type Server struct {
 	policyMgr  *policy.Manager
 	userStore  *auth.UserStore
 
-	httpServer *http.Server
-	startTime  time.Time
+	lifecycleMu sync.Mutex
+	listener    net.Listener
+	stopped     bool
+	httpServer  *http.Server
+	startTime   time.Time
 	// grpcServer *grpc.Server
 
 	wg sync.WaitGroup
@@ -55,34 +60,36 @@ func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageSto
 	}
 }
 
-// Start begins serving the REST and gRPC endpoints
-func (s *Server) Start() {
+// Start binds synchronously, so startup errors are reported before readiness.
+// gRPC remains unimplemented and intentionally has no listener.
+func (s *Server) Start() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopped || s.httpServer != nil {
+		return fmt.Errorf("API server already started or stopped")
+	}
+	listener, err := net.Listen("tcp", s.config.API.RESTAddr)
+	if err != nil {
+		return err
+	}
+	if c := s.config.API.TLS; c != nil {
+		cert, err := tls.LoadX509KeyPair(c.Cert, c.Key)
+		if err != nil {
+			listener.Close()
+			return err
+		}
+		listener = tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}})
+	}
+	s.listener = listener
+	s.httpServer = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, Handler: s.buildMux()}
 	s.wg.Add(1)
-	go s.startREST()
-
-	s.wg.Add(1)
-	go s.startGRPC()
-}
-
-func (s *Server) startREST() {
-	defer s.wg.Done()
-
-	s.httpServer = &http.Server{
-		Addr:              s.config.API.RESTAddr,
-		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
-		Handler: s.buildMux(),
-	}
-
-	s.logger.Info("Starting REST API server", zap.String("addr", s.config.API.RESTAddr))
-	var err error
-	if s.config.API.TLS != nil {
-		err = s.httpServer.ListenAndServeTLS(s.config.API.TLS.Cert, s.config.API.TLS.Key)
-	} else {
-		err = s.httpServer.ListenAndServe()
-	}
-	if err != nil && err != http.ErrServerClosed {
-		s.logger.Fatal("REST API server crashed", zap.Error(err))
-	}
+	go func() {
+		defer s.wg.Done()
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("API serve failed", zap.Error(err))
+		}
+	}()
+	return nil
 }
 
 // buildMux assembles the REST routing table. Extracted from startREST so
@@ -416,34 +423,25 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data interface{
 	json.NewEncoder(w).Encode(data)
 }
 
-func (s *Server) startGRPC() {
-	defer s.wg.Done()
-
-	addr := s.config.API.GRPCAddr
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		s.logger.Fatal("Failed to listen for gRPC", zap.Error(err))
-	}
-
-	s.logger.Info("Starting gRPC API server placeholder", zap.String("addr", addr))
-	// Placeholder: when gRPC is implemented, we will call server.Serve(lis)
-	// For now, accept connections and close them
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			break
-		}
-		conn.Close() // Drop connections until properly implemented
-	}
-}
-
-// Shutdown gracefully stops the API servers
+// Shutdown is bounded by the caller deadline and safe before Start or on repeat.
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.logger.Info("Shutting down API servers...")
-	if s.httpServer != nil {
-		s.httpServer.Shutdown(ctx)
+	s.lifecycleMu.Lock()
+	s.stopped = true
+	server := s.httpServer
+	s.lifecycleMu.Unlock()
+	if server == nil {
+		return nil
 	}
-	// if s.grpcServer != nil { s.grpcServer.GracefulStop() }
-	s.wg.Wait()
-	return nil
+	err := server.Shutdown(ctx)
+	if err != nil {
+		server.Close()
+	}
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
