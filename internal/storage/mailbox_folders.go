@@ -283,7 +283,9 @@ func (s *MailboxStore) RenameFolder(ctx context.Context, user, old, name string)
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	s.publish(&backend.StatusUpdate{Update: backend.NewUpdate(user, old), StatusResp: &goimap.StatusResp{Type: goimap.StatusRespBye, Info: "Mailbox renamed; reconnect"}})
+	for _, from := range names {
+		s.publish(&backend.StatusUpdate{Update: backend.NewUpdate(user, from), StatusResp: &goimap.StatusResp{Type: goimap.StatusRespBye, Info: "Mailbox renamed; reconnect"}})
+	}
 	return nil
 }
 func (s *MailboxStore) AppendMessage(ctx context.Context, user, folder string, data []byte, flags []string, date time.Time) (string, error) {

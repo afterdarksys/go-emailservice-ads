@@ -352,7 +352,7 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return methodError("accountReadOnly", callID)
 	case "Email/query":
 		return j.emailQuery(ctx, authUser, args, callID)
-	case "Email/changes":
+	case "Email/changes", "Mailbox/changes":
 		return methodError("cannotCalculateChanges", callID)
 	default:
 		return MethodResponse{
