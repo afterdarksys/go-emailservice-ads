@@ -16,6 +16,7 @@ func requiredScope(r *http.Request) string {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
 	resource := strings.SplitN(path, "/", 2)[0]
 	switch resource {
+	case "compliance", "bounce":
 	case "message", "dlq":
 		resource = "queue"
 	case "recipients":

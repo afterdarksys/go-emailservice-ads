@@ -144,6 +144,9 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/mailstorm/", s.authMiddleware(s.handleMailstorm))
 	mux.HandleFunc("/api/v1/quarantine", s.authMiddleware(s.handleQuarantine))
 	mux.HandleFunc("/api/v1/quarantine/", s.authMiddleware(s.handleQuarantine))
+	mux.HandleFunc("/api/v1/compliance", s.authMiddleware(s.handleCompliance))
+	mux.HandleFunc("/api/v1/compliance/", s.authMiddleware(s.handleCompliance))
+	mux.HandleFunc("/api/v1/bounce/config", s.authMiddleware(s.handleBounceConfig))
 	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
 	return mux
 }
@@ -365,6 +368,10 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	messageID := strings.TrimPrefix(r.URL.Path, "/api/v1/message/")
 	if messageID == "" {
 		http.Error(w, "Message ID required", http.StatusBadRequest)
+		return
+	}
+	if e, err := s.store.Get(messageID); err == nil && e.Metadata["compliance"] == "true" {
+		http.Error(w, "Use the compliance API", http.StatusForbidden)
 		return
 	}
 

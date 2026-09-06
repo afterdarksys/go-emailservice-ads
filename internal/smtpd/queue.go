@@ -49,28 +49,30 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
-	AdmissionKey     string `json:"admission_key,omitempty"`
-	DeliveryFolder   string
-	ID               string
-	TraceID          string // Global correlation ID for tracking across instances
-	ParentTraceID    string // Parent trace ID for related messages (bounces, retries)
-	InstanceID       string // Pod/instance identifier for Kubernetes deployments
-	From             string
-	To               []string
-	Data             []byte
-	CreatedAt        time.Time
-	Tier             QueueTier
-	ContentHash      string            // SHA256 hash of message content
-	ClientIP         string            // Client IP address
-	HeloHostname     string            // HELO/EHLO hostname
-	DKIMResult       string            // Result of DKIM verification ("pass", "fail", "none")
-	SPFResult        string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
-	DMARCResult      string            // Result of DMARC evaluation ("pass", "fail", "none")
-	ExtraHeaders     map[string]string // Additional headers to prepend to message
-	IsTLSReport      bool              // Set only on locally generated reports; persisted for retries
-	IsBounce         bool              // True if this message is a bounce/DSN
-	Quarantine       bool              // True if DMARC enforce mode quarantined this message
-	QuarantineFolder string            // Target folder for quarantined local delivery (e.g. "Junk")
+	complianceBypass    bool
+	ComplianceReleaseID string // Set only by the compliance release workflow; not a message header.
+	AdmissionKey        string `json:"admission_key,omitempty"`
+	DeliveryFolder      string
+	ID                  string
+	TraceID             string // Global correlation ID for tracking across instances
+	ParentTraceID       string // Parent trace ID for related messages (bounces, retries)
+	InstanceID          string // Pod/instance identifier for Kubernetes deployments
+	From                string
+	To                  []string
+	Data                []byte
+	CreatedAt           time.Time
+	Tier                QueueTier
+	ContentHash         string            // SHA256 hash of message content
+	ClientIP            string            // Client IP address
+	HeloHostname        string            // HELO/EHLO hostname
+	DKIMResult          string            // Result of DKIM verification ("pass", "fail", "none")
+	SPFResult           string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
+	DMARCResult         string            // Result of DMARC evaluation ("pass", "fail", "none")
+	ExtraHeaders        map[string]string // Additional headers to prepend to message
+	IsTLSReport         bool              // Set only on locally generated reports; persisted for retries
+	IsBounce            bool              // True if this message is a bounce/DSN
+	Quarantine          bool              // True if DMARC enforce mode quarantined this message
+	QuarantineFolder    string            // Target folder for quarantined local delivery (e.g. "Junk")
 }
 
 // QueueManager handles the multi-tier queuing system
@@ -231,6 +233,22 @@ func (qm *QueueManager) spawnWorkers(name string, ch <-chan *Message, count int)
 }
 
 func (qm *QueueManager) processMessage(queueName string, msg *Message) {
+	if msg.ComplianceReleaseID == "" {
+		for _, rule := range qm.platform.Compliance.Evaluate(msg.From, msg.To) {
+			if rule.Mode != "hold" && rule.Mode != "reroute" {
+				continue
+			}
+			if ok, err := qm.store.Transition(msg.ID, "queued", "processing"); err != nil || !ok {
+				return
+			}
+			if _, err := qm.applyCompliance(msg); err != nil {
+				qm.store.UpdateStatus(msg.ID, "pending", err.Error())
+				return
+			}
+			qm.store.UpdateStatus(msg.ID, "delivered", "preserved in compliance queue before delivery")
+			return
+		}
+	}
 	if qm.StormGuard != nil && qm.StormGuard.Blocked(msg.AdmissionKey) {
 		if _, err := qm.store.Transition(msg.ID, "queued", "pending"); err != nil {
 			qm.logger.Error("Unable to defer paused sender", zap.Error(err))
@@ -719,6 +737,16 @@ func (qm *QueueManager) updateMetrics(tier QueueTier, metricType string) {
 
 // Enqueue submits a message to the appropriate tier without blocking the SMTP session
 func (qm *QueueManager) Enqueue(msg *Message) error {
+	if msg.ID == "" {
+		msg.ID = uuid.NewString()
+	}
+	held, err := qm.applyCompliance(msg)
+	if err != nil {
+		return fmt.Errorf("compliance preservation failed: %w", err)
+	}
+	if held {
+		return nil
+	}
 	// Generate trace ID if not set
 	if msg.TraceID == "" {
 		msg.TraceID = generateTraceID()

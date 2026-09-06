@@ -70,6 +70,9 @@ func (s *MessageStore) Transition(id, from, to string) (bool, error) {
 	if !ok || e.Status != from {
 		return false, nil
 	}
+	if e.Metadata["compliance"] == "true" {
+		return false, fmt.Errorf("use compliance controls for preserved records")
+	}
 	v := cloneEntry(e)
 	v.Status = to
 	if to == "processing" {

@@ -195,6 +195,10 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 	}
 
 	entry = cloneEntry(entry)
+	if entry.Metadata["compliance"] == "true" {
+		s.indexMu.Unlock()
+		return fmt.Errorf("use compliance controls for preserved records")
+	}
 	entry.Status = status
 	if status == "processing" {
 		entry.LastAttempt = time.Now()
@@ -242,6 +246,9 @@ func (s *MessageStore) UpdateRecipients(messageID string, recipients []string) e
 		return fmt.Errorf("message not found: %s", messageID)
 	}
 	entry = cloneEntry(entry)
+	if entry.Metadata["compliance"] == "true" {
+		return fmt.Errorf("compliance evidence envelope is immutable")
+	}
 	entry.To = append([]string(nil), recipients...)
 	if err := s.journal.Write(entry); err != nil {
 		return err
