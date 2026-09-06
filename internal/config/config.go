@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/ipfilter"
 	"gopkg.in/yaml.v3"
@@ -222,8 +223,10 @@ type ProxyProtocolConfig struct {
 }
 
 type TLSConfig struct {
-	Cert string `yaml:"cert"`
-	Key  string `yaml:"key"`
+	ClientCAFile      string `yaml:"client_ca_file"`
+	RequireClientCert bool   `yaml:"require_client_cert"`
+	Cert              string `yaml:"cert"`
+	Key               string `yaml:"key"`
 }
 
 type UserConfig struct {
@@ -233,11 +236,13 @@ type UserConfig struct {
 }
 
 type APIKeyConfig struct {
-	KeyEnv      string   `yaml:"key_env"`
-	Name        string   `yaml:"name"`        // Friendly name for the key (e.g., "Web Platform", "Mobile App")
-	Key         string   `yaml:"key"`         // The actual API key
-	Permissions []string `yaml:"permissions"` // Optional permissions (for future RBAC)
-	Description string   `yaml:"description"` // Optional description
+	KeyFiles    []string  `yaml:"key_files"`
+	ExpiresAt   time.Time `yaml:"expires_at"`
+	KeyEnv      string    `yaml:"key_env"`
+	Name        string    `yaml:"name"`        // Friendly name for the key (e.g., "Web Platform", "Mobile App")
+	Key         string    `yaml:"key"`         // The actual API key
+	Permissions []string  `yaml:"permissions"` // Optional permissions (for future RBAC)
+	Description string    `yaml:"description"` // Optional description
 }
 
 // SPFPolicyConfig configures inbound SPF handling (RFC 7208).

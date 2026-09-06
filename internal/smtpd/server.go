@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"io"
 	"net"
 	"net/mail"
@@ -137,29 +137,11 @@ func NewServerWithValidator(cfg *config.Config, logger *zap.Logger, qm *QueueMan
 	// We'll also support 8BITMIME which is standard.
 
 	if cfg.Server.TLS != nil && cfg.Server.TLS.Cert != "" && cfg.Server.TLS.Key != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.Server.TLS.Cert, cfg.Server.TLS.Key)
+		tlsConfig, err := tlsutil.ServerConfig(cfg.Server.TLS.Cert, cfg.Server.TLS.Key, cfg.Server.TLS.ClientCAFile, cfg.Server.TLS.RequireClientCert)
 		if err != nil {
 			logger.Fatal("Failed to load TLS credentials", zap.Error(err))
 		}
-		tlsConfig := &tls.Config{
-			Certificates:             []tls.Certificate{cert},
-			MinVersion:               tls.VersionTLS12,
-			MaxVersion:               tls.VersionTLS13, // Explicitly allow TLS 1.3
-			PreferServerCipherSuites: true,             // Prefer server cipher order
-			CipherSuites: []uint16{
-				// TLS 1.2 ciphers (TLS 1.3 ciphers are auto-selected)
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, // ChaCha20 for better mobile performance
-				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			},
-			CurvePreferences: []tls.CurveID{
-				tls.X25519, // Modern, fast curve
-				tls.CurveP256,
-			},
-		}
+
 		s.TLSConfig = tlsConfig
 		logger.Info("TLS/STARTTLS capabilities enabled with secure cipher suites")
 	} else if cfg.Server.RequireTLS {

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"net"
 	"net/http"
@@ -73,12 +74,12 @@ func (s *Server) Start() error {
 		return err
 	}
 	if c := s.config.API.TLS; c != nil {
-		cert, err := tls.LoadX509KeyPair(c.Cert, c.Key)
+		tlsConfig, err := tlsutil.ServerConfig(c.Cert, c.Key, c.ClientCAFile, c.RequireClientCert)
 		if err != nil {
 			listener.Close()
 			return err
 		}
-		listener = tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}})
+		listener = tls.NewListener(listener, tlsConfig)
 	}
 	s.listener = listener
 	s.httpServer = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, Handler: s.buildMux()}

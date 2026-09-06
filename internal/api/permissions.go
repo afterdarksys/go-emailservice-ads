@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"io"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 )
 
 type principalKey struct{}
@@ -42,7 +45,23 @@ func requiredScope(r *http.Request) string {
 }
 func (s *Server) authorizeKey(token, scope string) (string, bool) {
 	for _, key := range s.config.API.APIKeys {
-		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(key.Key)) != 1 {
+		if !key.ExpiresAt.IsZero() && !time.Now().Before(key.ExpiresAt) {
+			continue
+		}
+		matched := token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(key.Key)) == 1
+		for _, path := range key.KeyFiles {
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			raw, err := io.ReadAll(io.LimitReader(f, 4097))
+			f.Close()
+			if err == nil && len(raw) <= 4096 {
+				value := strings.TrimSpace(string(raw))
+				matched = matched || (token != "" && value != "" && subtle.ConstantTimeCompare([]byte(token), []byte(value)) == 1)
+			}
+		}
+		if !matched {
 			continue
 		}
 		for _, permission := range key.Permissions {

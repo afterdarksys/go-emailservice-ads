@@ -19,6 +19,8 @@ type Route struct {
 	NextHops []NextHop `yaml:"next_hops"`
 }
 type NextHop struct {
+	ClientCert  string `yaml:"client_cert"`
+	ClientKey   string `yaml:"client_key"`
 	reportType  string
 	Address     string `yaml:"address"`
 	ServerName  string `yaml:"server_name"`
@@ -41,6 +43,9 @@ func ValidateRoutes(routes []Route) error {
 			n, portErr := strconv.Atoi(port)
 			if e != nil || host == "" || portErr != nil || n < 1 || n > 65535 {
 				return fmt.Errorf("invalid next hop %q", h.Address)
+			}
+			if (h.ClientCert != "" || h.ClientKey != "") && (!h.RequireTLS || h.ClientCert == "" || h.ClientKey == "") {
+				return fmt.Errorf("connector mTLS requires TLS and both client_cert/client_key")
 			}
 			if (h.Username != "" || h.PasswordEnv != "") && (!h.RequireTLS || h.Username == "" || h.PasswordEnv == "") {
 				return fmt.Errorf("connector authentication requires TLS, username and password_env")
@@ -121,6 +126,13 @@ func (d *MailDelivery) dialNextHop(ctx context.Context, h NextHop) (*smtp.Client
 			name = host
 		}
 		tc := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: name}
+		if h.ClientCert != "" {
+			pair, err := tls.LoadX509KeyPair(h.ClientCert, h.ClientKey)
+			if err != nil {
+				return fail(err)
+			}
+			tc.Certificates = []tls.Certificate{pair}
+		}
 		if h.CAFile != "" {
 			pem, e := os.ReadFile(h.CAFile)
 			if e != nil {

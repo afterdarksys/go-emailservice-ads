@@ -2,8 +2,8 @@ package imap
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"math"
 	"strings"
 	"time"
@@ -106,28 +106,9 @@ func (s *Server) Start() error {
 
 	// Configure TLS if available.
 	if s.config.IMAP.TLS != nil && s.config.IMAP.TLS.Cert != "" && s.config.IMAP.TLS.Key != "" {
-		cert, err := tls.LoadX509KeyPair(s.config.IMAP.TLS.Cert, s.config.IMAP.TLS.Key)
+		tlsConfig, err := tlsutil.ServerConfig(s.config.IMAP.TLS.Cert, s.config.IMAP.TLS.Key, s.config.IMAP.TLS.ClientCAFile, s.config.IMAP.TLS.RequireClientCert)
 		if err != nil {
-			return fmt.Errorf("failed to load TLS certificates: %w", err)
-		}
-
-		tlsConfig := &tls.Config{
-			Certificates:             []tls.Certificate{cert},
-			MinVersion:               tls.VersionTLS12,
-			MaxVersion:               tls.VersionTLS13,
-			PreferServerCipherSuites: true,
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			},
-			CurvePreferences: []tls.CurveID{
-				tls.X25519,
-				tls.CurveP256,
-			},
+			return fmt.Errorf("failed to load TLS: %w", err)
 		}
 
 		s.imapServer.TLSConfig = tlsConfig

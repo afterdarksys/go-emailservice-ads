@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: smtp-tls
+  namespace: mail-system
+spec:
+  secretName: smtp-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: mailhub-private-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - mail.example.com
+    - smtp-internal
+    - smtp-internal.mail-system.svc
