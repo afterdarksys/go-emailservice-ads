@@ -106,9 +106,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/version", s.handleVersion)
 
 	// Metrics endpoint (public - for Prometheus)
-	if s.metrics != nil {
-		mux.Handle("/metrics", s.metrics.Handler())
-	}
+	mux.HandleFunc("/metrics", s.handleMetrics)
 
 	// Queue management (requires auth)
 	mux.HandleFunc("/api/v1/queue/stats", s.authMiddleware(s.handleQueueStats))

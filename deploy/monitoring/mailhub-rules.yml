@@ -1,0 +1,43 @@
+groups:
+  - name: mailhub
+    rules:
+      - alert: MailhubDeliveryStalled
+        expr: mailhub_oldest_queued_seconds > 900
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Mailhub oldest queued message exceeds 15 minutes"}
+      - alert: MailhubDiskLow
+        expr: mailhub_disk_free_bytes < 2147483648
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Mailhub free disk below 2 GiB"}
+      - alert: MailhubDependencyDown
+        expr: mailhub_dependencies_ready == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "A required mailhub dependency is unavailable"}
+      - alert: MailhubMailstorm
+        expr: mailhub_mailstorm_active_circuits > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "Mailstorm circuit breaker active; inspect scoped API"}
+      - alert: MailhubCertificateExpiring
+        expr: mailhub_certificate_remaining_seconds < 1209600
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Mailhub certificate invalid or expires within 14 days"}
+      - alert: MailhubAntivirusStale
+        expr: mailhub_antivirus_database_age_seconds > 259200 or mailhub_antivirus_database_age_seconds < 0
+        for: 10m
+        labels: {severity: critical}
+        annotations: {summary: "Antivirus signatures stale or version unavailable"}
+      - alert: MailhubScrapeMissing
+        expr: up{job="mailhub"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Mailhub metrics unavailable"}
+      - alert: MailhubSyntheticDeliveryFailed
+        expr: mailflow_probe_last_success == 0 or time() - mailflow_probe_last_run_timestamp_seconds > 900
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Synthetic SMTP-to-IMAP delivery failed or stopped running"}

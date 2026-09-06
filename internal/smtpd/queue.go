@@ -127,12 +127,14 @@ type QueueManager struct {
 
 // QueueMetrics tracks queue performance
 type QueueMetrics struct {
-	Enqueued     map[QueueTier]int64
-	Processed    map[QueueTier]int64
-	Failed       map[QueueTier]int64
-	Duplicates   int64
-	Backpressure int64
-	LastUpdate   time.Time
+	DeliveryCount   uint64
+	DeliverySeconds float64
+	Enqueued        map[QueueTier]int64
+	Processed       map[QueueTier]int64
+	Failed          map[QueueTier]int64
+	Duplicates      int64
+	Backpressure    int64
+	LastUpdate      time.Time
 }
 
 // NewQueueManager initializes queue channels and starts workers. dkimSigners
@@ -286,6 +288,7 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 			}
 			started = true
 		}
+		startedAt := time.Now()
 		var err error
 		if local {
 			err = qm.deliverLocal(&attempt, []string{rcpt})
@@ -293,6 +296,11 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 			err = qm.deliverRemote(&attempt, []string{rcpt})
 		}
 		release()
+		qMetricSeconds := time.Since(startedAt).Seconds()
+		qm.metricsMu.Lock()
+		qm.metrics.DeliveryCount++
+		qm.metrics.DeliverySeconds += qMetricSeconds
+		qm.metricsMu.Unlock()
 
 		if err != nil {
 			remaining = append(remaining, rcpt)

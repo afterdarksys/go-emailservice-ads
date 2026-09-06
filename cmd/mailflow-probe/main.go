@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -23,6 +24,8 @@ import (
 )
 
 type probeConfig struct {
+	smtpUser, smtpPassword                                        string
+	imapStartTLS                                                  bool
 	smtpAddr, imapAddr, sender, recipient, imapUser, imapPassword string
 	interval, timeout                                             time.Duration
 }
@@ -38,6 +41,9 @@ type probeMetrics struct {
 
 func main() {
 	cfg := probeConfig{}
+	flag.StringVar(&cfg.smtpUser, "smtp-user", os.Getenv("MAILFLOW_SMTP_USER"), "submission username")
+	flag.StringVar(&cfg.smtpPassword, "smtp-password", os.Getenv("MAILFLOW_SMTP_PASSWORD"), "submission password; prefer environment")
+	flag.BoolVar(&cfg.imapStartTLS, "imap-starttls", os.Getenv("MAILFLOW_IMAP_STARTTLS") == "true", "use STARTTLS instead of implicit IMAPS")
 	flag.StringVar(&cfg.smtpAddr, "smtp-addr", env("MAILFLOW_SMTP_ADDR", ""), "public SMTP address, normally mail.gomeow.media:25")
 	flag.StringVar(&cfg.imapAddr, "imap-addr", env("MAILFLOW_IMAP_ADDR", ""), "IMAPS address, normally mail.gomeow.media:993")
 	flag.StringVar(&cfg.sender, "sender", env("MAILFLOW_SENDER", "mailflow-probe@gomeow.media"), "envelope sender")
@@ -90,13 +96,30 @@ func runProbe(cfg probeConfig) (time.Duration, error) {
 }
 
 func sendSMTP(cfg probeConfig, id string) error {
-	c, err := smtp.Dial(cfg.smtpAddr)
+	conn, err := net.DialTimeout("tcp", cfg.smtpAddr, cfg.timeout)
+	if err != nil {
+		return err
+	}
+	conn.SetDeadline(time.Now().Add(cfg.timeout))
+	c, err := smtp.NewClient(conn, host(cfg.smtpAddr))
 	if err != nil {
 		return err
 	}
 	defer c.Quit()
 	if err := c.Hello("mailflow-probe.gomeow.media"); err != nil {
 		return err
+	}
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: host(cfg.smtpAddr)}); err != nil {
+			return err
+		}
+	} else if cfg.smtpUser != "" {
+		return fmt.Errorf("submission STARTTLS unavailable")
+	}
+	if cfg.smtpUser != "" {
+		if err := c.Auth(smtp.PlainAuth("", cfg.smtpUser, cfg.smtpPassword, host(cfg.smtpAddr))); err != nil {
+			return err
+		}
 	}
 	if err := c.Mail(cfg.sender); err != nil {
 		return err
@@ -116,11 +139,28 @@ func sendSMTP(cfg probeConfig, id string) error {
 }
 
 func findAndDeleteIMAP(cfg probeConfig, id string) (bool, error) {
-	c, err := client.DialTLS(cfg.imapAddr, &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host(cfg.imapAddr)})
+	var conn net.Conn
+	var err error
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host(cfg.imapAddr)}
+	if cfg.imapStartTLS {
+		conn, err = net.DialTimeout("tcp", cfg.imapAddr, cfg.timeout)
+	} else {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: cfg.timeout}, "tcp", cfg.imapAddr, tlsConfig)
+	}
+	if err != nil {
+		return false, err
+	}
+	conn.SetDeadline(time.Now().Add(cfg.timeout))
+	c, err := client.New(conn)
 	if err != nil {
 		return false, err
 	}
 	defer c.Logout()
+	if cfg.imapStartTLS {
+		if err := c.StartTLS(tlsConfig); err != nil {
+			return false, err
+		}
+	}
 	if err := c.Login(cfg.imapUser, cfg.imapPassword); err != nil {
 		return false, err
 	}

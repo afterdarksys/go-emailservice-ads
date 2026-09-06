@@ -95,3 +95,24 @@ func ScanClamAV(ctx context.Context, address string, data []byte) (bool, error) 
 	}
 	return false, fmt.Errorf("ClamAV did not complete scan: %s", reply)
 }
+
+// ClamAV VERSION includes the timestamp of the loaded signature database.
+func ClamAVDatabaseTime(ctx context.Context, address string) (time.Time, error) {
+	c, close, err := clamConn(ctx, address)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer close()
+	if _, err = io.WriteString(c, "zVERSION\x00"); err != nil {
+		return time.Time{}, err
+	}
+	reply, err := clamReply(c)
+	if err != nil {
+		return time.Time{}, err
+	}
+	parts := strings.Split(reply, "/")
+	if len(parts) < 3 {
+		return time.Time{}, fmt.Errorf("missing antivirus database timestamp")
+	}
+	return time.Parse("Mon Jan _2 15:04:05 2006", strings.TrimSpace(parts[len(parts)-1]))
+}
