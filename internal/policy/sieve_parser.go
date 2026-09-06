@@ -130,14 +130,7 @@ func (lx *svLexer) next() (svTok, error) {
 			}
 			if ch == '\\' && lx.pos < len(lx.src) {
 				esc := lx.adv()
-				switch esc {
-				case 'n':
-					sb.WriteRune('\n')
-				case 't':
-					sb.WriteRune('\t')
-				default:
-					sb.WriteRune(esc)
-				}
+				sb.WriteRune(esc)
 				continue
 			}
 			sb.WriteRune(ch)
@@ -200,7 +193,10 @@ func (lx *svLexer) next() (svTok, error) {
 
 // ---- AST ----
 
-type svScript struct{ cmds []svCmd }
+type svScript struct {
+	cmds      []svCmd
+	variables bool
+}
 
 type svCmd interface{ svCmd() }
 
@@ -217,9 +213,11 @@ type svBranch struct {
 }
 
 type svActionCmd struct {
-	name string
-	tags map[string]string
-	args []string
+	name          string
+	flags         []string
+	explicitFlags bool
+	variable      string
+	args          []string
 }
 
 func (*svActionCmd) svCmd() {}
@@ -284,16 +282,21 @@ type svFalseTest struct{}
 
 func (*svFalseTest) svTest() {}
 
-type svHasflagTest struct{ flags []string }
+type svHasflagTest struct {
+	flags, variables  []string
+	match, comparator string
+}
 
 func (*svHasflagTest) svTest() {}
 
 // ---- Parser ----
 
 type svParser struct {
-	toks []svTok
-	pos  int
-	err  error
+	toks           []svTok
+	pos            int
+	err            error
+	capabilities   map[string]bool
+	requireAllowed bool
 }
 
 func svParse(src string) (*svScript, error) {
@@ -319,7 +322,7 @@ func svParse(src string) (*svScript, error) {
 	if depth != 0 {
 		return nil, fmt.Errorf("unbalanced Sieve delimiters")
 	}
-	p := &svParser{toks: toks}
+	p := &svParser{toks: toks, capabilities: make(map[string]bool), requireAllowed: true}
 	cmds, err := p.block()
 	if err != nil {
 		return nil, err
@@ -330,7 +333,7 @@ func svParse(src string) (*svScript, error) {
 	if p.peek().kind != svTokEOF {
 		return nil, fmt.Errorf("unexpected trailing Sieve input")
 	}
-	return &svScript{cmds: cmds}, nil
+	return &svScript{cmds: cmds, variables: p.capabilities["variables"]}, nil
 }
 
 func (p *svParser) peek() svTok {
@@ -389,6 +392,9 @@ func (p *svParser) cmd() (svCmd, error) {
 	if t.kind != svTokIdent {
 		return nil, fmt.Errorf("sieve: expected command got %q", t.val)
 	}
+	if t.val != "require" {
+		p.requireAllowed = false
+	}
 	if t.val == "if" {
 		return p.ifCmd()
 	}
@@ -435,50 +441,111 @@ func (p *svParser) ifCmd() (*svIfCmd, error) {
 	return c, nil
 }
 
+func (p *svParser) needCapability(name string) error {
+	if !p.capabilities[name] {
+		return fmt.Errorf("Sieve requires %q", name)
+	}
+	return nil
+}
+
 func (p *svParser) actionCmd() (*svActionCmd, error) {
 	name := p.adv().val
-	cmd := &svActionCmd{name: name, tags: map[string]string{}}
-	for p.peek().kind == svTokTag {
-		tag := p.adv().val
-		if p.peek().kind == svTokString || p.peek().kind == svTokNumber {
-			cmd.tags[tag] = p.adv().val
-		} else {
-			cmd.tags[tag] = ""
-		}
-	}
-	for p.peek().kind == svTokString || p.peek().kind == svTokLBracket {
-		cmd.args = append(cmd.args, p.strList()...)
-	}
-	if _, err := p.expect(svTokSemi); err != nil {
-		return nil, err
-	}
-	if len(cmd.tags) > 0 {
-		return nil, fmt.Errorf("unsupported Sieve action tags")
-	}
-	min, max := 0, 0
+	cmd := &svActionCmd{name: name}
 	switch name {
-	case "keep", "discard", "stop":
-	case "fileinto", "reject", "ereject":
-		min, max = 1, 1
-	case "set":
-		min, max = 2, 2
-	case "setflag", "addflag", "removeflag", "require":
-		min, max = 1, 100
-	default:
-		return nil, fmt.Errorf("unsupported Sieve action %q", name)
-	}
-	if len(cmd.args) < min || len(cmd.args) > max {
-		return nil, fmt.Errorf("invalid arguments for %s", name)
-	}
-	if name == "require" {
+	case "require":
+		if !p.requireAllowed {
+			return nil, fmt.Errorf("require must precede other commands")
+		}
+		cmd.args = p.strList()
 		for _, cap := range cmd.args {
 			if !svCapability(cap) {
 				return nil, fmt.Errorf("unsupported Sieve capability %q", cap)
 			}
+			p.capabilities[cap] = true
 		}
+	case "keep", "fileinto":
+		if p.peek().kind == svTokTag {
+			if p.adv().val != "flags" {
+				return nil, fmt.Errorf("unsupported Sieve delivery tag")
+			}
+			if err := p.needCapability("imap4flags"); err != nil {
+				return nil, err
+			}
+			cmd.explicitFlags = true
+			cmd.flags = p.strList()
+		}
+		if name == "fileinto" {
+			arg, err := p.expect(svTokString)
+			if err != nil {
+				return nil, err
+			}
+			cmd.args = []string{arg.val}
+		}
+	case "setflag", "addflag", "removeflag":
+		if err := p.needCapability("imap4flags"); err != nil {
+			return nil, err
+		}
+		scalar := p.peek().kind == svTokString
+		first := p.strList()
+		if p.peek().kind == svTokString || p.peek().kind == svTokLBracket {
+			if err := p.needCapability("variables"); err != nil {
+				return nil, err
+			}
+			if !scalar || len(first) != 1 || !svVariableName(first[0]) {
+				return nil, fmt.Errorf("invalid flag variable name")
+			}
+			cmd.variable = first[0]
+			cmd.args = p.strList()
+		} else {
+			cmd.args = first
+		}
+	case "set":
+		if err := p.needCapability("variables"); err != nil {
+			return nil, err
+		}
+		name, err := p.expect(svTokString)
+		if err != nil {
+			return nil, err
+		}
+		if !svVariableName(name.val) {
+			return nil, fmt.Errorf("invalid variable name")
+		}
+		value, err := p.expect(svTokString)
+		if err != nil {
+			return nil, err
+		}
+		cmd.args = []string{name.val, value.val}
+	case "reject", "ereject":
+		arg, err := p.expect(svTokString)
+		if err != nil {
+			return nil, err
+		}
+		cmd.args = []string{arg.val}
+	case "discard", "stop":
+	default:
+		return nil, fmt.Errorf("unsupported Sieve action %q", name)
 	}
-
+	if p.err != nil {
+		return nil, p.err
+	}
+	if _, err := p.expect(svTokSemi); err != nil {
+		return nil, err
+	}
 	return cmd, nil
+}
+
+// Writable variables are constant ASCII identifiers, not namespaces or match variables.
+func svVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for idx, c := range name {
+		if c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || idx > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (p *svParser) test() (svTest, error) {
@@ -646,12 +713,56 @@ func (p *svParser) sizeTest() (svTest, error) {
 
 func (p *svParser) hasflagTest() (svTest, error) {
 	p.adv()
-
-	if p.peek().kind == svTokTag {
-		return nil, fmt.Errorf("unsupported hasflag tag")
+	if err := p.needCapability("imap4flags"); err != nil {
+		return nil, err
 	}
-	flags := p.strList()
-	return &svHasflagTest{flags: flags}, nil
+	test := &svHasflagTest{match: "is", comparator: "i;ascii-casemap"}
+	seenMatch, seenComparator := false, false
+	for p.peek().kind == svTokTag {
+		tag := p.adv().val
+		switch tag {
+		case "is", "contains", "matches":
+			if seenMatch {
+				return nil, fmt.Errorf("duplicate hasflag match type")
+			}
+			seenMatch = true
+			test.match = tag
+		case "comparator":
+			if seenComparator {
+				return nil, fmt.Errorf("duplicate hasflag comparator")
+			}
+			seenComparator = true
+			value, err := p.expect(svTokString)
+			if err != nil {
+				return nil, err
+			}
+			if value.val != "i;ascii-casemap" && value.val != "i;octet" {
+				return nil, fmt.Errorf("unsupported hasflag comparator")
+			}
+			test.comparator = value.val
+		default:
+			return nil, fmt.Errorf("unsupported hasflag tag %q", tag)
+		}
+	}
+	first := p.strList()
+	if p.peek().kind == svTokString || p.peek().kind == svTokLBracket {
+		if err := p.needCapability("variables"); err != nil {
+			return nil, err
+		}
+		test.variables = first
+		for _, name := range first {
+			if !svVariableName(name) {
+				return nil, fmt.Errorf("invalid hasflag variable name")
+			}
+		}
+		test.flags = p.strList()
+	} else {
+		test.flags = first
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	return test, nil
 }
 
 // strList parses a single string or a bracketed list of strings.
