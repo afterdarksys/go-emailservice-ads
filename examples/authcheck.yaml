@@ -1,0 +1,5 @@
+platform_config: /etc/mailhub/config.yaml
+token_env: MAILHUB_QUALIFICATION_TOKEN
+required_scope: compliance:read
+denied_scope: compliance:delete
+revoked_token_env: MAILHUB_QUALIFICATION_REVOKED_TOKEN

@@ -5,6 +5,7 @@ package oauthaccess
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrInactive = errors.New("access token is inactive")
+var ErrInsufficientScope = errors.New("insufficient token scope")
 
 type Config struct {
 	Enabled              bool          `yaml:"enabled" json:"enabled"`
@@ -87,6 +91,9 @@ func validateToken(ctx context.Context, c Config, token, scope string, client *h
 		return "", err
 	}
 	now := time.Now().Unix()
+	if !claims.Active {
+		return "", ErrInactive
+	}
 	if !claims.Active || claims.Subject == "" || claims.Issuer != c.Issuer || claims.Expires <= now || claims.NotBefore > now {
 		return "", fmt.Errorf("inactive or invalid access token")
 	}
@@ -109,5 +116,5 @@ func validateToken(ctx context.Context, c Config, token, scope string, client *h
 			return "oauth:" + claims.Subject, nil
 		}
 	}
-	return "", fmt.Errorf("insufficient token scope")
+	return "", ErrInsufficientScope
 }
