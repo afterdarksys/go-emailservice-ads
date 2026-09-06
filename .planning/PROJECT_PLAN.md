@@ -1,4 +1,7 @@
 # go-emailservice-ads — Master Project Plan
+
+> Historical design proposal. Reconciled status as of 2026-09-06 is in [ROADMAP.md](ROADMAP.md) and [../TODO](../TODO). Requirements below are not a current completion checklist.
+
 _Generated: 2026-04-13 | Status: Draft_
 
 ---
@@ -232,13 +235,13 @@ github.com/redis/go-redis/v9 v9.x.x
 
 Detailed task plans for each phase:
 
-- [M1-P1.0 Critical Security](.planning/phases/M1-P1.0-critical-security.md)
-- [M1-P1.1 High Security](.planning/phases/M1-P1.1-high-security.md)
-- [M2-P2.0 Protocol Completeness](.planning/phases/M2-P2.0-protocol-completeness.md)
-- [M3-P3.0 Directory & Identity](.planning/phases/M3-P3.0-directory-identity.md)
-- [M4-P4.0 Classic Spam Control](.planning/phases/M4-P4.0-spam-control-classic.md)
-- [M5-P5.0 AI Anti-Spam Engine](.planning/phases/M5-P5.0-ai-antispam.md)
-- [M6-P6.0 Hardening & Observability](.planning/phases/M6-P6.0-hardening-observability.md)
+- [M1-P1.0 Critical Security](phases/M1-P1.0-critical-security.md)
+- [M1-P1.1 High Security](phases/M1-P1.1-high-security.md)
+- [M2-P2.0 Protocol Completeness](phases/M2-P2.0-protocol-completeness.md)
+- [M3-P3.0 Directory & Identity](phases/M3-P3.0-directory-identity.md)
+- [M4-P4.0 Classic Spam Control](phases/M4-P4.0-spam-control-classic.md)
+- [M5-P5.0 AI Anti-Spam Engine](phases/M5-P5.0-ai-antispam.md)
+- [M6-P6.0 Hardening & Observability](phases/M6-P6.0-hardening-observability.md)
 - [ROADMAP](ROADMAP.md)
 
 Research (pending background agents):

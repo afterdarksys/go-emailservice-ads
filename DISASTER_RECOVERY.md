@@ -1,5 +1,8 @@
 # Disaster Recovery Architecture
 
+> Historical feature guide. For the supported 2.7 platform use [administration](docs/ADMINISTRATION.md), [configuration](docs/CONFIGURATION.md), [API reference](docs/API_REFERENCE.md) and [current recovery procedure](docs/BACKUP_RECOVERY.md). Those guides supersede conflicting commands and authentication/deployment claims below.
+
+
 ## Overview
 
 The go-emailservice-ads platform includes a comprehensive disaster recovery system designed to handle millions of messages per day with zero data loss.

@@ -1,16 +1,23 @@
 # go-emailservice-ads
 
-**Kubernetes-native enterprise email service with disaster recovery, anti-spam protection, and global routing.**
+**Mailhub with persistent SMTP delivery, IMAP mailboxes, scoped REST administration, filtering and recovery tooling.**
 
-Built for msgs.global internal mail infrastructure - handles millions of messages per day with Postfix-grade security features and enterprise-scale multi-region deployment capabilities.
+Current release: **2.7.0**. Start with the [documentation index](docs/README.md),
+[administration](docs/ADMINISTRATION.md), [configuration](docs/CONFIGURATION.md),
+[troubleshooting](docs/TROUBLESHOOTING.md) and [REST API reference](docs/API_REFERENCE.md).
+The supported topology uses one owner per spool, with an optional perimeter.
+Production throughput and failover must be qualified in the target environment.
 
-## Version 2.1.0 - Enterprise Observability & Next-Gen Protocol Release
+Older feature descriptions and CLI examples below are historical; the 2.7 guides
+take precedence. See [release notes](CHANGELOG.md) and [current backlog](TODO).
+
+## Historical version 2.1.0 overview
 
 This release adds **Elasticsearch integration** for comprehensive mail event logging and search, **AfterSMTP next-generation protocol** with QUIC/gRPC/blockchain support, and **SSO integration** for After Dark Systems authentication.
 
 ---
 
-## What's Deployed Right Now
+## Historical feature overview (deployment not asserted)
 
 ### 🆕 Elasticsearch Integration (v2.1) ✅
 
@@ -86,7 +93,7 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 ### Core Features ✅
 
 - **Multi-tier Queue System** - 1,050 workers across 5 priority tiers (emergency/msa/int/out/bulk)
-- **Disaster Recovery** - WAL-based journal + persistent storage + replication support
+- **Disaster Recovery** - WAL-based journal, persistent storage and fenced cold-standby recovery
 - **Deduplication** - SHA256 content hashing prevents duplicate processing
 - **Retry Scheduler** - Exponential backoff (1m, 2m, 4m, 8m intervals)
 - **Dead Letter Queue** - Failed messages quarantined for manual review
@@ -282,488 +289,33 @@ docker run -p 2525:2525 -p 8080:8080 afterdarksys/go-emailservice-ads:latest
 
 ## Configuration
 
-### config.yaml (Standalone/v1.0 compatible)
-```yaml
-server:
-  addr: ":2525"
-  domain: "msgs.global"
-  max_message_bytes: 10485760
-  max_recipients: 50
-
-  # Security
-  require_auth: true             # Require authentication
-  require_tls: true              # Require STARTTLS before AUTH
-  allow_insecure_auth: false     # No plaintext passwords
-  enable_greylist: false         # Greylisting (causes 5min delay)
-
-  # Rate Limiting
-  max_connections: 1000          # Total concurrent connections
-  max_per_ip: 10                 # Connections per IP
-  rate_limit_per_ip: 100         # Messages/hour per IP
-
-  # TLS
-  tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
-
-  # Local domains
-  local_domains:
-    - "localhost"
-    - "msgs.global"
-
-imap:
-  addr: ":1143"
-  require_tls: true
-  tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
-
-api:
-  rest_addr: ":8080"
-  grpc_addr: ":50051"
-
-auth:
-  default_users:
-    - username: "admin"
-      password: "changeme"        # CHANGE IN PRODUCTION!
-      email: "admin@msgs.global"
-
-logging:
-  level: "debug"
-```
-
-### config.yaml (v2.1 with Elasticsearch + AfterSMTP + SSO)
-```yaml
-server:
-  addr: ":2525"
-  domain: "msgs.global"
-  max_message_bytes: 10485760
-  max_recipients: 50
-
-  # Security
-  require_auth: true
-  require_tls: true
-  allow_insecure_auth: false
-  enable_greylist: false
-
-  # Rate Limiting
-  max_connections: 1000
-  max_per_ip: 10
-  rate_limit_per_ip: 100
-
-  # TLS
-  tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
-
-  # Local domains
-  local_domains:
-    - "localhost"
-    - "msgs.global"
-
-# NEW: Kubernetes Integration
-kubernetes:
-  enabled: true                   # Enable K8s service discovery
-  service_discovery: true         # Auto-detect peers
-  endpoint_watching: true         # Watch endpoint changes
-  namespace: "email-system"       # K8s namespace
-  label_selector: "app=email-service"
-
-# NEW: Deployment Mode (auto-detected from env)
-deployment:
-  mode: "perimeter"               # perimeter, internal, hybrid, standalone
-  region: "us-west-2"             # AWS region
-  datacenter: "us-west"           # Logical datacenter
-
-# NEW: Global Routing
-global_routing:
-  enabled: true                   # Enable global routing
-  state_store:
-    type: "etcd"                  # etcd, redis, consul
-    endpoints:
-      - "etcd:2379"
-  health_check_interval: "30s"
-  latency_check_interval: "5m"
-  cost_optimization: true
-
-# Relay control (anti-open-relay). This is the ONLY access-control block the
-# server actually reads — RCPT TO for a server.local_domains recipient is
-# always accepted (normal inbound delivery); every other recipient is relay
-# and is denied unless the sender authenticated via SMTP AUTH or connects
-# from one of these networks. Fail-closed: leave empty to permit zero
-# unauthenticated relay (the default).
-server:
-  relay:
-    allowed_networks:
-      - "10.0.0.0/8"   # e.g. trusted internal app servers submitting outbound mail without SASL
-
-# `internal/access` also has a full Postfix-style restriction-chain engine
-# (my_networks/my_domains/relay_domains, client/recipient/sender
-# restrictions, RBL checks, access maps — the shape this section used to
-# document) but it is NOT wired into config loading or the SMTP session yet:
-# nothing under an `access_control:` key in config.yaml has any effect. Don't
-# rely on it for open-relay protection until it's actually connected.
-
-# Policy Engine
-policy:
-  engine: "starlark"
-  policies_dir: "./policies"
-  enabled_policies:
-    - "10_ratelimit"
-    - "20_spamcheck"
-    - "30_attachment_filter"
-    - "40_size_check"
-    - "50_content_filter"
-    - "60_routing"
-    - "70_relay_control"
-    - "80_recipient_validation"
-
-imap:
-  addr: ":1143"
-  require_tls: true
-  tls:
-    cert: "./data/certs/server.crt"
-    key: "./data/certs/server.key"
-
-api:
-  rest_addr: ":8080"
-  grpc_addr: ":50051"
-
-auth:
-  default_users:
-    - username: "admin"
-      password: "changeme"
-      email: "admin@msgs.global"
-
-# NEW v2.1: SSO Integration
-sso:
-  enabled: false                      # Enable SSO authentication
-  provider: "afterdarksystems"        # Provider name
-  directory_url: "https://directory.msgs.global"
-  auth_url: "https://sso.afterdarksystems.com/oauth2/authorize"
-  token_url: "https://sso.afterdarksystems.com/oauth2/token"
-  userinfo_url: "https://sso.afterdarksystems.com/oauth2/userinfo"
-  client_id: "${ADS_CLIENT_ID}"       # From environment
-  client_secret: "${ADS_CLIENT_SECRET}"
-  redirect_url: "https://msgs.global/oauth/callback"
-  scopes:
-    - "openid"
-    - "email"
-    - "profile"
-
-# NEW v2.1: AfterSMTP Next-Gen Protocol
-aftersmtp:
-  enabled: false                      # Enable AMP/QUIC/gRPC
-  ledger_url: "ws://127.0.0.1:9944"   # Substrate blockchain
-  quic_addr: ":4434"                  # QUIC (HTTP/3) port
-  grpc_addr: ":4433"                  # gRPC streaming port
-  fallback_db: "./data/fallback_ledger.db"
-
-# NEW v2.1: Elasticsearch Integration
-elasticsearch:
-  enabled: false                      # Enable ES logging
-  endpoints:
-    - "http://localhost:9200"
-  index_prefix: "mail-events"         # Creates mail-events-YYYY.MM.DD
-  bulk_size: 1000
-  flush_interval: "5s"
-
-  # Authentication
-  api_key: "${ES_API_KEY}"            # Preferred
-  # OR username/password
-
-  # ILM
-  retention_days: 90
-  replicas: 1
-  shards: 3
-
-  # Performance
-  workers: 4
-  sampling_rate: 1.0                  # 1.0 = all, 0.1 = 10% sample
-
-  # Header Logging (privacy-first)
-  header_logging:
-    enabled: false
-    log_all_headers: false
-    allow_domains: []                 # Whitelist domains
-    deny_domains: []                  # Blacklist domains
-    allow_ips: []                     # CIDR support
-    deny_ips: []
-    include_headers:
-      - "From"
-      - "To"
-      - "Subject"
-      - "Message-ID"
-    exclude_headers:
-      - "Authorization"
-      - "X-API-Key"
-
-logging:
-  level: "info"
-```
-
----
+Use the [2.7 configuration guide](docs/CONFIGURATION.md) for a complete starting
+example, setting precedence, secret references, listener roles and update behavior.
+The root `config.yaml` is a development example with placeholders and optional
+features. Do not deploy it unchanged. See [compliance configuration](examples/compliance-config.yaml)
+for bounce, evidence and OAuth settings.
 
 ## Admin CLI (adsemailadm) - v2.2
 
-Comprehensive admin utility with 12 command groups and 60+ commands.
-
-### Queue Management
-```bash
-# Queue statistics
-./bin/adsemailadm queue stats
-./bin/adsemailadm queue list --tier int
-./bin/adsemailadm queue retry <message-id>
-./bin/adsemailadm queue purge --tier bulk
-./bin/adsemailadm queue inspect <message-id>
-
-# Dead Letter Queue
-./bin/adsemailadm dlq list
-./bin/adsemailadm dlq retry <message-id>
-./bin/adsemailadm dlq purge
-```
-
-### Policy Management
-```bash
-# List policies
-./bin/adsemailadm policy list
-
-# Show policy details
-./bin/adsemailadm policy show 20_spamcheck
-
-# Test policy
-./bin/adsemailadm policy test 20_spamcheck --from test@example.com
-
-# Reload policies (hot reload)
-./bin/adsemailadm policy reload
-
-# Policy statistics
-./bin/adsemailadm policy stats
-
-# Validate policy syntax
-./bin/adsemailadm policy validate ./policies/custom.star
-```
-
-### Mailbox Management
-```bash
-# List mailboxes
-./bin/adsemailadm mailbox list
-
-# Create mailbox
-./bin/adsemailadm mailbox create user@msgs.global --password secret --quota 5000
-
-# Delete mailbox
-./bin/adsemailadm mailbox delete user@msgs.global
-
-# Set quota
-./bin/adsemailadm mailbox quota user@msgs.global 10000
-
-# Alias management
-./bin/adsemailadm mailbox alias add alias@msgs.global user@msgs.global
-./bin/adsemailadm mailbox alias remove alias@msgs.global
-
-# Routing rules
-./bin/adsemailadm mailbox routing user@msgs.global
-```
-
-### TLS/SSL Management
-```bash
-# TLS status
-./bin/adsemailadm tls status
-
-# Certificate operations
-./bin/adsemailadm tls cert show
-./bin/adsemailadm tls cert renew
-./bin/adsemailadm tls cert test domain.com
-
-# DANE/TLSA
-./bin/adsemailadm tls dane verify domain.com
-```
-
-### Monitoring
-```bash
-# Real-time dashboard
-./bin/adsemailadm monitor dashboard
-
-# Statistics
-./bin/adsemailadm monitor stats
-
-# Prometheus metrics
-./bin/adsemailadm monitor metrics
-```
-
-### Cluster Management (Kubernetes)
-```bash
-# Cluster status
-./bin/adsemailadm cluster status
-
-# Node information
-./bin/adsemailadm cluster nodes
-
-# Load balancing
-./bin/adsemailadm cluster load
-
-# Rebalance queues
-./bin/adsemailadm cluster rebalance
-
-# Drain node
-./bin/adsemailadm cluster drain node-1
-```
-
-### Security Commands
-```bash
-# Audit logs
-./bin/adsemailadm security audit --days 7
-
-# SPF check
-./bin/adsemailadm security spf check example.com
-
-# DKIM check
-./bin/adsemailadm security dkim check example.com default
-
-# DMARC check
-./bin/adsemailadm security dmarc check example.com
-
-# RBL lookup
-./bin/adsemailadm security rbl lookup 1.2.3.4 zen.spamhaus.org
-```
-
-### Configuration Management
-```bash
-# Show config
-./bin/adsemailadm config show
-
-# Validate config
-./bin/adsemailadm config validate
-
-# Reload config (hot reload)
-./bin/adsemailadm config reload
-
-# Set config value
-./bin/adsemailadm config set server.max_connections 2000
-```
-
-### Health Checks
-```bash
-# Comprehensive health check
-./bin/adsemailadm health check
-
-# Component-specific checks
-./bin/adsemailadm health smtp
-./bin/adsemailadm health imap
-./bin/adsemailadm health api
-./bin/adsemailadm health storage
-```
-
-### API Key Management
-```bash
-# List configured API keys
-./bin/adsemailadm apikeys list
-
-# Create a new API key (generates a secure ads_<hex> key)
-./bin/adsemailadm apikeys create myapp --permissions all --description "CI pipeline"
-./bin/adsemailadm apikeys create readonly --permissions queue:read,policy:read
-
-# Revoke an API key by name
-./bin/adsemailadm apikeys revoke myapp
-./bin/adsemailadm apikeys revoke myapp --force
-```
-
-### Sieve Script Management
-```bash
-# List users with Sieve scripts
-./bin/adsemailadm sieve list
-
-# Show a user's script
-./bin/adsemailadm sieve show alice
-
-# Upload a script from file
-./bin/adsemailadm sieve upload alice ./scripts/alice.sieve
-
-# Write an inline script
-./bin/adsemailadm sieve edit alice 'require ["fileinto"]; if header :contains "Subject" "[SPAM]" { fileinto "Junk"; }'
-
-# Delete a user's script
-./bin/adsemailadm sieve delete alice
-```
-
-### Global Flags
-```bash
-# API endpoint (default: http://localhost:8080)
-./bin/adsemailadm --api http://email-api:8080 queue stats
-
-# Authentication (Basic Auth)
-./bin/adsemailadm --user admin --password secret queue stats
-
-# Authentication (Bearer token — superuser API key)
-./bin/adsemailadm --api-key ads_<your-key> queue stats
-
-# JSON output
-./bin/adsemailadm --json queue stats
-
-# Verbose logging
-./bin/adsemailadm --verbose queue list
-
-# Config file
-./bin/adsemailadm --config /etc/email/config.yaml policy list
-```
-
----
+The `adsemailadm` binary remains in the repository, but its command surface includes
+routes not mounted by the standard 2.7 server. Use the [REST API reference](docs/API_REFERENCE.md)
+and [administration guide](docs/ADMINISTRATION.md) for supported management actions.
+Verify individual legacy CLI commands before automation; their presence is not a
+runtime capability guarantee.
 
 ## Legacy CLI (mailctl) - v1.0
 
-```bash
-# Health check
-./bin/mailctl health
-
-# Queue statistics
-./bin/mailctl queue stats
-./bin/mailctl queue list --tier int
-
-# Dead Letter Queue
-./bin/mailctl dlq list
-./bin/mailctl dlq retry <message-id>
-
-# Message operations
-./bin/mailctl message get <message-id>
-./bin/mailctl message delete <message-id>
-
-# Replication (if configured)
-./bin/mailctl replication status
-./bin/mailctl replication promote
-```
-
-**Authentication:**
-```bash
-# Via flags
-./bin/mailctl --username admin --password changeme queue stats
-
-# Via environment
-export MAILCTL_USERNAME=admin
-export MAILCTL_PASSWORD=changeme
-./bin/mailctl queue stats
-```
-
----
+Legacy `mailctl` commands are not the authoritative management contract. In
+particular, Basic Auth is not accepted and replication is not configured by the
+standard executable. Use scoped Bearer requests and [fenced failover tooling](docs/FAILOVER.md).
 
 ## API Endpoints
 
-### Public (No Auth)
-- `GET /health` - Service health
-- `GET /ready` - Readiness check
-- `GET /metrics` - Prometheus metrics
-
-### Protected (Basic Auth)
-- `GET /api/v1/queue/stats` - Queue statistics
-- `GET /api/v1/queue/pending?tier=int` - List pending messages
-- `GET /api/v1/dlq/list` - Dead letter queue
-- `POST /api/v1/dlq/retry/:id` - Retry failed message
-- `GET /api/v1/message/:id` - Get message
-- `DELETE /api/v1/message/:id` - Delete message
-- `GET /api/v1/replication/status` - Replication status
-- `POST /api/v1/replication/promote` - Promote to primary
-
----
+Use the [2.7 REST API reference](docs/API_REFERENCE.md) for the complete active
+route inventory, scopes, payloads, errors and examples. [API authentication](API_AUTHENTICATION.md)
+uses scoped Bearer credentials; Basic Auth is not accepted by the management API.
+The separate admin router and some legacy CLI commands are not wired into the
+standard executable. Management gRPC and replication promotion are unavailable.
 
 ## Performance Characteristics
 
@@ -1162,126 +714,27 @@ python3 test_security.py   # Security features (if exists)
 
 ## Troubleshooting
 
-### Service Not Starting
-```bash
-# Check if port is in use
-lsof -i :2525
-
-# Check logs
-tail -f service.log
-
-# Verify config
-./bin/goemailservices --config config.yaml --validate
-```
-
-### Messages Not Processing
-```bash
-# Check queue stats
-./bin/mailctl queue stats
-
-# Check for errors in logs
-tail -f service.log | grep ERROR
-
-# Verify workers are running
-ps aux | grep goemailservices
-```
-
-### SPF/DKIM Failures
-```bash
-# Check DNS resolution
-dig TXT _spf.google.com
-dig TXT default._domainkey.gmail.com
-
-# Check logs
-tail -f service.log | grep -E 'SPF|DKIM'
-
-# Clear DNS cache if needed
-# (API endpoint needs to be added)
-```
-
-### Crash Recovery
-```bash
-# Service automatically recovers from journal on restart
-./bin/goemailservices --config config.yaml
-
-# Check recovery in logs:
-# "Recovered X messages from journal"
-```
-
----
+Use the [troubleshooting runbook](docs/TROUBLESHOOTING.md) for SMTP admission,
+queue/delivery, TLS, API, scanner and storage failures. Start with version,
+`/health`, `/ready`, queue age and the exact SMTP/HTTP error; preserve evidence
+before recovery operations.
 
 ## Production Checklist
 
-Before deploying to production:
-
-### Security
-- [ ] Change default passwords in config.yaml
-- [ ] Use valid TLS certificates (not self-signed)
-- [ ] Enable greylisting (if spam is a concern)
-- [ ] Review rate limiting thresholds
-- [ ] Configure firewall rules
-- [ ] Set up fail2ban for brute force protection
-
-### Performance
-- [ ] **Implement real SMTP delivery** (critical!)
-- [ ] Tune worker counts per tier
-- [ ] Adjust rate limiting based on traffic
-- [ ] Set up connection pooling
-- [ ] Configure DNS resolver (authoritative)
-
-### Monitoring
-- [ ] Set up Prometheus scraping
-- [ ] Create Grafana dashboards
-- [ ] Configure alerting rules
-- [ ] Set up log aggregation
-- [ ] Monitor disk usage (journal growth)
-
-### High Availability
-- [ ] Configure replication (primary/secondary)
-- [ ] Set up load balancer
-- [ ] Configure health checks
-- [ ] Test failover procedures
-- [ ] Set up backup/restore
-
-### Compliance
-- [ ] Review SPF/DKIM/DMARC policies
-- [ ] Configure retention policies
-- [ ] Set up audit logging
-- [ ] Review data sovereignty requirements
-- [ ] Document disaster recovery procedures
-
----
+The maintained production checklist is in [TODO](TODO#production-qualification-and-operations).
+Follow [deployment qualification](docs/DEPLOYMENT_QUALIFICATION.md),
+[backup/recovery](docs/BACKUP_RECOVERY.md), [monitoring](docs/MONITORING.md) and
+[configuration](docs/CONFIGURATION.md). Local tests do not qualify production
+identity providers, Object Lock destinations or fencing APIs.
 
 ## Known Issues
 
-### High ⚠️
-1. **DMARC not enforced** - Code exists but not integrated
-   - Impact: Missing policy enforcement
-   - Fix: Add DMARC check in `server.go:Data()`
-
-2. **No DKIM signing** - Can verify but not sign
-   - Impact: Outbound mail not signed
-   - Fix: Generate keys, configure signer
-
-### Medium 📋
-1. **Directory service not configured** - Client exists, no endpoint
-   - Impact: Can't integrate with msgs.global directory
-   - Fix: Configure `directory.base_url` in config
-
-2. **Replication not configured** - Code exists, not enabled
-   - Impact: No automatic failover
-   - Fix: Configure peers in config, start secondary
-
-### Low 📝
-1. **No Grafana dashboards** - Metrics exist, no visualization
-   - Impact: Manual monitoring only
-   - Fix: Create Grafana dashboards
-
-2. **No gRPC implementation** - Placeholder only
-   - Impact: No gRPC API
-   - Fix: Implement gRPC service
-
----
+See [TODO](TODO#engineering-gaps-and-deferred-enhancements) for current engineering
+gaps. Real SMTP delivery, DKIM signing and DMARC enforcement are implemented;
+signing keys/DNS and enforcement rollout require configuration. The standard
+executable does not enable replication, some IMAP mutations remain unsupported,
+and general configuration reload requires restart. See the current operational
+guides for supported behavior.
 
 ## Contributing
 
@@ -1319,101 +772,12 @@ Internal use only - msgs.global infrastructure
 
 ## Roadmap
 
-### Q1 2026 (v2.0 - COMPLETE ✅)
-- [x] Multi-tier queue system
-- [x] Disaster recovery (WAL)
-- [x] SPF/DKIM verification
-- [x] IMAP server
-- [x] Management CLI (mailctl + adsemailadm)
-- [x] **Kubernetes integration** ⭐
-- [x] **Service discovery** ⭐
-- [x] **Global routing engine** ⭐
-- [x] **Postfix-style access control** ⭐
-- [x] **Policy engine (Starlark)** ⭐
-- [x] **Admin CLI (50+ commands)** ⭐
-- [x] **DANE/TLSA support** ⭐
-- [ ] **Real SMTP delivery** (critical!)
-
-### Q2 2026 (v2.1 - COMPLETE ✅)
-- [x] **Elasticsearch integration** ⭐ - Mail event logging and search
-- [x] **AfterSMTP protocol** ⭐ - QUIC/gRPC/blockchain next-gen messaging
-- [x] **SSO integration** ⭐ - OAuth2/OIDC with After Dark Systems
-- [x] **Message correlation** ⭐ - TraceID across instances and queue IDs
-- [x] **Smart header logging** ⭐ - Privacy-first per-domain/IP/MX control
-- [ ] **Real SMTP delivery** (still critical!)
-- [ ] DMARC enforcement
-- [ ] DKIM signing for outbound
-
-### Q3 2026 (v2.2 - Planned)
-- [ ] **SQL backend drivers** (MySQL, PostgreSQL, SQLite) for access maps
-- [ ] **LDAP/Active Directory integration** for access maps
-- [ ] **External policy service protocol** (Postfix-compatible)
-- [ ] Connection pooling
-- [ ] Grafana dashboards
-- [ ] Load testing (1M+ msg/day)
-- [ ] Content filtering (antivirus, anti-spam)
-- [ ] DMARC aggregate reporting
-
-### Q3 2026 (v2.3 - Planned)
-- [ ] Replication HA setup
-- [ ] Directory service integration
-- [ ] Advanced routing (transport maps)
-- [ ] Attachment scanning
-- [ ] Web-based admin UI
-- [ ] Message archiving and compliance
-- [ ] Hot config reload
-- [ ] Binary format support (.amfb with MessagePack)
-- [ ] Additional compression (Zstd, LZ4)
-
-### Q4 2026 (v3.0 - Vision)
-- [ ] **Machine learning-based routing** (AI optimization)
-- [ ] **Advanced threat detection** (behavioral analysis)
-- [ ] Bayesian spam filtering
-- [ ] Reputation tracking
-- [ ] Performance optimizations
-- [ ] Multi-tenancy support
-- [ ] Service mesh integration (Istio/Linkerd)
-- [ ] Real-time collaboration features
-- [ ] Blockchain verification for compliance
-
----
+[TODO](TODO) is the authoritative current backlog. [The planning roadmap](.planning/ROADMAP.md)
+maps historical milestone proposals to delivered work and remaining requirements.
+Do not use the old release-era feature checklists to assess current completion.
 
 ## Summary
 
-**What's built:** Kubernetes-native enterprise email platform with global routing, Postfix-style access control, comprehensive observability, and next-gen protocol support
-
-**What works:**
-- ✅ Multi-region Kubernetes deployment (perimeter + internal)
-- ✅ Service discovery and global routing
-- ✅ Postfix-compatible access control (20+ map types)
-- ✅ Policy engine with Starlark scripting
-- ✅ Admin CLI with 50+ commands
-- ✅ Elasticsearch mail event logging with message correlation
-- ✅ AfterSMTP next-gen protocol (QUIC/gRPC/blockchain)
-- ✅ SSO integration (OAuth2/OIDC)
-- ✅ Smart header logging with privacy controls
-- ✅ Everything except actual SMTP delivery ⚠️
-
-**What's needed:** Implement real delivery in `internal/smtpd/queue.go:149-153`
-
-**Scale:**
-- Single region: Millions of messages/day
-- Multi-region: Tens of millions/day
-- Auto-scaling: 3-20 pods per region
-- Event logging: Billions of searchable events
-
-**Security:** Postfix-grade SPF/DKIM/DANE/greylisting/TLS + RBL/DNSBL + access control + SSO
-
-**Observability:** Elasticsearch event logging, TraceID correlation, Kibana dashboards, Prometheus metrics
-
-**Deployment:** Standalone, Docker, Docker Compose, Kubernetes (perimeter/internal/hybrid/multi-region)
-
-**Status:** v2.1.0 complete - Production-ready enterprise platform with comprehensive observability and next-gen protocol support (delivery implementation pending)
-
-### Mail hub operations (2.4.0)
-
-See [Platform operations](docs/PLATFORM_OPERATIONS.md) for internal/perimeter
-listeners, persistent identities, verified next-hop transports, required malware
-and spam scanning, quarantine, and deployment migration. Adaptive mailstorm
-protection includes repeated-message detection, learned volume baselines,
-persistent sender circuit breakers, and an operator pause/resume API.
+Current release information is in [CHANGELOG.md](CHANGELOG.md). Follow the
+[documentation index](docs/README.md) for operation and integration, and
+[deployment qualification](docs/DEPLOYMENT_QUALIFICATION.md) for remaining gates.
