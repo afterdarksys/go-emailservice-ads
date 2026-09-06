@@ -20,7 +20,7 @@ func TestLocalSievePersistsFlagsAndDefersInvalidScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "alice@example.test.sieve")
-	if err = os.WriteFile(path, []byte(`require ["fileinto", "imap4flags"]; addflag "\\Seen"; fileinto "Projects";`), 0600); err != nil {
+	if err = os.WriteFile(path, []byte(`require ["fileinto", "imap4flags"]; addflag "  \\Seen   \\Flagged  "; fileinto "Projects";`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	msg := &Message{ID: "sieve1", From: "sender@example.test", Data: []byte("Subject: test\r\n\r\nbody")}
@@ -28,7 +28,7 @@ func TestLocalSievePersistsFlagsAndDefersInvalidScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages, err := q.imapStore.GetMessages(q.ctx, "alice@example.test", "Projects")
-	if err != nil || len(messages) != 1 || len(messages[0].Flags) != 1 || messages[0].Flags[0] != `\Seen` {
+	if err != nil || len(messages) != 1 || len(messages[0].Flags) != 2 || messages[0].Flags[0] != `\Seen` || messages[0].Flags[1] != `\Flagged` {
 		t.Fatalf("lost Sieve result: %+v %v", messages, err)
 	}
 	if err = q.deliverLocal(msg, []string{"alice@example.test"}); err != nil {

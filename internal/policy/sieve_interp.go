@@ -114,11 +114,11 @@ func (i *svInterp) runAction(c *svActionCmd, result *Action) bool {
 			i.vars[strings.ToLower(c.args[0])] = i.expand(c.args[1])
 		}
 	case "setflag":
-		i.flags = c.args
+		i.flags = i.flagList(c.args)
 	case "addflag":
-		i.flags = svUnion(i.flags, c.args)
+		i.flags = svUnion(i.flags, i.flagList(c.args))
 	case "removeflag":
-		i.flags = svSubtract(i.flags, c.args)
+		i.flags = svSubtract(i.flags, i.flagList(c.args))
 	case "require":
 		// no-op at execution time
 	}
@@ -171,12 +171,12 @@ func (i *svInterp) evalTest(t svTest) bool {
 		}
 		return i.ctx.Size < v.limit
 	case *svHasflagTest:
-		for _, f := range v.flags {
-			if !svContains(i.flags, f) {
-				return false
+		for _, f := range i.flagList(v.flags) {
+			if svContains(i.flags, f) {
+				return true
 			}
 		}
-		return true
+		return false
 	}
 	return false
 }
@@ -297,30 +297,40 @@ func (i *svInterp) expand(s string) string {
 	return b.String()
 }
 
+// Flag arguments may each contain a space-separated list. Expand variables
+// before splitting and preserve case-insensitive set semantics across actions.
+func (i *svInterp) flagList(args []string) []string {
+	var flags []string
+	for _, arg := range args {
+		flags = append(flags, strings.Fields(i.expand(arg))...)
+	}
+	return svUnion(nil, flags)
+}
+
 func svUnion(a, b []string) []string {
-	set := make(map[string]bool)
-	for _, s := range a {
-		set[s] = true
-	}
-	for _, s := range b {
-		set[s] = true
-	}
-	out := make([]string, 0, len(set))
-	for s := range set {
-		out = append(out, s)
+	seen := make(map[string]bool)
+	var out []string
+	for _, flags := range [][]string{a, b} {
+		for _, flag := range flags {
+			key := strings.ToLower(flag)
+			if !seen[key] {
+				out = append(out, flag)
+				seen[key] = true
+			}
+		}
 	}
 	return out
 }
 
 func svSubtract(a, b []string) []string {
-	rm := make(map[string]bool)
-	for _, s := range b {
-		rm[s] = true
+	remove := make(map[string]bool, len(b))
+	for _, flag := range b {
+		remove[strings.ToLower(flag)] = true
 	}
 	var out []string
-	for _, s := range a {
-		if !rm[s] {
-			out = append(out, s)
+	for _, flag := range a {
+		if !remove[strings.ToLower(flag)] {
+			out = append(out, flag)
 		}
 	}
 	return out

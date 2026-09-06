@@ -92,12 +92,9 @@ func (j *JMAPServer) mailboxGet(ctx context.Context, user string, args map[strin
 	}
 	list := []map[string]interface{}{}
 	notFound := []string{}
+	sort.Strings(folders)
 	for _, folder := range folders {
 		fid := folderID(folder)
-		if explicit && !wanted[fid] {
-			continue
-		}
-		delete(wanted, fid)
 		msgs, err := j.store.GetMessages(ctx, user, folder)
 		if err != nil {
 			return methodError("serverFail", id)
@@ -135,12 +132,24 @@ func (j *JMAPServer) mailboxGet(ctx context.Context, user string, args map[strin
 		}
 		list = append(list, map[string]interface{}{"id": fid, "name": name, "parentId": parent, "role": role, "sortOrder": 0, "totalEmails": len(msgs), "unreadEmails": unread, "totalThreads": len(msgs), "unreadThreads": unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": false, "mayRemoveItems": false, "maySetSeen": false, "maySetKeywords": false, "mayCreateChild": false, "mayRename": false, "mayDelete": false, "maySubmit": false}})
 	}
+	// State describes every mailbox in the account, independent of ids selection.
+	raw, _ := json.Marshal(list)
+	sum := sha256.Sum256(raw)
+	if explicit {
+		selected := []map[string]interface{}{}
+		for _, mailbox := range list {
+			fid := mailbox["id"].(string)
+			if wanted[fid] {
+				selected = append(selected, mailbox)
+				delete(wanted, fid)
+			}
+		}
+		list = selected
+	}
 	for v := range wanted {
 		notFound = append(notFound, v)
 	}
 	sort.Strings(notFound)
-	raw, _ := json.Marshal(list)
-	sum := sha256.Sum256(raw)
 	return MethodResponse{Name: "Mailbox/get", Arguments: map[string]interface{}{"accountId": "primary", "state": hex.EncodeToString(sum[:]), "list": list, "notFound": notFound}, CallID: id}
 }
 func addresses(value string) []map[string]string {

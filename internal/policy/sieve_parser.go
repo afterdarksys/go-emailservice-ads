@@ -540,23 +540,20 @@ func (p *svParser) testList() ([]svTest, error) {
 		return nil, err
 	}
 	var tests []svTest
-	for p.peek().kind != svTokRParen && p.peek().kind != svTokEOF {
+	for {
 		tst, err := p.test()
 		if err != nil {
 			return nil, err
 		}
 		tests = append(tests, tst)
-		if p.peek().kind == svTokComma {
+		if p.peek().kind == svTokRParen {
 			p.adv()
+			return tests, nil
+		}
+		if _, err := p.expect(svTokComma); err != nil {
+			return nil, err
 		}
 	}
-	if _, err := p.expect(svTokRParen); err != nil {
-		return nil, err
-	}
-	if len(tests) == 0 {
-		return nil, fmt.Errorf("empty test list")
-	}
-	return tests, nil
 }
 
 func (p *svParser) consumeTags() string {
