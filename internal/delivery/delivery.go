@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -160,23 +161,15 @@ func (d *MailDelivery) deliverToDomain(ctx context.Context, domain, from string,
 	if hops := d.route(domain); len(hops) > 0 {
 		return d.deliverRoute(ctx, hops, from, recipients, data)
 	}
-	mxRecords, err := d.resolver.LookupMX(ctx, domain)
+	mxRecords, err := d.resolver.LookupMailMX(ctx, domain)
 	if err != nil {
-		d.logger.Warn("MX lookup failed, trying A record",
-			zap.String("domain", domain),
-			zap.Error(err))
-
-		// Fallback to A record lookup (RFC 5321 Section 5.1)
-		mxRecords = []*net.MX{{Host: domain, Pref: 10}}
-	}
-
-	if len(mxRecords) == 0 {
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    550,
-			Message:     "No MX records found",
-			IsPermanent: true,
-		}, fmt.Errorf("no MX records for domain: %s", domain)
+		var dnsErr *dns.MailDNSError
+		permanent := errors.As(err, &dnsErr) && dnsErr.Permanent
+		code := 451
+		if permanent {
+			code = 550
+		}
+		return &DeliveryResult{SMTPCode: code, Message: err.Error(), IsPermanent: permanent}, err
 	}
 
 	// Sort MX records by preference (lower is higher priority)

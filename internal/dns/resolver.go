@@ -11,8 +11,9 @@ import (
 
 // Resolver provides DNS resolution with caching
 type Resolver struct {
-	logger    *zap.Logger
-	resolver  *net.Resolver
+	mailServers []string
+	logger      *zap.Logger
+	resolver    *net.Resolver
 
 	// Cache for MX records
 	mxCache   map[string]*mxCacheEntry
@@ -23,8 +24,8 @@ type Resolver struct {
 	txtCacheMu sync.RWMutex
 
 	// Configuration
-	timeout    time.Duration
-	cacheTTL   time.Duration
+	timeout  time.Duration
+	cacheTTL time.Duration
 }
 
 type mxCacheEntry struct {
