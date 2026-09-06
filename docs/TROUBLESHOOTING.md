@@ -33,7 +33,7 @@ Inspect [metrics and the probe](MONITORING.md), then follow the matching symptom
 | DLQ message remains failed | Original failure and current recipient/provider state | After correction, POST the specific DLQ retry; monitor the resulting transaction. |
 | TLS/DANE/MTA-STS delivery failure | Certificate name/chain/expiry, TLSA/DNSSEC result, resolver health, enforced cached policy | Correct DNS/certificates/connector CA. Indeterminate validation can defer delivery; repeated retries do not repair trust. |
 | IMAP connection fails | `tls_mode`, port, TLS trust, disabled server and username | Use STARTTLS on the configured STARTTLS listener or implicit TLS on its own port. |
-| IMAP CREATE/COPY/metadata APPEND rejected | Supported backend operations | Some mailbox mutations explicitly fail; see TODO. Do not treat this as lost credentials. |
+| IMAP folder mutation rejected | Destination existence, quota, mailbox name and selected read-only state | Create the COPY/APPEND destination first; delete child folders before their parent. Check storage errors and available quota. |
 | Quarantine release 409 | Rescan verdict, required scanner health, current held state | Resolve scanner/cause and review again; a release request is not proof of release. |
 | Compliance list empty / evidence 404 | Principal name, domain grants, action grants and requested domain | Authorize the intended principal/domain/action. Hidden evidence can appear absent. |
 | Compliance action 409 | Legal hold, finite retention expiry, evidence integrity, case mode and reason | Resolve the specific workflow condition; generic queue deletion cannot override it. |

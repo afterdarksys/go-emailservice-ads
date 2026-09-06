@@ -13,6 +13,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
 	"github.com/emersion/go-smtp"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -397,38 +398,37 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 			folder = "INBOX"
 		}
 
-		// Run per-user Sieve script if policy manager is configured.
+		var flags []string
+		// Invalid or unreadable configured scripts defer rather than bypass filtering.
 		if qm.policyManager != nil {
-			scriptPath := filepath.Join(qm.dataDir, "sieve", username+".sieve")
-			if scriptData, err := os.ReadFile(scriptPath); err == nil {
-				emailCtx, ctxErr := policy.NewEmailContext(msg.From, msg.To, msg.ClientIP, msg.HeloHostname, msg.Data)
-				if ctxErr != nil {
-					qm.logger.Warn("Failed to build email context for Sieve, delivering to INBOX",
-						zap.String("recipient", rcpt),
-						zap.Error(ctxErr))
-				} else {
-					action, evalErr := qm.policyManager.EvaluateSieve(qm.ctx, string(scriptData), emailCtx)
-					if evalErr != nil {
-						qm.logger.Warn("Sieve evaluation failed, delivering to INBOX",
-							zap.String("recipient", rcpt),
-							zap.Error(evalErr))
-					} else {
-						switch action.Type {
-						case policy.ActionFileinto:
-							folder = action.Target
-						case policy.ActionDiscard:
-							qm.logger.Info("Sieve discarded message",
-								zap.String("msg_id", msg.ID),
-								zap.String("recipient", rcpt))
-							continue
-						case policy.ActionReject:
-							qm.logger.Info("Sieve rejected message at delivery",
-								zap.String("msg_id", msg.ID),
-								zap.String("recipient", rcpt),
-								zap.String("reason", action.Reason))
-							continue
-						}
+			scriptPath := filepath.Join(qm.dataDir, "sieve", url.PathEscape(username)+".sieve")
+			scriptData, readErr := os.ReadFile(scriptPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				deliveryErr = errors.Join(deliveryErr, fmt.Errorf("read Sieve for %s: %w", rcpt, readErr))
+				continue
+			}
+			if readErr == nil {
+				emailCtx, err := policy.NewEmailContext(msg.From, []string{rcpt}, msg.ClientIP, msg.HeloHostname, msg.Data)
+				if err != nil {
+					deliveryErr = errors.Join(deliveryErr, err)
+					continue
+				}
+				action, err := qm.policyManager.EvaluateSieve(qm.ctx, string(scriptData), emailCtx)
+				if err != nil {
+					deliveryErr = errors.Join(deliveryErr, fmt.Errorf("Sieve for %s: %w", rcpt, err))
+					continue
+				}
+				flags = action.Tags
+				switch action.Type {
+				case policy.ActionFileinto:
+					folder = action.Target
+				case policy.ActionDiscard:
+					continue
+				case policy.ActionReject:
+					if err = qm.generateBounce(msg, &delivery.DeliveryResult{SMTPCode: 550, IsPermanent: true, Message: action.Reason}, []string{rcpt}); err != nil {
+						deliveryErr = errors.Join(deliveryErr, err)
 					}
+					continue
 				}
 			}
 		}
@@ -446,7 +446,7 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 				zap.String("folder", folder))
 		}
 
-		msgID, err := qm.imapStore.DeliverOnce(qm.ctx, msg.ID+"/"+rcpt, username, folder, msg.Data)
+		msgID, err := qm.imapStore.DeliverOnceWithFlags(qm.ctx, msg.ID+"/"+rcpt, username, folder, msg.Data, flags)
 		if err != nil {
 			qm.logger.Error("Local delivery failed",
 				zap.String("recipient", rcpt),

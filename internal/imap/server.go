@@ -2,9 +2,11 @@ package imap
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"math"
+	"net"
 	"strings"
 	"time"
 
@@ -93,6 +95,7 @@ func (s *Server) Start() error {
 
 	// Create IMAP server
 	s.imapServer = server.New(backend)
+	s.imapServer.Enable(fetchSemantics{})
 	s.imapServer.Addr = addr
 	s.imapServer.MaxLiteralSize = imapLiteralLimit(s.config.Server.MaxMessageBytes)
 
@@ -104,48 +107,31 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	// Configure TLS if available.
 	if s.config.IMAP.TLS != nil && s.config.IMAP.TLS.Cert != "" && s.config.IMAP.TLS.Key != "" {
-		tlsConfig, err := tlsutil.ServerConfig(s.config.IMAP.TLS.Cert, s.config.IMAP.TLS.Key, s.config.IMAP.TLS.ClientCAFile, s.config.IMAP.TLS.RequireClientCert)
+		if tlsMode == "disabled" {
+			return fmt.Errorf("IMAP TLS disabled but TLS configuration supplied")
+		}
+		c := s.config.IMAP.TLS
+		tlsConfig, err := tlsutil.ServerConfig(c.Cert, c.Key, c.ClientCAFile, c.RequireClientCert)
 		if err != nil {
-			return fmt.Errorf("failed to load TLS: %w", err)
+			return err
 		}
-
 		s.imapServer.TLSConfig = tlsConfig
-
-		if tlsMode == "implicit" {
-			s.logger.Info("IMAP server configured with mandatory TLS (IMAPS mode)")
-			// For implicit TLS (port 993), use ListenAndServeTLS
-			go func() {
-				s.logger.Info("IMAP server listening (implicit TLS)", zap.String("addr", addr))
-				if err := s.imapServer.ListenAndServeTLS(); err != nil {
-					s.logger.Error("IMAP server error", zap.Error(err))
-				}
-			}()
-		} else if tlsMode == "starttls" {
-			s.logger.Info("IMAP server configured with STARTTLS support")
-			go func() {
-				s.logger.Info("IMAP server listening (STARTTLS)", zap.String("addr", addr))
-				if err := s.imapServer.ListenAndServe(); err != nil {
-					s.logger.Error("IMAP server error", zap.Error(err))
-				}
-			}()
-		} else {
-			return fmt.Errorf("IMAP TLS mode disabled but TLS configuration was supplied")
-		}
-	} else {
-		if tlsMode != "disabled" {
-			return fmt.Errorf("IMAP TLS mode %q requires TLS certificates", tlsMode)
-		}
-
-		// No TLS configured - run insecure (only for testing)
-		s.logger.Warn("IMAP server running WITHOUT TLS - NOT RECOMMENDED FOR PRODUCTION")
-		go func() {
-			if err := s.imapServer.ListenAndServe(); err != nil {
-				s.logger.Error("IMAP server error", zap.Error(err))
-			}
-		}()
+	} else if tlsMode != "disabled" {
+		return fmt.Errorf("IMAP TLS mode %q requires certificates", tlsMode)
 	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	if tlsMode == "implicit" {
+		listener = tls.NewListener(listener, s.imapServer.TLSConfig)
+	}
+	go func() {
+		if err := s.imapServer.Serve(listener); err != nil {
+			s.logger.Error("IMAP server stopped", zap.Error(err))
+		}
+	}()
 
 	s.logger.Info("IMAP4rev1 server started successfully", zap.String("addr", addr))
 	return nil

@@ -30,7 +30,10 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Reject unknown YAML fields and extra documents; provide `--check-config` without startup side effects.
 
 - [ ] Implement and qualify replicated durable state / active-active ownership if required. The main executable leaves replication unconfigured; cold-standby tooling exists.
-- [ ] Complete unsupported IMAP mailbox mutations and Sieve execution; qualify full client interoperability and remaining JMAP capabilities.
+- [x] Implement persistent IMAP folder mutations, metadata APPEND/COPY, flags, decoded search, protocol notifications and restored-service acceptance checks.
+- [x] Correct active Sieve validation, failure handling, MIME body matching and persistent routing/flags; reject unsupported programs explicitly.
+- [x] Replace fabricated JMAP reads/write success with durable owner-scoped reads/downloads and explicit unsupported-operation errors.
+- [ ] Qualify named desktop/mobile clients; implement writable JMAP, incremental synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.

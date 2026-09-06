@@ -364,7 +364,7 @@ func main() {
 	// default so operators can place it behind an HTTPS reverse proxy explicitly.
 	var jmapServer *jmap.JMAPServer
 	if cfg.JMAP.Enabled {
-		jmapServer = jmap.NewJMAPServer(logger, cfg, imapValidator, imapAdapter)
+		jmapServer = jmap.NewJMAPServer(logger, cfg, imapValidator, imapStore)
 		if err := jmapServer.Start(cfg.JMAP.Addr); err != nil {
 			logger.Fatal("JMAP server failed", zap.Error(err))
 		}

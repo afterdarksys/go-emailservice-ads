@@ -15,6 +15,8 @@ the active `cmd/goemailservices` executable as reviewed on 2026-09-06.
 | Monitor and rotate credentials | [Monitoring](MONITORING.md) and [rotation](CREDENTIAL_ROTATION.md) |
 | Qualify a release and production dependencies | [Release checks](RELEASE_QUALIFICATION.md) and [deployment gates](DEPLOYMENT_QUALIFICATION.md) |
 | Write policies and configure IP admission | [Starlark filters](STARLARK_FILTERS.md) and [IP filtering](IP_FILTERING.md) |
+| Execute QA/UAT and configure Sieve | [QA/UAT guide](QA_UAT.md) |
+| Integrate the optional JMAP read subset | [JMAP API](JMAP_API.md) |
 | See outstanding work | [TODO](../TODO) |
 
 The REST API reference takes precedence over older CLI/router examples. Source
