@@ -88,25 +88,26 @@ func (rs *RetryScheduler) processRetries() {
 	pending := rs.store.ListPending("")
 
 	for _, entry := range pending {
-		if entry.Status != "pending" || entry.Attempts >= rs.policy.MaxAttempts {
+		if entry.Attempts >= rs.policy.MaxAttempts {
+			rs.store.UpdateStatus(entry.MessageID, "failed", "retry attempts exhausted")
+			continue
+		}
+		if entry.Status != "pending" {
 			continue
 		}
 
 		// Calculate next retry time using exponential backoff
-		nextRetry := rs.calculateNextRetry(entry.Attempts, entry.CreatedAt)
+		base := entry.LastAttempt
+		if base.IsZero() {
+			base = entry.CreatedAt
+		}
+		nextRetry := rs.calculateNextRetry(entry.Attempts, base)
 		if time.Now().Before(nextRetry) {
 			continue // Not ready for retry yet
 		}
 
 		// Convert storage entry back to queue message
-		msg := &Message{
-			ID:        entry.MessageID,
-			From:      entry.From,
-			To:        entry.To,
-			Data:      entry.Data,
-			CreatedAt: entry.CreatedAt,
-			Tier:      QueueTier(entry.Tier),
-		}
+		msg := messageFromEntry(entry)
 
 		rs.logger.Info("Retrying message",
 			zap.String("msg_id", entry.MessageID),
@@ -114,7 +115,7 @@ func (rs *RetryScheduler) processRetries() {
 			zap.Int("max_attempts", rs.policy.MaxAttempts))
 
 		// Update status before requeue
-		if err := rs.store.UpdateStatus(entry.MessageID, "processing", ""); err != nil {
+		if ok, err := rs.store.Transition(entry.MessageID, "pending", "queued"); err != nil || !ok {
 			rs.logger.Error("Failed to update message status", zap.Error(err))
 			continue
 		}

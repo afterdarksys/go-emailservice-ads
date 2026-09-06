@@ -43,7 +43,7 @@ func TestEnqueuePersistsIdenticalTransactionsSeparately(t *testing.T) {
 		t.Fatalf("second Enqueue() error = %v", err)
 	}
 
-	if got := len(store.ListPending("out")); got != 2 {
+	if got := len(store.ListByStatus("queued", "out")); got != 2 {
 		t.Fatalf("pending transactions = %d, want 2", got)
 	}
 }
@@ -100,7 +100,7 @@ func TestFinalizeDeliveryKeepsFailedMessagePending(t *testing.T) {
 	}
 }
 
-func TestRecipientOutcomesPersistOnlyTemporaryRecipients(t *testing.T) {
+func TestRecipientOutcomesSelectOnlyTemporaryRecipients(t *testing.T) {
 	queue, store := newPersistenceTestQueue(t)
 	id, _, err := store.Store(&storage.JournalEntry{MessageID: "mixed", To: []string{"ok@example.test", "temp@example.test", "perm@example.test"}, Data: []byte("body"), Tier: string(TierOut)})
 	if err != nil {
@@ -112,7 +112,7 @@ func TestRecipientOutcomesPersistOnlyTemporaryRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entry.To) != 1 || entry.To[0] != "temp@example.test" {
+	if len(message.To) != 1 || message.To[0] != "temp@example.test" {
 		t.Fatalf("persisted retry recipients = %#v", entry.To)
 	}
 }

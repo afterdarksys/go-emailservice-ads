@@ -5,8 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
+	"github.com/afterdarksys/go-emailservice-ads/internal/config"
+	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -24,8 +29,10 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
+	"github.com/afterdarksys/go-emailservice-ads/internal/filtering"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/security"
+	"github.com/afterdarksys/go-emailservice-ads/internal/security/dane"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -42,6 +49,8 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
+	AdmissionKey     string `json:"admission_key,omitempty"`
+	DeliveryFolder   string
 	ID               string
 	TraceID          string // Global correlation ID for tracking across instances
 	ParentTraceID    string // Parent trace ID for related messages (bounces, retries)
@@ -66,9 +75,15 @@ type Message struct {
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
-	logger    *zap.Logger
-	store     *storage.MessageStore
-	imapStore *storage.MailboxStore
+	reputationDB *filtering.PremailReputation
+	platform     config.PlatformConfig
+	abuse        abuseLimits
+	StormGuard   *mailstorm.Guard
+	users        *auth.UserStore
+	dataDir      string
+	logger       *zap.Logger
+	store        *storage.MessageStore
+	imapStore    *storage.MailboxStore
 
 	emergency chan *Message
 	msa       chan *Message
@@ -212,10 +227,18 @@ func (qm *QueueManager) spawnWorkers(name string, ch <-chan *Message, count int)
 }
 
 func (qm *QueueManager) processMessage(queueName string, msg *Message) {
+	if qm.StormGuard != nil && qm.StormGuard.Blocked(msg.AdmissionKey) {
+		if _, err := qm.store.Transition(msg.ID, "queued", "pending"); err != nil {
+			qm.logger.Error("Unable to defer paused sender", zap.Error(err))
+		}
+		return
+	}
+
 	// Apply rate limiting
 	limiter := qm.getLimiter(msg.Tier)
 	if err := limiter.Wait(qm.ctx); err != nil {
 		qm.logger.Error("Rate limiter error", zap.Error(err))
+		qm.store.Transition(msg.ID, "queued", "pending")
 		return
 	}
 
@@ -228,30 +251,47 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 	// Publish processing event to Elasticsearch
 	qm.publishEvent(elasticsearch.EventProcessing, msg, nil)
 
-	// Separate local and remote recipients
-	localRecipients := make([]string, 0)
-	remoteRecipients := make([]string, 0)
-
-	for _, rcpt := range msg.To {
+	var deliveryErr error
+	var remaining []string
+	for i, rcpt := range msg.To {
+		if qm.StormGuard != nil && qm.StormGuard.Blocked(msg.AdmissionKey) {
+			if i == 0 {
+				qm.store.Transition(msg.ID, "queued", "pending")
+				return
+			}
+			remaining = append(remaining, msg.To[i:]...)
+			deliveryErr = errors.Join(deliveryErr, fmt.Errorf("sender paused by mailstorm protection"))
+			break
+		}
+		if i == 0 {
+			if ok, err := qm.store.Transition(msg.ID, "queued", "processing"); err != nil || !ok {
+				return
+			}
+		}
+		attempt := *msg
+		attempt.To = []string{rcpt}
 		domain := qm.extractDomain(rcpt)
-		if qm.localDomains[strings.ToLower(domain)] {
-			localRecipients = append(localRecipients, rcpt)
+		var err error
+		if qm.localDomains[strings.ToLower(domain)] && !qm.mailDelivery.HasExplicitRoute(domain) {
+			err = qm.deliverLocal(&attempt, []string{rcpt})
 		} else {
-			remoteRecipients = append(remoteRecipients, rcpt)
+			err = qm.deliverRemote(&attempt, []string{rcpt})
+		}
+		if err != nil {
+			remaining = append(remaining, rcpt)
+			deliveryErr = errors.Join(deliveryErr, err)
+		}
+		checkpoint := append(append([]string(nil), remaining...), msg.To[i+1:]...)
+		if err := qm.store.UpdateRecipients(msg.ID, checkpoint); err != nil {
+			qm.finalizeDelivery(msg, err)
+			return
 		}
 	}
-
-	var deliveryErr error
-
-	// Process local delivery (to IMAP/Maildir)
-	if len(localRecipients) > 0 {
-		deliveryErr = errors.Join(deliveryErr, qm.deliverLocal(msg, localRecipients))
+	if err := qm.store.UpdateRecipients(msg.ID, remaining); err != nil {
+		qm.finalizeDelivery(msg, err)
+		return
 	}
-
-	// Process remote delivery (via SMTP)
-	if len(remoteRecipients) > 0 {
-		deliveryErr = errors.Join(deliveryErr, qm.deliverRemote(msg, remoteRecipients))
-	}
+	msg.To = remaining
 
 	qm.finalizeDelivery(msg, deliveryErr)
 }
@@ -295,11 +335,22 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 		// help@b.com both landing in "help") and never match how the
 		// owner actually logs in to read it.
 		username := rcpt
-		folder := "INBOX"
+		if qm.users != nil {
+			u, ok := qm.users.Recipient(rcpt)
+			if !ok {
+				deliveryErr = errors.Join(deliveryErr, fmt.Errorf("recipient unavailable: %s", rcpt))
+				continue
+			}
+			username = u.Username
+		}
+		folder := msg.DeliveryFolder
+		if folder == "" {
+			folder = "INBOX"
+		}
 
 		// Run per-user Sieve script if policy manager is configured.
 		if qm.policyManager != nil {
-			scriptPath := filepath.Join("data", "sieve", username+".sieve")
+			scriptPath := filepath.Join(qm.dataDir, "sieve", username+".sieve")
 			if scriptData, err := os.ReadFile(scriptPath); err == nil {
 				emailCtx, ctxErr := policy.NewEmailContext(msg.From, msg.To, msg.ClientIP, msg.HeloHostname, msg.Data)
 				if ctxErr != nil {
@@ -346,7 +397,7 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 				zap.String("folder", folder))
 		}
 
-		msgID, err := qm.imapStore.StoreMessage(qm.ctx, username, folder, msg.Data)
+		msgID, err := qm.imapStore.DeliverOnce(qm.ctx, msg.ID+"/"+rcpt, username, folder, msg.Data)
 		if err != nil {
 			qm.logger.Error("Local delivery failed",
 				zap.String("recipient", rcpt),
@@ -405,6 +456,10 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 	}
 
 	startTime := time.Now()
+	if len(recipients) > 0 && qm.mailDelivery.HasRoute(qm.extractDomain(recipients[0])) && net.ParseIP(msg.ClientIP) != nil {
+		data = removeHeader(data, "X-Mailhub-Original-IP")
+		data = append([]byte("X-Mailhub-Original-IP: "+msg.ClientIP+"\r\n"), data...)
+	}
 	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, data)
 	latencyMs := time.Since(startTime).Milliseconds()
 
@@ -432,7 +487,9 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		qm.publishEvent(elasticsearch.EventFailed, msg, extra)
 
 		if result != nil {
-			qm.handleRecipientOutcomes(msg, result, recipients)
+			if e := qm.handleRecipientOutcomes(msg, result, recipients); e != nil {
+				return e
+			}
 			if !resultHasTemporaryRecipient(result) {
 				return nil
 			}
@@ -441,7 +498,9 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		return fmt.Errorf("remote delivery: %w", err)
 	}
 	if result != nil {
-		qm.handleRecipientOutcomes(msg, result, recipients)
+		if e := qm.handleRecipientOutcomes(msg, result, recipients); e != nil {
+			return e
+		}
 	}
 
 	// Publish success event to Elasticsearch
@@ -476,9 +535,9 @@ func resultHasTemporaryRecipient(result *delivery.DeliveryResult) bool {
 // handleRecipientOutcomes removes successful and permanent recipients from a
 // durable retry transaction. Permanent recipients generate a DSN; only
 // temporary recipients remain in the journal for the retry scheduler.
-func (qm *QueueManager) handleRecipientOutcomes(msg *Message, result *delivery.DeliveryResult, fallback []string) {
+func (qm *QueueManager) handleRecipientOutcomes(msg *Message, result *delivery.DeliveryResult, fallback []string) error {
 	if len(result.Recipients) == 0 {
-		return
+		return nil
 	}
 	var retry, permanent []string
 	for _, outcome := range result.Recipients {
@@ -492,32 +551,31 @@ func (qm *QueueManager) handleRecipientOutcomes(msg *Message, result *delivery.D
 		}
 	}
 	if len(permanent) > 0 {
-		qm.generateBounce(msg, result, permanent)
+		if err := qm.generateBounce(msg, result, permanent); err != nil {
+			return err
+		}
 	}
 	if len(retry) == 0 && len(permanent) > 0 {
 		retry = nil
 	}
 	if len(retry) == 0 && len(permanent) == 0 {
-		return
-	}
-	if err := qm.store.UpdateRecipients(msg.ID, retry); err != nil {
-		qm.logger.Error("Failed to persist remaining recipients", zap.String("msg_id", msg.ID), zap.Error(err))
-		return
+		return nil
 	}
 	msg.To = retry
+	return nil
 }
 
 // generateBounce creates and sends a bounce message
-func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryResult, recipients []string) {
+func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryResult, recipients []string) error {
 	// Never bounce to a null envelope sender — prevents bounce loops (RFC 5321 §4.5.5)
 	if msg.From == "" || msg.From == "<>" {
 		qm.logger.Info("Skipping bounce for null envelope sender", zap.String("msg_id", msg.ID))
-		return
+		return nil
 	}
 	// Suppress double-bounce: do not bounce a bounce/DSN
 	if msg.IsBounce {
 		qm.logger.Warn("Suppressing double-bounce", zap.String("msg_id", msg.ID))
-		return
+		return nil
 	}
 
 	for _, rcpt := range recipients {
@@ -536,12 +594,12 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 				zap.String("msg_id", msg.ID),
 				zap.String("recipient", rcpt),
 				zap.Error(err))
-			continue
+			return err
 		}
 
 		// Enqueue bounce message (send to original sender)
 		bounceEnvelope := &Message{
-			From:          "<>", // RFC 5321: DSN messages use null reverse-path
+			From:          "", // RFC 5321: DSN messages use null reverse-path
 			To:            []string{msg.From},
 			Data:          bounceMsg,
 			CreatedAt:     time.Now(),
@@ -554,6 +612,7 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 			qm.logger.Error("Failed to enqueue bounce",
 				zap.String("msg_id", msg.ID),
 				zap.Error(err))
+			return err
 		} else {
 			qm.logger.Info("Bounce message generated",
 				zap.String("original_msg_id", msg.ID),
@@ -572,6 +631,7 @@ func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryRe
 			qm.publishEvent(elasticsearch.EventBounce, msg, extra)
 		}
 	}
+	return nil
 }
 
 // extractDomain extracts the domain from an email address
@@ -631,6 +691,14 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 		msg.ContentHash = qm.computeContentHash(msg.Data)
 	}
 
+	// Persist security context alongside the envelope for recovery.
+	metadata := *msg
+	metadata.Data = nil
+	metadata.To = nil
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
 	// Store message persistently first (disaster recovery)
 	entry := &storage.JournalEntry{
 		MessageID: msg.ID,
@@ -638,8 +706,12 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 		To:        msg.To,
 		Data:      msg.Data,
 		Tier:      string(msg.Tier),
+		Metadata:  map[string]string{"message": string(encoded), "client_ip": msg.ClientIP},
 	}
 
+	if msg.Quarantine {
+		entry.Status = "held"
+	}
 	messageID, isDuplicate, err := qm.store.Store(entry)
 	if err != nil {
 		return fmt.Errorf("failed to store message: %w", err)
@@ -659,6 +731,12 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	// Publish enqueued event to Elasticsearch
 	qm.publishEvent(elasticsearch.EventEnqueued, msg, nil)
 
+	if msg.Quarantine {
+		return nil
+	}
+	if ok, err := qm.store.Transition(msg.ID, "pending", "queued"); err != nil || !ok {
+		return nil
+	}
 	// Enqueue to in-memory channel for processing (non-blocking with 100ms backpressure)
 	return qm.enqueueToChannel(msg.Tier, msg)
 }
@@ -688,7 +766,8 @@ func (qm *QueueManager) enqueueToChannel(tier QueueTier, msg *Message) error {
 		}
 		return nil
 	case <-qm.ctx.Done():
-		return fmt.Errorf("queue shutting down")
+		qm.store.UpdateStatus(msg.ID, "pending", "queue shutting down")
+		return nil
 	}
 }
 
@@ -807,6 +886,9 @@ func (qm *QueueManager) Shutdown() {
 	qm.logger.Info("Shutting down QueueManager...")
 	qm.cancel()
 	qm.wg.Wait()
+	if qm.reputationDB != nil {
+		qm.reputationDB.Close()
+	}
 
 	// Shutdown mail delivery (close connection pools)
 	if err := qm.mailDelivery.Shutdown(); err != nil {
@@ -884,4 +966,111 @@ func getErrorMessage(err error, result *delivery.DeliveryResult) string {
 		return err.Error()
 	}
 	return "unknown error"
+}
+
+func (qm *QueueManager) ConfigurePlatform(cfg *config.Config, users *auth.UserStore) error {
+	if cfg.Platform.ReputationDatabaseEnv != "" {
+		dsn := os.Getenv(cfg.Platform.ReputationDatabaseEnv)
+		if dsn == "" {
+			return fmt.Errorf("missing reputation database environment variable")
+		}
+		ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Second)
+		db, err := filtering.NewPremailReputation(ctx, dsn)
+		cancel()
+		if err != nil {
+			return err
+		}
+		qm.reputationDB = db
+	}
+	guard, err := mailstorm.New(cfg.Platform.Mailstorm, filepath.Join(cfg.Platform.DataDir, "mailstorm.json"))
+	if err != nil {
+		return err
+	}
+	qm.StormGuard = guard
+	qm.platform = cfg.Platform
+	qm.abuse.buckets = make(map[string]*quotaBucket)
+	qm.users = users
+	qm.dataDir = cfg.Platform.DataDir
+	qm.mailDelivery.SetRoutes(cfg.Platform.Transports)
+	if cfg.Server.DANE.Enabled {
+		qm.mailDelivery.SetDANEValidator(dane.NewDANEValidator(qm.logger, cfg.Server.DANE.DNSServers, cfg.Server.DANE.StrictMode))
+	}
+	qm.imapStore.SetQuota(cfg.Platform.MailboxQuotaBytes)
+	if cfg.Platform.TLSReporting {
+		reports, err := security.NewDurableTLSReports(filepath.Join(cfg.Platform.DataDir, "tls-reports"), qm.hostname)
+		if err != nil {
+			return err
+		}
+		reports.SendMail = qm.enqueueTLSReport
+		qm.mailDelivery.SetTLSReports(reports)
+		qm.wg.Add(1)
+		go func() {
+			defer qm.wg.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-qm.ctx.Done():
+					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
+					if err := reports.SendPending(ctx); err != nil {
+						qm.logger.Error("TLS report delivery failed", zap.Error(err))
+					}
+					cancel()
+				}
+			}
+		}()
+	}
+	qm.wg.Add(1)
+	go func() {
+		defer qm.wg.Done()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-qm.ctx.Done():
+				return
+			case <-ticker.C:
+				if err := qm.store.Compact(time.Duration(cfg.Platform.QuarantineRetentionDays) * 24 * time.Hour); err != nil {
+					qm.logger.Error("Storage compaction failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+
+	if cfg.Platform.MTASTS {
+		m := security.NewMTASTSManager(qm.logger)
+		if err := m.SetCachePath(filepath.Join(cfg.Platform.DataDir, "mta-sts.json")); err != nil {
+			return err
+		}
+		qm.mailDelivery.SetMTASTS(m)
+	}
+	return nil
+}
+func messageFromEntry(entry *storage.JournalEntry) *Message {
+	msg := &Message{}
+	if raw := entry.Metadata["message"]; raw != "" {
+		json.Unmarshal([]byte(raw), msg)
+	}
+	if msg.AdmissionKey == "" {
+		ip := msg.ClientIP
+		if ip == "" {
+			ip = entry.Metadata["client_ip"]
+		}
+		msg.ClientIP = ip
+		if ip != "" {
+			msg.AdmissionKey = mailstorm.Identity("", ip)
+		} else {
+			msg.AdmissionKey = "unknown"
+		}
+	}
+	msg.Quarantine = entry.Status == "held"
+	msg.ID = entry.MessageID
+	msg.From = entry.From
+	msg.To = entry.To
+	msg.Data = entry.Data
+	msg.CreatedAt = entry.CreatedAt
+	msg.Tier = QueueTier(entry.Tier)
+	return msg
 }

@@ -23,6 +23,8 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/directory"
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
 	"github.com/afterdarksys/go-emailservice-ads/internal/greylisting"
+	"github.com/afterdarksys/go-emailservice-ads/internal/ipfilter"
+	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
 	"github.com/afterdarksys/go-emailservice-ads/internal/policy"
 	"github.com/afterdarksys/go-emailservice-ads/internal/security"
 )
@@ -54,8 +56,6 @@ type Server struct {
 // NewServer initializes a new ESMTP Server
 func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyMgr *policy.Manager) *Server {
 	v := auth.NewValidator(logger)
-	dir := directory.NewClient(cfg, logger)
-
 	// Load default users from config
 	userStore := v.GetUserStore()
 
@@ -83,6 +83,12 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 		}
 	}
 
+	return NewServerWithValidator(cfg, logger, qm, policyMgr, v)
+}
+
+// NewServerWithValidator shares the live identity store across all protocols.
+func NewServerWithValidator(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyMgr *policy.Manager, v *auth.Validator) *Server {
+	dir := directory.NewClient(cfg, logger)
 	// Initialize security components
 	resolver := dns.NewResolver(logger)
 	policyEngine := security.NewPolicyEngine(logger, resolver)
@@ -178,16 +184,19 @@ func NewServer(cfg *config.Config, logger *zap.Logger, qm *QueueManager, policyM
 // ListenAndServe starts the SMTP server
 func (s *Server) ListenAndServe() error {
 	s.logger.Info("Starting ESMTP listener", zap.String("addr", s.config.Server.Addr), zap.String("domain", s.config.Server.Domain))
-	if s.smtpServer.TLSConfig != nil {
-		return s.smtpServer.ListenAndServe()
+	listener, err := net.Listen("tcp", s.config.Server.Addr)
+	if err != nil {
+		return err
 	}
-	return s.smtpServer.ListenAndServe()
+	if s.config.Server.ProxyProtocol.Enabled {
+		listener = &proxyListener{Listener: listener, config: s.config.Server.ProxyProtocol}
+	}
+	return s.smtpServer.Serve(listener)
 }
 
 // Shutdown gracefully stops the SMTP server and the Queue Manager
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Stopping ESMTP listener...")
-	s.qManager.Shutdown()
 	return s.smtpServer.Shutdown(ctx)
 }
 
@@ -316,9 +325,25 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		ip = addr.IP.String()
 	}
 
+	peer := peerIP(c.Conn())
+	if bkd.config.Server.Role == "internal" && !matchesNetworks(peer, bkd.config.Server.TrustedNetworks) {
+		return nil, &smtp.SMTPError{Code: 554, Message: "Untrusted transport peer"}
+	}
 	bkd.logger.Debug("New SMTP session started", zap.String("remote_addr", ip), zap.String("hostname", c.Hostname()))
 	if bkd.limiter != nil && !bkd.limiter.acquire(ip) {
 		return nil, smtp.ErrAuthRequired
+	}
+
+	filterCfg := bkd.config.Server.IPFilter
+	if bkd.isTrustedContentFilterProxy(peer) && ip == peer {
+		filterCfg.RBLZones = nil
+	}
+	if code, reason := ipfilter.Check(context.Background(), filterCfg, ip, nil); code != 0 {
+		if bkd.limiter != nil {
+			bkd.limiter.release(ip)
+		}
+		bkd.logger.Info("SMTP IP filter rejected client", zap.String("ip", ip), zap.Int("code", code), zap.String("reason", reason))
+		return nil, &smtp.SMTPError{Code: code, Message: reason}
 	}
 
 	res := bkd.validator.ValidateIPAndEHLO(ip, c.Hostname())
@@ -345,13 +370,16 @@ func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		config:        bkd.config,
 		limiter:       bkd.limiter,
 		messageRates:  bkd.messageRates,
-		trustedFilter: bkd.isTrustedContentFilterProxy(ip),
-		relayAuthIP:   bkd.isRelayAuthorizedNetwork(ip),
+		trustedFilter: bkd.isTrustedContentFilterProxy(peer),
+		relayAuthIP:   bkd.isRelayAuthorizedNetwork(peer),
+		conn:          c,
 	}, nil
 }
 
 // Session implements smtp.Session
 type Session struct {
+	reputation    policy.ReputationScore
+	conn          *smtp.Conn
 	logger        *zap.Logger
 	qManager      *QueueManager
 	validator     *auth.Validator
@@ -379,6 +407,9 @@ type Session struct {
 // entries are rejected at config load (see LoadConfig), not silently
 // ignored here.
 func (s *Session) AuthMechanisms() []string {
+	if s.config.Server.Role == "perimeter" || s.config.Server.Role == "internal" {
+		return nil
+	}
 	return s.config.Server.AuthMechanisms
 }
 
@@ -434,10 +465,15 @@ func (s *Session) authenticateUser(username, password string) error {
 }
 
 func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
+	if s.config.Server.RequireTLS && s.conn != nil {
+		if _, ok := s.conn.TLSConnectionState(); !ok {
+			return &smtp.SMTPError{Code: 530, Message: "STARTTLS required"}
+		}
+	}
 	s.logger.Debug("MAIL FROM", zap.String("from", from))
 
 	// Enforce authentication requirement
-	if s.config.Server.RequireAuth && !s.authenticated && !s.trustedFilter {
+	if s.config.Server.RequireAuth && !s.authenticated && (!s.trustedFilter || s.config.Server.Role == "submission") {
 		s.logger.Warn("Mail rejected - authentication required",
 			zap.String("from", from),
 			zap.String("ip", s.ip))
@@ -481,7 +517,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	// while "enforce" reluctantly hard-rejects. Standalone SPF rejection is opt-in
 	// because forwarding and misconfigured records make it a deliverability hazard.
 	spfResultStr := "none"
-	if !s.authenticated && s.policyEngine != nil && s.config.Server.SPF.Enabled {
+	if !s.authenticated && !s.trustedFilter && s.policyEngine != nil && s.config.Server.SPF.Enabled {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -531,6 +567,8 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 
 	s.msg = &Message{
 		From:         from,
+		ClientIP:     s.ip,
+		HeloHostname: s.ehlo,
 		CreatedAt:    time.Now(),
 		Tier:         TierInt, // Default to TierInt, allow policy to override
 		SPFResult:    spfResultStr,
@@ -587,7 +625,14 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 		}
 	}
 
-	s.msg.To = append(s.msg.To, to)
+	targets, err := s.resolveRecipient(to, make(map[string]bool))
+	if err != nil {
+		return err
+	}
+	if s.config.Server.MaxRecipients > 0 && len(s.msg.To)+len(targets) > s.config.Server.MaxRecipients {
+		return &smtp.SMTPError{Code: 452, Message: "Too many expanded recipients"}
+	}
+	s.msg.To = append(s.msg.To, targets...)
 	return nil
 }
 
@@ -642,14 +687,48 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	if err := s.layerChecks(); err != nil {
+		return err
+	}
+	if s.qManager != nil && s.qManager.abuse.buckets != nil {
+		identity := s.username
+		if identity == "" {
+			identity = s.msg.ClientIP
+		}
+		p := s.config.Platform
+		domainKey := identity + ":" + addressDomain(s.msg.From)
+		if s.authenticated {
+			domainKey = addressDomain(s.msg.From)
+		}
+		if !s.qManager.abuse.allow(identity, domainKey, len(s.msg.To), p.UserRecipientsPerHour, p.DomainRecipientsPerHour) {
+			return &smtp.SMTPError{Code: 451, Message: "Sender recipient quota exceeded"}
+		}
+	}
+	s.msg.AdmissionKey = mailstorm.Identity(s.username, s.msg.ClientIP)
+	if s.qManager != nil && s.qManager.StormGuard != nil {
+		parsed, err := mail.ReadMessage(bytes.NewReader(s.msg.Data))
+		if err != nil {
+			return &smtp.SMTPError{Code: 550, Message: "Invalid message headers"}
+		}
+		body, err := io.ReadAll(parsed.Body)
+		if err != nil {
+			return &smtp.SMTPError{Code: 451, Message: "Cannot read message"}
+		}
+		fingerprint := mailstorm.Fingerprint(s.msg.From, parsed.Header.Get("Subject"), s.msg.To, body)
+		if err := s.qManager.StormGuard.Admit(context.Background(), s.msg.AdmissionKey, len(s.msg.To), fingerprint); err != nil {
+			s.logger.Warn("Mailstorm admission deferred", zap.String("identity", s.msg.AdmissionKey), zap.Error(err))
+			return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 7, 0}, Message: "Mailstorm protection: temporarily deferred; retry later"}
+		}
+	}
+
 	// Spread Prevention Check
 	if s.spreadPrev != nil && s.spreadPrev.Evaluate(b) {
 		s.logger.Warn("Message quarantined by Spread Prevention (Outbreak detected)", zap.String("from", s.msg.From))
 		// Quarantine or Reject
 		return &smtp.SMTPError{
-			Code:         550,
-			EnhancedCode: smtp.EnhancedCode{5, 7, 1},
-			Message:      "Message rejected by Spread Prevention Outbreak filters",
+			Code:         451,
+			EnhancedCode: smtp.EnhancedCode{4, 7, 0},
+			Message:      "Message temporarily deferred by outbreak protection",
 		}
 	}
 
@@ -761,12 +840,18 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	if s.config.Platform.PolicyRequired && s.policyManager == nil {
+		return &smtp.SMTPError{Code: 451, Message: "Required policy unavailable"}
+	}
 	// === POLICY ENGINE EVALUATION ===
 	if s.policyManager != nil {
 		// Create email context for policy evaluation
-		emailCtx, err := policy.NewEmailContext(s.msg.From, s.msg.To, s.ip, s.ehlo, b)
+		emailCtx, err := policy.NewEmailContext(s.msg.From, s.msg.To, s.msg.ClientIP, s.ehlo, b)
 		if err != nil {
 			s.logger.Warn("Failed to create policy context", zap.Error(err))
+			if s.config.Platform.PolicyRequired {
+				return &smtp.SMTPError{Code: 451, Message: "Required policy context unavailable"}
+			}
 			// Continue without policy evaluation
 		} else {
 			// Set authentication info
@@ -776,6 +861,7 @@ func (s *Session) Data(r io.Reader) error {
 			// Set direction
 			emailCtx.IsInbound = !s.authenticated
 			emailCtx.IsOutbound = s.authenticated
+			emailCtx.IsInternal = s.config.Server.Role == "internal"
 			emailCtx.LocalDomains = s.config.Server.LocalDomains
 
 			// Populate security results from earlier checks
@@ -783,8 +869,8 @@ func (s *Session) Data(r io.Reader) error {
 			emailCtx.DKIMResult = policy.DKIMResult(s.msg.DKIMResult)
 			emailCtx.DMARCResult = policy.DMARCResult(s.msg.DMARCResult)
 
-			// TODO: Populate IP reputation
-			emailCtx.IPReputation = policy.ReputationScore{Score: 50, Source: "internal"}
+			// Reputation comes from the configured provider, or explicitly unknown.
+			emailCtx.IPReputation = s.reputation
 
 			// Evaluate policies
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -796,6 +882,9 @@ func (s *Session) Data(r io.Reader) error {
 					zap.String("from", s.msg.From),
 					zap.Strings("to", s.msg.To),
 					zap.Error(err))
+				if s.config.Platform.PolicyRequired {
+					return &smtp.SMTPError{Code: 451, Message: "Required policy unavailable"}
+				}
 				// Continue with default action
 			} else if action != nil {
 				// Handle policy action
@@ -834,23 +923,33 @@ func (s *Session) Data(r io.Reader) error {
 						zap.String("redirect_to", action.Target))
 					s.msg.To = []string{action.Target}
 
+				case policy.ActionQuarantine:
+					s.msg.Quarantine = true
+					s.msg.QuarantineFolder = action.Reason
 				case policy.ActionFileinto:
 					// Store folder in message for later processing
 					s.logger.Info("Policy filed message",
 						zap.String("folder", action.Target))
-					// TODO: Add folder metadata to message
+					s.msg.DeliveryFolder = action.Target
 
 				case policy.ActionAccept, policy.ActionKeep:
 					// Continue normal processing
 					s.logger.Debug("Policy accepted message")
 
 				default:
+					if s.config.Platform.PolicyRequired {
+						return &smtp.SMTPError{Code: 451, Message: "Unsupported required policy action"}
+					}
 					s.logger.Warn("Unknown policy action",
 						zap.String("action", string(action.Type)))
 				}
 
 				// Apply header modifications
-				// TODO: Implement header modifications on message data
+				updated, err := applyPolicyHeaders(s.msg.Data, action.Headers)
+				if err != nil {
+					return &smtp.SMTPError{Code: 451, Message: "Invalid policy header action"}
+				}
+				s.msg.Data = updated
 			}
 		}
 	}
@@ -863,6 +962,9 @@ func (s *Session) Data(r io.Reader) error {
 			s.msg.SPFResult, s.msg.DKIMResult, s.msg.DMARCResult, s.msg.From)
 	}
 
+	if err := s.scanFinal(); err != nil {
+		return err
+	}
 	// Fast dispatch to queue manager
 	if err := s.qManager.Enqueue(s.msg); err != nil {
 		s.logger.Error("Failed to enqueue message", zap.Error(err))
@@ -893,27 +995,37 @@ func dmarcPolicyApplies(message []byte, pct int) bool {
 }
 
 func hasHeader(raw []byte, name, want string) bool {
-	for _, line := range bytes.Split(raw, []byte("\n")) {
-		parts := bytes.SplitN(bytes.TrimSpace(line), []byte(":"), 2)
-		if len(parts) == 2 && strings.EqualFold(string(parts[0]), name) {
-			return strings.EqualFold(strings.TrimSpace(string(parts[1])), want)
-		}
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return false
 	}
-	return false
+	return strings.EqualFold(strings.TrimSpace(msg.Header.Get(name)), want)
 }
 
+// removeHeader changes only complete header fields, including continuations.
 func removeHeader(raw []byte, name string) []byte {
-	lines := bytes.SplitAfter(raw, []byte("\n"))
-	filtered := make([][]byte, 0, len(lines))
-	for _, line := range lines {
-		trimmed := bytes.TrimSpace(line)
-		parts := bytes.SplitN(trimmed, []byte(":"), 2)
-		if len(parts) == 2 && strings.EqualFold(string(parts[0]), name) {
+	var out bytes.Buffer
+	skipping := false
+	body := false
+	for _, line := range bytes.SplitAfter(raw, []byte("\n")) {
+		if body {
+			out.Write(line)
 			continue
 		}
-		filtered = append(filtered, line)
+		if len(bytes.TrimRight(line, "\r\n")) == 0 {
+			body = true
+			out.Write(line)
+			continue
+		}
+		if line[0] != ' ' && line[0] != '\t' {
+			parts := bytes.SplitN(line, []byte(":"), 2)
+			skipping = len(parts) == 2 && strings.EqualFold(string(parts[0]), name)
+		}
+		if !skipping {
+			out.Write(line)
+		}
 	}
-	return bytes.Join(filtered, nil)
+	return out.Bytes()
 }
 
 func (s *Session) Reset() {

@@ -38,6 +38,7 @@ type mailboxCreateRequest struct {
 }
 
 type mailboxUpdateRequest struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
 	Password string `json:"password,omitempty"`
 	Email    string `json:"email,omitempty"`
 }
@@ -136,8 +137,8 @@ func (s *Server) handleMailbox(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeMailboxBody(w, r, &req) {
 			return
 		}
-		if req.Password == "" && req.Email == "" {
-			http.Error(w, "Nothing to update: provide password and/or email", http.StatusBadRequest)
+		if req.Password == "" && req.Email == "" && req.Enabled == nil {
+			http.Error(w, "Nothing to update: provide password, email or enabled", http.StatusBadRequest)
 			return
 		}
 		email := user.Email
@@ -157,21 +158,13 @@ func (s *Server) handleMailbox(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, msg, http.StatusBadRequest)
 				return
 			}
-			// AddUser hashes and upserts both memory and the repository.
-			if err := s.userStore.AddUser(username, req.Password, email); err != nil {
-				s.logger.Error("Failed to update mailbox", zap.String("username", username), zap.Error(err))
-				http.Error(w, "Failed to update mailbox", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// Email-only update must not touch the password hash, so it cannot
-			// go through AddUser (which re-hashes a plaintext password).
-			if err := s.userStore.UpdateEmail(username, email); err != nil {
-				s.logger.Error("Failed to update mailbox email", zap.String("username", username), zap.Error(err))
-				http.Error(w, "Failed to update mailbox", http.StatusInternalServerError)
-				return
-			}
 		}
+		if err := s.userStore.UpdateAccount(username, req.Password, email, req.Enabled); err != nil {
+			s.logger.Error("Failed to update mailbox", zap.Error(err))
+			http.Error(w, "Failed to update mailbox", http.StatusInternalServerError)
+			return
+		}
+		user, _ = s.userStore.GetUser(username)
 		s.logger.Info("Mailbox updated via API", zap.String("username", username))
 		s.jsonResponse(w, http.StatusOK, mailboxResponse{Username: username, Email: email, Enabled: user.Enabled})
 

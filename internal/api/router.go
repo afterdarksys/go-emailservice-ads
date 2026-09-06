@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+ "encoding/json"
+ "github.com/afterdarksys/go-emailservice-ads/internal/version"
 
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -175,7 +177,7 @@ func (api *AdminAPI) handleHealth() http.HandlerFunc {
 func (api *AdminAPI) handleVersion() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"version":"2.3.0","service":"go-emailservice-ads"}`))
+		json.NewEncoder(w).Encode(map[string]string{"version":version.Version,"service":"go-emailservice-ads"})
 	}
 }
 

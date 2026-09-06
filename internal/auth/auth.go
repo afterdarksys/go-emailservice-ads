@@ -39,10 +39,10 @@ type User struct {
 
 // failureRecord tracks failed authentication attempts
 type failureRecord struct {
-	count         int
-	firstAttempt  time.Time
-	lastAttempt   time.Time
-	lockedUntil   time.Time
+	count        int
+	firstAttempt time.Time
+	lastAttempt  time.Time
+	lockedUntil  time.Time
 }
 
 // UserStore manages user authentication with account lockout protection
@@ -56,9 +56,9 @@ type UserStore struct {
 	failuresMu         sync.RWMutex
 
 	// Lockout configuration
-	maxFailures      int           // Max failures before lockout (default 5)
-	lockoutDuration  time.Duration // How long to lock account (default 15 minutes)
-	failureWindow    time.Duration // Time window for failure tracking (default 1 hour)
+	maxFailures     int           // Max failures before lockout (default 5)
+	lockoutDuration time.Duration // How long to lock account (default 15 minutes)
+	failureWindow   time.Duration // Time window for failure tracking (default 1 hour)
 
 	// SSO Provider for external authentication
 	ssoProvider *SSOProvider
@@ -148,10 +148,6 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		Enabled:      true,
 	}
 
-	s.mu.Lock()
-	s.users[username] = user
-	s.mu.Unlock()
-
 	// Persist to database if repository is configured
 	if s.repository != nil {
 		ctx := context.Background()
@@ -165,6 +161,9 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		}
 	}
 
+	s.mu.Lock()
+	s.users[username] = user
+	s.mu.Unlock()
 	return nil
 }
 
@@ -437,10 +436,10 @@ func (s *UserStore) GetLockoutStats() map[string]int {
 	}
 
 	return map[string]int{
-		"locked_users":    lockedUsers,
-		"locked_ips":      lockedIPs,
-		"failed_users":    len(s.failuresByUsername),
-		"failed_ips":      len(s.failuresByIP),
+		"locked_users": lockedUsers,
+		"locked_ips":   lockedIPs,
+		"failed_users": len(s.failuresByUsername),
+		"failed_ips":   len(s.failuresByIP),
 	}
 }
 
@@ -743,5 +742,87 @@ func (v *Validator) RevokeDomainAccess(username, domain string) error {
 		zap.String("username", username),
 		zap.String("domain", domain))
 
+	return nil
+}
+
+// Recipient resolves a mailbox address to its canonical enabled login identity.
+func (s *UserStore) Recipient(address string) (*User, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.users {
+		if u.Enabled && (strings.EqualFold(u.Email, address) || strings.EqualFold(u.Username, address)) {
+			v := *u
+			return &v, true
+		}
+	}
+	return nil, false
+}
+
+// ResolveAddress expands administrator-owned aliases to enabled mailboxes.
+func (s *UserStore) ResolveAddress(address string, aliases map[string][]string) ([]string, error) {
+	seen := map[string]bool{}
+	var resolve func(string) ([]string, error)
+	resolve = func(a string) ([]string, error) {
+		key := strings.ToLower(a)
+		if seen[key] || len(seen) > 20 {
+			return nil, fmt.Errorf("alias loop")
+		}
+		seen[key] = true
+		defer delete(seen, key)
+		if targets, ok := aliases[key]; ok {
+			var out []string
+			for _, target := range targets {
+				v, e := resolve(target)
+				if e != nil {
+					return nil, e
+				}
+				out = append(out, v...)
+				if len(out) > 1000 {
+					return nil, fmt.Errorf("alias expansion too large")
+				}
+			}
+			return out, nil
+		}
+		u, ok := s.Recipient(a)
+		if !ok {
+			return nil, ErrUserNotFound
+		}
+		return []string{u.Email}, nil
+	}
+	return resolve(address)
+}
+
+// UpdateAccount persists a complete update before publishing it to SMTP/IMAP.
+func (s *UserStore) UpdateAccount(username, password, email string, enabled *bool) error {
+	var hash []byte
+	var err error
+	if password != "" {
+		hash, err = bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.users[username]
+	if !ok {
+		return ErrUserNotFound
+	}
+	user := *old
+	if password != "" {
+		user.PasswordHash = string(hash)
+	}
+	if email != "" {
+		user.Email = email
+	}
+	if enabled != nil {
+		user.Enabled = *enabled
+	}
+	if s.repository != nil {
+		if err := s.repository.SaveUser(context.Background(), &user); err != nil {
+			return err
+		}
+	}
+	s.users[username] = &user
 	return nil
 }

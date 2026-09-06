@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,7 +33,12 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	showVersion := flag.Bool("version", false, "Print release version")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Version)
+		return
+	}
 
 	// Setup fallback logger in case config isn't loaded yet
 	logger, _ := zap.NewProduction()
@@ -66,8 +73,16 @@ func main() {
 
 	// Check port availability before starting services
 	portChecker := netutil.NewPortChecker()
-	portChecker.Check("SMTP", cfg.Server.Addr)
-	portChecker.Check("IMAP", cfg.IMAP.Addr)
+	if len(cfg.Platform.Listeners) == 0 {
+		portChecker.Check("SMTP", cfg.Server.Addr)
+	} else {
+		for _, l := range cfg.Platform.Listeners {
+			portChecker.Check("SMTP "+l.Role, l.Addr)
+		}
+	}
+	if !cfg.IMAP.Disabled {
+		portChecker.Check("IMAP", cfg.IMAP.Addr)
+	}
 	if cfg.JMAP.Enabled {
 		portChecker.Check("JMAP", cfg.JMAP.Addr)
 	}
@@ -87,16 +102,17 @@ func main() {
 	metricsCollector := metrics.NewMetrics(logger)
 
 	// Initialize persistent storage
-	storagePath := filepath.Join(".", "data", "mail-storage")
+	storagePath := filepath.Join(cfg.Platform.DataDir, "mail-storage")
 	store, err := storage.NewMessageStore(storagePath, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize message store", zap.Error(err))
 	}
 	defer store.Close()
+	store.SetLimits(storage.Limits{MaxBytes: cfg.Platform.MaxSpoolBytes, MaxMessages: cfg.Platform.MaxSpoolMessages, MinFreeBytes: cfg.Platform.MinFreeBytes})
 
 	// Initialize IMAP adapter and SQLite-backed mailbox store for local delivery
 	imapAdapter := storage.NewIMAPAdapter(store)
-	mailboxDBPath := filepath.Join(".", "data", "mailbox.db")
+	mailboxDBPath := filepath.Join(cfg.Platform.DataDir, "mailbox.db")
 	imapStore, err := storage.NewMailboxStore(imapAdapter, mailboxDBPath)
 	if err != nil {
 		logger.Fatal("Failed to initialize mailbox store", zap.Error(err))
@@ -168,7 +184,7 @@ func main() {
 	// Initialize retry scheduler
 	retryPolicy := smtpd.DefaultRetryPolicy()
 	retryScheduler := smtpd.NewRetryScheduler(store, queueManager, retryPolicy, logger)
-	retryScheduler.Start()
+
 	defer retryScheduler.Shutdown()
 
 	// Initialize replication (optional, configured in config)
@@ -184,12 +200,15 @@ func main() {
 	// Initialize policy manager (shared between SMTP and API servers)
 	var policyMgr *policy.Manager
 	policyConfig := &policy.ManagerConfig{
-		ConfigPath: "policies.yaml",
+		ConfigPath: cfg.Platform.PolicyPath,
 		Logger:     logger,
 	}
 	policyMgr, err = policy.NewManager(policyConfig)
 	if err != nil {
 		logger.Warn("Failed to initialize policy manager", zap.Error(err))
+		if cfg.Platform.PolicyRequired {
+			logger.Fatal("Required policy initialization failed", zap.Error(err))
+		}
 		// Continue without policies
 		policyMgr = nil
 	} else {
@@ -243,6 +262,10 @@ func main() {
 		}
 	}
 
+	if err := queueManager.ConfigurePlatform(cfg, imapUserStore); err != nil {
+		logger.Fatal("Platform configuration failed", zap.Error(err))
+	}
+	retryScheduler.Start()
 	// Start API Servers with full dependencies
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
 	apiServer.Start()
@@ -259,22 +282,45 @@ func main() {
 	}
 
 	// Start ESMTP Server with queue manager and policy manager
-	smtpServer := smtpd.NewServer(cfg, logger, queueManager, policyMgr)
-	go func() {
-		if err := smtpServer.ListenAndServe(); err != nil {
-			logger.Fatal("SMTP server failed", zap.Error(err))
+	var smtpServers []*smtpd.Server
+	listenerConfigs := []*config.Config{cfg}
+	if len(cfg.Platform.Listeners) > 0 {
+		listenerConfigs = nil
+		for _, listener := range cfg.Platform.Listeners {
+			copyCfg := *cfg
+			copyCfg.Server.Addr = listener.Addr
+			copyCfg.Server.Role = listener.Role
+			copyCfg.Server.TLS = listener.TLS
+			copyCfg.Server.TrustedNetworks = listener.TrustedNetworks
+			copyCfg.Server.ProxyProtocol = listener.ProxyProtocol
+			copyCfg.Server.RequireAuth = listener.Role == "submission"
+			copyCfg.Server.RequireTLS = listener.Role != "perimeter"
+			copyCfg.Server.AllowInsecureAuth = false
+			listenerConfigs = append(listenerConfigs, &copyCfg)
 		}
-	}()
+	}
+	for _, listenerCfg := range listenerConfigs {
+		server := smtpd.NewServerWithValidator(listenerCfg, logger, queueManager, policyMgr, imapValidator)
+		smtpServers = append(smtpServers, server)
+		go func() {
+			if err := server.ListenAndServe(); err != nil {
+				logger.Fatal("SMTP listener stopped", zap.Error(err))
+			}
+		}()
+	}
 
 	// Start IMAP Server (if enabled) — shares imapValidator with the REST API.
 	// Reuse the mailbox store already created for the queue manager
-	imapServer := imap.NewServer(logger, imapStore, cfg, imapValidator)
-	go func() {
-		if err := imapServer.Start(); err != nil {
-			logger.Fatal("IMAP server failed", zap.Error(err))
-		}
-	}()
+	var imapServer *imap.Server
+	if !cfg.IMAP.Disabled {
+		imapServer = imap.NewServer(logger, imapStore, cfg, imapValidator)
+		go func() {
+			if err := imapServer.Start(); err != nil {
+				logger.Fatal("IMAP server failed", zap.Error(err))
+			}
+		}()
 
+	}
 	// JMAP shares the authenticated mailbox store with IMAP. It is disabled by
 	// default so operators can place it behind an HTTPS reverse proxy explicitly.
 	var jmapServer *jmap.JMAPServer
@@ -295,11 +341,15 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := smtpServer.Shutdown(ctx); err != nil {
-		logger.Error("Error during SMTP server shutdown", zap.Error(err))
+	for _, server := range smtpServers {
+		if err := server.Shutdown(ctx); err != nil {
+			logger.Error("SMTP shutdown", zap.Error(err))
+		}
 	}
-	if err := imapServer.Shutdown(ctx); err != nil {
-		logger.Error("Error during IMAP server shutdown", zap.Error(err))
+	if imapServer != nil {
+		if err := imapServer.Shutdown(ctx); err != nil {
+			logger.Error("Error during IMAP server shutdown", zap.Error(err))
+		}
 	}
 	if jmapServer != nil {
 		if err := jmapServer.Shutdown(ctx); err != nil {

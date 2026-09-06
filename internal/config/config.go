@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/ipfilter"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server struct {
+	Platform PlatformConfig `yaml:"platform"`
+	Server   struct {
+		Role              string     `yaml:"role"`
+		TrustedNetworks   []string   `yaml:"trusted_networks"`
 		Addr              string     `yaml:"addr"`
 		Domain            string     `yaml:"domain"`
 		Banner            string     `yaml:"banner"` // SMTP 220 banner message (used by legacy SMTP only; main server uses Domain)
@@ -37,6 +41,9 @@ type Config struct {
 		// Relay controls which non-local recipients this server will accept
 		// and hand off to internal/delivery. See RelayConfig doc comment.
 		Relay RelayConfig `yaml:"relay"`
+
+		// IPFilter applies peer IP lists and DNSBL checks at session creation.
+		IPFilter ipfilter.Config `yaml:"ip_filter"`
 
 		// AuthMechanisms lists the SASL mechanisms advertised for SMTP AUTH.
 		// Every entry must match one Session.Auth implements (currently just
@@ -78,6 +85,7 @@ type Config struct {
 	} `yaml:"content_filter"`
 
 	IMAP struct {
+		Disabled   bool       `yaml:"disabled"`
 		Addr       string     `yaml:"addr"`
 		TLS        *TLSConfig `yaml:"tls,omitempty"`
 		RequireTLS bool       `yaml:"require_tls"` // Deprecated: require TLS before authentication
@@ -92,6 +100,7 @@ type Config struct {
 	} `yaml:"jmap"`
 
 	API struct {
+		TLS           *TLSConfig     `yaml:"tls"`
 		RESTAddr      string         `yaml:"rest_addr"`
 		GRPCAddr      string         `yaml:"grpc_addr"`
 		APIKeys       []APIKeyConfig `yaml:"api_keys"`        // API keys for programmatic access
@@ -101,9 +110,8 @@ type Config struct {
 
 	Auth struct {
 		DefaultUsers []UserConfig `yaml:"default_users"`
-		// UserDatabaseURL enables the persistent user store. Empty (default)
-		// keeps the legacy behavior: users live in memory and only
-		// default_users exist. A postgres:// URL uses PostgreSQL; anything
+		// UserDatabaseURL enables the persistent user store. Empty defaults
+		// to platform.data_dir/users.db. A postgres:// URL uses PostgreSQL; anything
 		// else is treated as a SQLite file path (e.g. ./data/users.db).
 		// When set, default_users become bootstrap-only: they are created if
 		// missing but never overwrite users managed via the admin API.
@@ -225,6 +233,7 @@ type UserConfig struct {
 }
 
 type APIKeyConfig struct {
+	KeyEnv      string   `yaml:"key_env"`
 	Name        string   `yaml:"name"`        // Friendly name for the key (e.g., "Web Platform", "Mobile App")
 	Key         string   `yaml:"key"`         // The actual API key
 	Permissions []string `yaml:"permissions"` // Optional permissions (for future RBAC)
@@ -314,6 +323,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	var cfg Config
+	cfg.Platform.ValidateRecipients = true
 	// Set defaults
 	cfg.Server.Addr = ":2525"
 	cfg.Server.Domain = "localhost"
@@ -415,6 +425,15 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	for i := range cfg.API.APIKeys {
+		key := &cfg.API.APIKeys[i]
+		if key.KeyEnv != "" {
+			key.Key = os.Getenv(key.KeyEnv)
+			if key.Key == "" {
+				return nil, fmt.Errorf("missing API key environment variable %s", key.KeyEnv)
+			}
+		}
+	}
 	for i := range cfg.Server.DKIM {
 		if cfg.Server.DKIM[i].Selector == "" {
 			cfg.Server.DKIM[i].Selector = "mail"
@@ -429,5 +448,11 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	if err := cfg.Server.IPFilter.Validate(); err != nil {
+		return nil, fmt.Errorf("server.ip_filter: %w", err)
+	}
+	if err := cfg.validatePlatform(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }

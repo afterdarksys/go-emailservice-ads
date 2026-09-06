@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"net"
 	"net/http"
 	"strings"
@@ -67,12 +68,18 @@ func (s *Server) startREST() {
 	defer s.wg.Done()
 
 	s.httpServer = &http.Server{
-		Addr:    s.config.API.RESTAddr,
+		Addr:              s.config.API.RESTAddr,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 		Handler: s.buildMux(),
 	}
 
 	s.logger.Info("Starting REST API server", zap.String("addr", s.config.API.RESTAddr))
-	err := s.httpServer.ListenAndServe()
+	var err error
+	if s.config.API.TLS != nil {
+		err = s.httpServer.ListenAndServeTLS(s.config.API.TLS.Cert, s.config.API.TLS.Key)
+	} else {
+		err = s.httpServer.ListenAndServe()
+	}
 	if err != nil && err != http.ErrServerClosed {
 		s.logger.Fatal("REST API server crashed", zap.Error(err))
 	}
@@ -121,6 +128,11 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/mailboxes", s.authMiddleware(s.handleMailboxes))
 	mux.HandleFunc("/api/v1/mailboxes/", s.authMiddleware(s.handleMailbox))
 
+	mux.HandleFunc("/api/v1/mailstorm", s.authMiddleware(s.handleMailstorm))
+	mux.HandleFunc("/api/v1/mailstorm/", s.authMiddleware(s.handleMailstorm))
+	mux.HandleFunc("/api/v1/quarantine", s.authMiddleware(s.handleQuarantine))
+	mux.HandleFunc("/api/v1/quarantine/", s.authMiddleware(s.handleQuarantine))
+	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
 	return mux
 }
 
@@ -128,7 +140,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"service": "go-emailservice-ads",
-		"version": "2.3.0",
+		"version": version.Version,
 	})
 }
 
@@ -152,30 +164,21 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-			if s.validateAPIKey(apiKey) {
-				next(w, r)
+			if name, ok := s.authorizeKey(apiKey, requiredScope(r)); ok {
+				next(w, withPrincipal(r, name))
 				return
 			}
+			if s.validateAPIKey(apiKey) {
+				http.Error(w, "Insufficient API permissions", http.StatusForbidden)
+				return
+			}
+
 			// Invalid API key
 			http.Error(w, "Invalid API key", http.StatusUnauthorized)
 			return
 		}
 
-		// Fall back to Basic Auth
-		username, password, ok := r.BasicAuth()
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Mail Service API", Bearer realm="Mail Service API"`)
-			http.Error(w, "Unauthorized - provide API key or Basic Auth", http.StatusUnauthorized)
-			return
-		}
-
-		// Validate against config users
-		if s.validateBasicAuth(username, password) {
-			next(w, r)
-			return
-		}
-
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, "Bearer API key required", http.StatusUnauthorized)
 	}
 }
 
@@ -262,8 +265,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 
 	// Check storage
 	if s.store != nil {
-		stats := s.store.Stats()
-		checks["storage"] = stats != nil
+		checks["storage"] = s.store.Health() == nil
+		if !checks["storage"] {
+			ready = false
+		}
 	} else {
 		checks["storage"] = false
 		ready = false
@@ -271,8 +276,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 
 	// Check queue manager
 	if s.qm != nil {
-		metrics := s.qm.GetMetrics()
-		checks["queue"] = metrics != nil
+		checks["queue"] = s.qm.Ready(r.Context())
+		if !checks["queue"] {
+			ready = false
+		}
 	} else {
 		checks["queue"] = false
 		ready = false

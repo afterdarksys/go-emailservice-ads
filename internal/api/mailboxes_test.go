@@ -22,7 +22,7 @@ func newMailboxTestServer(t *testing.T, requireIP bool) (*Server, *auth.UserStor
 	t.Helper()
 
 	cfg := &config.Config{}
-	cfg.API.APIKeys = []config.APIKeyConfig{{Name: "test", Key: testAPIKey}}
+	cfg.API.APIKeys = []config.APIKeyConfig{{Name: "test", Key: testAPIKey, Permissions: []string{"mailboxes:read", "mailboxes:write"}}}
 	cfg.API.RequireIPAuth = requireIP
 	if requireIP {
 		cfg.API.AllowedIPs = []string{"10.9.9.9"}
