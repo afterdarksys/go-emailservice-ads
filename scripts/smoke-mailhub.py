@@ -124,6 +124,13 @@ def run(binary, backup):
                     ok(client.close());ok(client.delete('Review/Archive'))
                     ok(client.select('Review/Work'))
                     assert ok(client.uid('search',None,'ALL'))[0], 'COPY expunge removed source'
+                    ok(client.close());ok(client.create('Bulk'))
+                    for _ in range(260): ok(client.append('Bulk',None,None,raw))
+                    assert ok(client.select('Bulk')) == [b'260']
+                    ok(client.fetch('1:*','(BODY[])'))
+                    assert len(ok(client.search(None,'SEEN'))[0].split()) == 260, 'bulk FETCH lost flags'
+                    ok(client.close());ok(client.delete('Bulk'))
+
 
             finally:
                 process.terminate()

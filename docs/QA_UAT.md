@@ -27,6 +27,7 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Policy management | Create, test and delete return the documented results. |
 | IMAP folders | CREATE, subscriptions, metadata APPEND, COPY, hierarchical RENAME and DELETE persist. |
 | IMAP protocol responses | SELECT supplies counts/UIDVALIDITY; STORE supplies changed FLAGS; EXPUNGE supplies the removed sequence number. |
+| Bulk message reading | A single FETCH of 260 unread messages completes and marks every message Seen without overflowing notification delivery. |
 | Message reading | BODY.PEEK and EXAMINE preserve unread state; BODY in a writable selection sets Seen. |
 | Search | Header, decoded body, wildcard UID and sent-date criteria select matching messages. |
 | Recovery | Credentials, folders, copied message isolation, flags and internal dates survive restored-service startup. |

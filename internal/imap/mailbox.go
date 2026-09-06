@@ -17,11 +17,12 @@ import (
 // Mailbox implements the go-imap backend.Mailbox interface
 // RFC 3501 - IMAP4rev1 mailbox implementation
 type Mailbox struct {
-	logger   *zap.Logger
-	store    Store
-	username string
-	name     string
-	readOnly bool
+	logger      *zap.Logger
+	store       Store
+	username    string
+	name        string
+	readOnly    bool
+	pendingRead []string
 }
 
 // NewMailbox creates a new mailbox instance
@@ -244,6 +245,9 @@ func (m *Mailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.Fetch
 						MarkMessageRead(context.Context, string, string, string) error
 					}); ok {
 						err = store.MarkMessageRead(ctx, msg.ID, m.username, m.name)
+						if err == nil {
+							m.pendingRead = append(m.pendingRead, msg.ID)
+						}
 					} else {
 						err = m.store.UpdateMessageFlags(ctx, msg.ID, m.username, m.name, imap.AddFlags, []string{imap.SeenFlag})
 					}

@@ -54,6 +54,9 @@ func (s *MailboxStore) notifyFlags(ctx context.Context, user, folder, id string,
 	for i, msg := range messages {
 		if msg.ID == id {
 			async, _ := ctx.Value(fetchUpdateKey{}).(bool)
+			if async {
+				return
+			}
 			message := imap.NewMessage(uint32(i+1), []imap.FetchItem{imap.FetchUid, imap.FetchFlags})
 			message.Uid, message.Flags = msg.UID, flags
 			s.publishWait(&backend.MessageUpdate{Update: backend.NewUpdate(user, folder), Message: message}, !async)
@@ -64,8 +67,23 @@ func (s *MailboxStore) notifyFlags(ctx context.Context, user, folder, id string,
 
 type fetchUpdateKey struct{}
 
-// FETCH holds the IMAP response writer while pulling body data. Queue the
-// unsolicited update without waiting for that same writer, avoiding deadlock.
+// FETCH holds the response writer. The protocol handler flushes notifications
+// after completing the body response so arbitrarily large FETCH sets cannot
+// block behind their own writer or fill the update channel.
 func (s *MailboxStore) MarkMessageRead(ctx context.Context, id, user, folder string) error {
 	return s.UpdateMessageFlags(context.WithValue(ctx, fetchUpdateKey{}, true), id, user, folder, imap.AddFlags, []string{imap.SeenFlag})
+}
+
+func (s *MailboxStore) NotifyMessageRead(ctx context.Context, id, user, folder string) error {
+	messages, err := s.GetMessages(ctx, user, folder)
+	if err != nil {
+		return err
+	}
+	for _, msg := range messages {
+		if msg.ID == id {
+			s.notifyFlags(ctx, user, folder, id, msg.Flags)
+			break
+		}
+	}
+	return nil
 }
