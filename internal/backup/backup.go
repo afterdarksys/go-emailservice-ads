@@ -33,10 +33,19 @@ func Create(ctx context.Context, source, archive string) error {
 	if err != nil {
 		return err
 	}
+	source, err = filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
 	archive, err = filepath.Abs(archive)
 	if err != nil {
 		return err
 	}
+	archiveParent, err := filepath.EvalSymlinks(filepath.Dir(archive))
+	if err != nil {
+		return err
+	}
+	archive = filepath.Join(archiveParent, filepath.Base(archive))
 	if inside(source, archive) {
 		return fmt.Errorf("archive must be outside data directory")
 	}
@@ -98,7 +107,7 @@ func Create(ctx context.Context, source, archive string) error {
 			return err
 		}
 		hash := sha256.New()
-		_, err = io.Copy(io.MultiWriter(tw, hash), in)
+		_, err = io.Copy(io.MultiWriter(tw, hash), contextReader{ctx, in})
 		in.Close()
 		if err != nil {
 			return err
@@ -171,6 +180,25 @@ func Restore(ctx context.Context, archive, target string, maxBytes int64) error 
 	if err = VerifyDatabases(ctx, stage); err != nil {
 		return err
 	}
+	// Persist directory entries before publishing the restored tree. Sync children
+	// first so a crash cannot leave a durable root pointing at missing contents.
+	var dirs []string
+	if err = filepath.WalkDir(stage, func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err = syncDir(dirs[i]); err != nil {
+			return err
+		}
+	}
 	// Destination absence must remain an operator-enforced invariant while restoring.
 	if _, err = os.Lstat(target); !os.IsNotExist(err) {
 		return fmt.Errorf("restore destination appeared")
@@ -205,7 +233,7 @@ func extract(ctx context.Context, archive, target string, maxBytes int64) error 
 		return err
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(contextReader{ctx, gz})
 	hashes := map[string]string{}
 	var manifest *Manifest
 	var total int64
@@ -268,8 +296,16 @@ func extract(ctx context.Context, archive, target string, maxBytes int64) error 
 		}
 		hashes[h.Name] = hex.EncodeToString(hash.Sum(nil))
 	}
-	// Consume gzip trailer so checksum/truncation errors are not hidden by tar EOF.
-	if _, err = io.Copy(io.Discard, gz); err != nil {
+	// Consume the checksum trailer but reject appended payloads and gzip bombs.
+	// Our writer emits no padding after tar EOF, so any further byte is invalid.
+	var extra [1]byte
+	if n, e := (contextReader{ctx, gz}).Read(extra[:]); n != 0 || e != io.EOF {
+		if e != nil && e != io.EOF {
+			return e
+		}
+		return fmt.Errorf("unexpected data after backup archive")
+	}
+	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if manifest == nil || manifest.Version != 1 || len(manifest.Files) != len(hashes) {
@@ -281,6 +317,18 @@ func extract(ctx context.Context, archive, target string, maxBytes int64) error 
 		}
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 func VerifyDatabases(ctx context.Context, root string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
