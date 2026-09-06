@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/logformat"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"os"
 	"os/signal"
@@ -65,17 +66,28 @@ func main() {
 		}
 		defer lease.Close()
 	}
-	// Re-configure logger based on config
+	// Configuration file values override production defaults.
 	level, err := zapcore.ParseLevel(cfg.Logging.Level)
-	if err == nil {
-		core := zapcore.NewCore(
-			zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig()),
-			os.Stdout,
-			level,
-		)
-		logger = zap.New(core)
-		logger.Info("Reconfigured logger", zap.String("level", level.String()))
+	if err != nil {
+		logger.Fatal("Invalid logging level", zap.Error(err))
 	}
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "time"
+	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.UTC().Format(time.RFC3339Nano))
+	}
+	format := cfg.Logging.Format
+	if format == "" {
+		format = "json"
+	}
+	var output zapcore.WriteSyncer = zapcore.AddSync(os.Stdout)
+	var encoder zapcore.Encoder = zapcore.NewJSONEncoder(encoderConfig)
+	if format == "console" {
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+	} else if format != "json" {
+		output = zapcore.AddSync(&logformat.Writer{Output: os.Stdout, Format: format})
+	}
+	logger = zap.New(zapcore.NewCore(encoder, output, level))
 
 	logger.Info("Starting go-emailservice-ads module")
 

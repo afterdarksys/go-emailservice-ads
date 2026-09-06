@@ -155,7 +155,8 @@ type Config struct {
 	} `yaml:"aftersmtp"`
 
 	Logging struct {
-		Level string `yaml:"level"` // debug, info, warn, error
+		Level  string `yaml:"level"`  // debug, info, warn, error
+		Format string `yaml:"format"` // json (default), yaml, syslog, console
 	} `yaml:"logging"`
 
 	// Elasticsearch Configuration for mail event logging and search

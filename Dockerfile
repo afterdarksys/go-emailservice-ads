@@ -20,6 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bi
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailflow-probe ./cmd/mailflow-probe
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-backup ./cmd/mailhub-backup
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-failover ./cmd/mailhub-failover
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-log ./cmd/mailhub-log
 
 # Final stage
 FROM alpine:latest
@@ -40,6 +41,7 @@ COPY --from=builder /build/bin/mailctl /usr/local/bin/
 COPY --from=builder /build/bin/mailflow-probe /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-backup /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-failover /usr/local/bin/
+COPY --from=builder /build/bin/mailhub-log /usr/local/bin/
 
 # Copy default configuration
 COPY config.yaml /opt/goemailservices/config.yaml

@@ -68,6 +68,11 @@ func (c *Config) validatePlatform() error {
 	if c.API.OAuth.Enabled && c.API.TLS == nil {
 		return fmt.Errorf("OAuth API access requires configured API TLS")
 	}
+	switch c.Logging.Format {
+	case "", "json", "yaml", "syslog", "console":
+	default:
+		return fmt.Errorf("invalid logging format")
+	}
 	if err := p.Compliance.Validate(); err != nil {
 		return err
 	}
