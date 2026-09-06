@@ -31,6 +31,7 @@ type JournalEntry struct {
 
 // Journal provides write-ahead logging for message persistence
 type Journal struct {
+	failed   error
 	basePath string
 	logger   *zap.Logger
 	mu       sync.RWMutex
@@ -44,12 +45,16 @@ func NewJournal(basePath string, logger *zap.Logger) (*Journal, error) {
 		return nil, fmt.Errorf("failed to create journal directory: %w", err)
 	}
 
-	journalFile := filepath.Join(basePath, fmt.Sprintf("journal-%s.log", time.Now().Format("20060102-150405")))
+	journalFile := filepath.Join(basePath, journalName())
 	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open journal file: %w", err)
 	}
 
+	if err = syncDir(basePath); err != nil {
+		file.Close()
+		return nil, err
+	}
 	j := &Journal{
 		basePath: basePath,
 		logger:   logger,
@@ -65,21 +70,43 @@ func NewJournal(basePath string, logger *zap.Logger) (*Journal, error) {
 func (j *Journal) Write(entry *JournalEntry) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	return j.writeLocked(entry)
+}
 
+// writeLocked rolls back an unacknowledged partial append. If rollback fails,
+// latch the journal unhealthy so a later append cannot bury a corrupt record.
+func (j *Journal) writeLocked(entry *JournalEntry) error {
+	if j.failed != nil {
+		return j.failed
+	}
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()
 	}
-
-	if err := j.encoder.Encode(entry); err != nil {
-		return fmt.Errorf("failed to write journal entry: %w", err)
+	offset, err := j.file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
 	}
-
-	// Force sync to disk for durability
-	if err := j.file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync journal: %w", err)
+	err = j.encoder.Encode(entry)
+	if err == nil {
+		err = j.file.Sync()
 	}
-
-	return nil
+	if err == nil {
+		return nil
+	}
+	original := err
+	rollback := j.file.Truncate(offset)
+	if rollback == nil {
+		_, rollback = j.file.Seek(offset, io.SeekStart)
+	}
+	if rollback == nil {
+		rollback = j.file.Sync()
+	}
+	j.encoder = json.NewEncoder(j.file)
+	if rollback != nil {
+		j.failed = fmt.Errorf("journal rollback failed: %v (write: %w)", rollback, original)
+		return j.failed
+	}
+	return fmt.Errorf("journal write rolled back: %w", original)
 }
 
 // Replay reads all journal entries and returns them for recovery
@@ -92,8 +119,24 @@ func (j *Journal) Replay() ([]*JournalEntry, error) {
 		return nil, fmt.Errorf("failed to list journal files: %w", err)
 	}
 
+	var cp checkpoint
+	raw, err := os.ReadFile(filepath.Join(j.basePath, "checkpoint.json"))
+	if err == nil {
+		if err = json.Unmarshal(raw, &cp); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	covered := map[string]bool{}
+	for _, name := range cp.Covered {
+		covered[name] = true
+	}
 	var entries []*JournalEntry
 	for _, file := range files {
+		if covered[filepath.Base(file)] {
+			continue
+		}
 		fileEntries, err := j.replayFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("replay journal file %s: %w", file, err)
@@ -145,7 +188,7 @@ func (j *Journal) Rotate() error {
 		return fmt.Errorf("failed to close old journal: %w", err)
 	}
 
-	journalFile := filepath.Join(j.basePath, fmt.Sprintf("journal-%s.log", time.Now().Format("20060102-150405")))
+	journalFile := filepath.Join(j.basePath, journalName())
 	file, err := os.OpenFile(journalFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open new journal file: %w", err)

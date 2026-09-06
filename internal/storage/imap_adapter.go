@@ -58,9 +58,18 @@ func (a *IMAPAdapter) discardMessage(msgID string) error {
 
 // StoreMessage stores a new message in a user's folder
 func (a *IMAPAdapter) StoreMessage(ctx context.Context, username, folder string, data []byte) (string, error) {
+	return a.storeMessageID(ctx, "", username, folder, data)
+}
+func (a *IMAPAdapter) storeMessageID(ctx context.Context, id, username, folder string, data []byte) (string, error) {
+	if id == "" {
+		id = generateMessageID()
+	} else if e, err := a.store.Get(id); err == nil && e.Status == "stored" {
+		return id, nil
+	}
+
 	// Create a journal entry for the message
 	entry := &JournalEntry{
-		MessageID: generateMessageID(),
+		MessageID: id,
 		Data:      data,
 		Tier:      "mailbox",
 		Status:    "stored",

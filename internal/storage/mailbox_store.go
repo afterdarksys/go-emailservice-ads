@@ -2,11 +2,13 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"net/mail"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	goiMap "github.com/emersion/go-imap"
@@ -19,6 +21,8 @@ import (
 // It wraps IMAPAdapter for raw message storage and adds persistent
 // UID tracking, flag management, and IMAP IDLE delivery notifications.
 type MailboxStore struct {
+	deliveryMu sync.Mutex
+	quotaBytes int64
 	adapter    *IMAPAdapter
 	db         *sql.DB
 	deliveryCh chan [2]string // [username, mailbox] — read by imap.Backend for IDLE
@@ -205,7 +209,40 @@ func (s *MailboxStore) FetchMessage(ctx context.Context, msgID string) ([]byte, 
 // StoreMessage stores the message via IMAPAdapter, assigns it a UID, records
 // its metadata in SQLite, and fires a delivery notification for IMAP IDLE.
 func (s *MailboxStore) StoreMessage(ctx context.Context, username, folder string, data []byte) (string, error) {
-	msgID, err := s.adapter.StoreMessage(ctx, username, folder, data)
+	return s.DeliverOnce(ctx, "", username, folder, data)
+}
+func (s *MailboxStore) SetQuota(bytes int64) {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	s.quotaBytes = bytes
+}
+
+// DeliverOnce deduplicates retries by the durable queue transaction and recipient.
+func (s *MailboxStore) DeliverOnce(ctx context.Context, key, username, folder string, data []byte) (string, error) {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	id := ""
+	if key != "" {
+		id = fmt.Sprintf("delivery-%x", sha256.Sum256([]byte(key)))
+		var count int
+		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM message_flags WHERE msg_id=?", id).Scan(&count); err != nil {
+			return "", err
+		}
+		if count > 0 {
+			return id, nil
+		}
+	}
+	if s.quotaBytes > 0 {
+		var used int64
+		if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(SUM(size),0) FROM message_flags WHERE username=? AND expunged=0", username).Scan(&used); err != nil {
+			return "", err
+		}
+		if used+int64(len(data)) > s.quotaBytes {
+			return "", fmt.Errorf("mailbox quota exceeded")
+		}
+	}
+
+	msgID, err := s.adapter.storeMessageID(ctx, id, username, folder, data)
 	if err != nil {
 		return "", err
 	}
@@ -276,6 +313,8 @@ func (s *MailboxStore) UpdateMessageFlags(ctx context.Context, msgID, username, 
 // view (setting expunged=1) and returns their message IDs so callers can
 // issue EXPUNGE responses to IMAP clients.
 func (s *MailboxStore) ExpungeDeleted(ctx context.Context, username, mailbox string) ([]string, error) {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT msg_id FROM message_flags
 		 WHERE username=? AND mailbox=? AND deleted=1 AND expunged=0`,
@@ -315,6 +354,16 @@ func (s *MailboxStore) ExpungeDeleted(ctx context.Context, username, mailbox str
 		}
 	}
 
+	// Tombstone expunged payloads, including a previous interrupted cleanup.
+	cleanup, err := s.expungedSet(ctx, username, mailbox)
+	if err != nil {
+		return nil, err
+	}
+	for id := range cleanup {
+		if _, err := s.adapter.store.Transition(id, "stored", "deleted"); err != nil {
+			return nil, err
+		}
+	}
 	return ids, nil
 }
 

@@ -14,9 +14,14 @@ import (
 
 // MessageStore provides persistent storage for delivery transactions and mailbox blobs.
 type MessageStore struct {
-	basePath string
-	logger   *zap.Logger
-	journal  *Journal
+	lockFile  *os.File
+	limits    Limits
+	closed    bool
+	closeOnce sync.Once
+	closeErr  error
+	basePath  string
+	logger    *zap.Logger
+	journal   *Journal
 
 	// In-memory index for fast lookups.
 	index   map[string]*JournalEntry // message_id -> entry
@@ -33,13 +38,19 @@ func NewMessageStore(basePath string, logger *zap.Logger) (*MessageStore, error)
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
+	lockFile, err := acquireLock(filepath.Join(basePath, ".owner.lock"))
+	if err != nil {
+		return nil, err
+	}
 	journal, err := NewJournal(filepath.Join(basePath, "journal"), logger)
 	if err != nil {
+		lockFile.Close()
 		return nil, fmt.Errorf("failed to initialize journal: %w", err)
 	}
 
 	store := &MessageStore{
 		basePath: basePath,
+		lockFile: lockFile,
 		logger:   logger,
 		journal:  journal,
 		index:    make(map[string]*JournalEntry),
@@ -48,6 +59,7 @@ func NewMessageStore(basePath string, logger *zap.Logger) (*MessageStore, error)
 
 	// Replay journal for disaster recovery
 	if err := store.recover(); err != nil {
+		store.Close()
 		return nil, fmt.Errorf("failed to recover from journal: %w", err)
 	}
 
@@ -75,7 +87,7 @@ func (s *MessageStore) recover() error {
 		// final record for a message wins; a delivered record is a tombstone for
 		// any earlier pending record.
 		switch entry.Status {
-		case "delivered":
+		case "delivered", "deleted":
 			delete(s.index, entry.MessageID)
 			s.dlqMu.Lock()
 			delete(s.dlq, entry.MessageID)
@@ -85,7 +97,7 @@ func (s *MessageStore) recover() error {
 			s.dlqMu.Lock()
 			s.dlq[entry.MessageID] = entry
 			s.dlqMu.Unlock()
-		case "processing":
+		case "processing", "queued":
 			// A worker may have crashed after claiming this message. Requeue it
 			// for at-least-once delivery rather than stranding it indefinitely.
 			entry.Status = "pending"
@@ -121,6 +133,20 @@ func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
 		return "", false, fmt.Errorf("message ID already exists: %s", entry.MessageID)
 	}
 
+	if s.closed {
+		s.indexMu.Unlock()
+		return "", false, fmt.Errorf("store closed")
+	}
+	if err := s.diskCapacity(int64(len(entry.Data))*3 + 4096); err != nil {
+		s.indexMu.Unlock()
+		return "", false, err
+	}
+	if entry.Tier != "mailbox" && entry.Tier != "emergency" {
+		if err := s.capacity(int64(len(entry.Data))); err != nil {
+			s.indexMu.Unlock()
+			return "", false, err
+		}
+	}
 	// Store in journal first (WAL pattern)
 	if err := s.journal.Write(entry); err != nil {
 		s.indexMu.Unlock()
@@ -128,7 +154,7 @@ func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
 	}
 
 	// Update in-memory index
-	s.index[entry.MessageID] = entry
+	s.index[entry.MessageID] = cloneEntry(entry)
 	s.indexMu.Unlock()
 
 	// Write to tier-specific storage file for efficient recovery
@@ -149,7 +175,7 @@ func (s *MessageStore) Get(messageID string) (*JournalEntry, error) {
 		return nil, fmt.Errorf("message not found: %s", messageID)
 	}
 
-	return entry, nil
+	return cloneEntry(entry), nil
 }
 
 // UpdateStatus updates message status and journals the change
@@ -161,9 +187,12 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 		return fmt.Errorf("message not found: %s", messageID)
 	}
 
+	entry = cloneEntry(entry)
 	entry.Status = status
-	entry.LastAttempt = time.Now()
-	entry.Attempts++
+	if status == "processing" {
+		entry.LastAttempt = time.Now()
+		entry.Attempts++
+	}
 	if errorMsg != "" {
 		entry.ErrorMessage = errorMsg
 	}
@@ -174,6 +203,7 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 		return err
 	}
 
+	s.index[messageID] = entry
 	// Move to DLQ if permanently failed
 	if status == "failed" {
 		s.dlqMu.Lock()
@@ -204,10 +234,12 @@ func (s *MessageStore) UpdateRecipients(messageID string, recipients []string) e
 	if !exists {
 		return fmt.Errorf("message not found: %s", messageID)
 	}
+	entry = cloneEntry(entry)
 	entry.To = append([]string(nil), recipients...)
 	if err := s.journal.Write(entry); err != nil {
 		return err
 	}
+	s.index[messageID] = entry
 	return nil
 }
 
@@ -226,7 +258,7 @@ func (s *MessageStore) ListByStatus(status, tier string) []*JournalEntry {
 	for _, entry := range s.index {
 		if tier == "" || entry.Tier == tier {
 			if entry.Status == status {
-				entries = append(entries, entry)
+				entries = append(entries, cloneEntry(entry))
 			}
 		}
 	}
@@ -241,7 +273,7 @@ func (s *MessageStore) GetDLQ() []*JournalEntry {
 
 	dlq := make([]*JournalEntry, 0, len(s.dlq))
 	for _, entry := range s.dlq {
-		dlq = append(dlq, entry)
+		dlq = append(dlq, cloneEntry(entry))
 	}
 
 	return dlq
@@ -249,25 +281,24 @@ func (s *MessageStore) GetDLQ() []*JournalEntry {
 
 // RetryFromDLQ moves a message from DLQ back to pending
 func (s *MessageStore) RetryFromDLQ(messageID string) error {
-	s.dlqMu.Lock()
-	entry, exists := s.dlq[messageID]
-	if !exists {
-		s.dlqMu.Unlock()
-		return fmt.Errorf("message not in DLQ: %s", messageID)
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	e, ok := s.index[messageID]
+	if !ok || e.Status != "failed" {
+		return fmt.Errorf("message not in DLQ")
 	}
-
+	v := cloneEntry(e)
+	v.Status = "pending"
+	v.Attempts = 0
+	v.ErrorMessage = ""
+	if err := s.journal.Write(v); err != nil {
+		return err
+	}
+	s.index[messageID] = v
+	s.dlqMu.Lock()
 	delete(s.dlq, messageID)
 	s.dlqMu.Unlock()
-
-	// Reset for retry
-	entry.Status = "pending"
-	entry.ErrorMessage = ""
-
-	s.indexMu.Lock()
-	s.index[messageID] = entry
-	s.indexMu.Unlock()
-
-	return s.journal.Write(entry)
+	return nil
 }
 
 // Stats returns storage statistics
@@ -313,6 +344,14 @@ func (s *MessageStore) writeToTierFile(entry *JournalEntry) error {
 
 // Close gracefully shuts down the store
 func (s *MessageStore) Close() error {
-	s.logger.Info("Closing message store")
-	return s.journal.Close()
+	s.closeOnce.Do(func() {
+		s.indexMu.Lock()
+		defer s.indexMu.Unlock()
+		s.closed = true
+		s.closeErr = s.journal.Close()
+		if s.lockFile != nil {
+			s.lockFile.Close()
+		}
+	})
+	return s.closeErr
 }
