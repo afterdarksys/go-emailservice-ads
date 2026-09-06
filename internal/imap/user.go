@@ -1,7 +1,9 @@
 package imap
 
 import (
+	"context"
 	"errors"
+	"strings"
 
 	"github.com/emersion/go-imap/backend"
 	"go.uber.org/zap"
@@ -35,6 +37,13 @@ func (u *User) Username() string {
 func (u *User) ListMailboxes(subscribed bool) ([]backend.Mailbox, error) {
 	// Standard mailboxes for each user
 	mailboxNames := []string{"INBOX", "Sent", "Drafts", "Trash", "Spam"}
+	if store, ok := u.store.(MutableStore); ok {
+		var err error
+		mailboxNames, err = store.ListFolders(context.Background(), u.username, subscribed)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	mailboxes := make([]backend.Mailbox, 0, len(mailboxNames))
 	for _, name := range mailboxNames {
@@ -46,16 +55,22 @@ func (u *User) ListMailboxes(subscribed bool) ([]backend.Mailbox, error) {
 
 // GetMailbox returns a specific mailbox
 func (u *User) GetMailbox(name string) (backend.Mailbox, error) {
-	// Validate mailbox exists
-	validMailboxes := map[string]bool{
-		"INBOX":  true,
-		"Sent":   true,
-		"Drafts": true,
-		"Trash":  true,
-		"Spam":   true,
+	name, err := NormalizeMailbox(name)
+	if err != nil {
+		return nil, err
 	}
-
-	if !validMailboxes[name] {
+	folders, err := u.ListMailboxes(false)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, folder := range folders {
+		if folder.Name() == name {
+			found = true
+			break
+		}
+	}
+	if !found {
 		return nil, backend.ErrNoSuchMailbox
 	}
 
@@ -65,23 +80,27 @@ func (u *User) GetMailbox(name string) (backend.Mailbox, error) {
 // CreateMailbox creates a new mailbox
 // RFC 3501 Section 6.3.3 - CREATE Command
 func (u *User) CreateMailbox(name string) error {
+	if store, ok := u.store.(MutableStore); ok {
+		return store.CreateFolder(context.Background(), u.username, name)
+	}
 	return errMailboxMutationUnsupported
 }
 
 // DeleteMailbox deletes a mailbox
 // RFC 3501 Section 6.3.4 - DELETE Command
 func (u *User) DeleteMailbox(name string) error {
-	if name == "INBOX" {
+	if strings.EqualFold(name, "INBOX") {
 		return errors.New("cannot delete INBOX")
+	}
+	if store, ok := u.store.(MutableStore); ok {
+		return store.DeleteFolder(context.Background(), u.username, name)
 	}
 	return errMailboxMutationUnsupported
 }
 
-// RenameMailbox renames a mailbox
-// RFC 3501 Section 6.3.5 - RENAME Command
 func (u *User) RenameMailbox(existingName, newName string) error {
-	if existingName == "INBOX" {
-		return errors.New("cannot rename INBOX")
+	if store, ok := u.store.(MutableStore); ok {
+		return store.RenameFolder(context.Background(), u.username, existingName, newName)
 	}
 	return errMailboxMutationUnsupported
 }

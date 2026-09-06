@@ -1,29 +1,49 @@
 package policy
 
 import (
-	"path"
+	"bytes"
+	"context"
+	"io"
+
+	"fmt"
+	_ "github.com/emersion/go-message/charset"
+	messagemail "github.com/emersion/go-message/mail"
+	"mime"
+	"net/mail"
+	"net/textproto"
+	"regexp"
 	"strings"
 )
 
 type svInterp struct {
-	ctx   *EmailContext
-	vars  map[string]string
-	flags []string
+	execution context.Context
+	err       error
+	actions   int
+	ctx       *EmailContext
+	vars      map[string]string
+	flags     []string
 }
 
-func svExec(ctx *EmailContext, script *svScript) (*Action, error) {
-	interp := &svInterp{ctx: ctx, vars: make(map[string]string)}
+func svExec(execution context.Context, ctx *EmailContext, script *svScript) (*Action, error) {
+	interp := &svInterp{execution: execution, ctx: ctx, vars: make(map[string]string)}
 	result := &Action{Type: ActionKeep}
 	interp.runBlock(script.cmds, result)
 	if len(interp.flags) > 0 {
 		result.Tags = interp.flags
 	}
-	return result, nil
+	return result, interp.err
 }
 
 // runBlock returns true if a terminal action (reject/discard/stop) was hit.
 func (i *svInterp) runBlock(cmds []svCmd, result *Action) bool {
 	for _, cmd := range cmds {
+		if i.err != nil {
+			return true
+		}
+		if err := i.execution.Err(); err != nil {
+			i.err = err
+			return true
+		}
 		if i.runCmd(cmd, result) {
 			return true
 		}
@@ -49,6 +69,14 @@ func (i *svInterp) runCmd(cmd svCmd, result *Action) bool {
 }
 
 func (i *svInterp) runAction(c *svActionCmd, result *Action) bool {
+	switch c.name {
+	case "keep", "fileinto", "discard", "reject", "ereject":
+		i.actions++
+		if i.actions > 1 {
+			i.err = fmt.Errorf("multiple delivery actions are not supported")
+			return true
+		}
+	}
 	switch c.name {
 	case "keep":
 		result.Type = ActionKeep
@@ -126,7 +154,11 @@ func (i *svInterp) evalTest(t svTest) bool {
 	case *svEnvelopeTest:
 		return i.evalEnvelope(v)
 	case *svBodyTest:
-		body := strings.ToLower(string(i.ctx.Body))
+		body, err := sieveBody(i.ctx.Body)
+		if err != nil {
+			i.err = err
+			return false
+		}
 		for _, k := range v.keys {
 			if i.match(v.match, body, k) {
 				return true
@@ -152,16 +184,20 @@ func (i *svInterp) evalTest(t svTest) bool {
 func (i *svInterp) evalHeader(v *svHeaderTest) bool {
 	if v.match == "exists" {
 		for _, h := range v.headers {
-			if i.ctx.Headers.Get(h) == "" {
+			if _, exists := i.ctx.Headers[textproto.CanonicalMIMEHeaderKey(h)]; !exists {
 				return false
 			}
 		}
 		return true
 	}
 	for _, h := range v.headers {
-		vals := i.ctx.Headers[strings.Title(strings.ToLower(h))]
+		vals := i.ctx.Headers[textproto.CanonicalMIMEHeaderKey(h)]
 		for _, k := range v.keys {
 			for _, val := range vals {
+				decoded, err := new(mime.WordDecoder).DecodeHeader(val)
+				if err == nil {
+					val = decoded
+				}
 				if i.match(v.match, val, k) {
 					return true
 				}
@@ -173,30 +209,37 @@ func (i *svInterp) evalHeader(v *svHeaderTest) bool {
 
 func (i *svInterp) evalAddress(v *svAddressTest) bool {
 	for _, h := range v.headers {
-		val := i.ctx.Headers.Get(h)
-		for _, k := range v.keys {
-			if i.match(v.match, val, k) {
-				return true
+		addresses, err := mail.ParseAddressList(i.ctx.Headers.Get(h))
+		if err != nil {
+			continue
+		}
+		for _, a := range addresses {
+			for _, key := range v.keys {
+				if i.match(v.match, a.Address, key) {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
-
 func (i *svInterp) evalEnvelope(v *svEnvelopeTest) bool {
 	for _, part := range v.parts {
-		var val string
+		var values []string
 		switch strings.ToLower(part) {
 		case "from":
-			val = i.ctx.From
+			values = []string{i.ctx.From}
 		case "to":
-			if len(i.ctx.To) > 0 {
-				val = i.ctx.To[0]
-			}
+			values = i.ctx.To
+		default:
+			i.err = fmt.Errorf("unsupported envelope part")
+			return false
 		}
-		for _, k := range v.keys {
-			if i.match(v.match, val, k) {
-				return true
+		for _, value := range values {
+			for _, key := range v.keys {
+				if i.match(v.match, value, key) {
+					return true
+				}
 			}
 		}
 	}
@@ -212,7 +255,10 @@ func (i *svInterp) match(matchType, haystack, needle string) bool {
 	case "contains":
 		return strings.Contains(hay, ndl)
 	case "matches":
-		ok, _ := path.Match(ndl, hay)
+		pattern := regexp.QuoteMeta(ndl)
+		pattern = strings.ReplaceAll(pattern, `\*`, ".*")
+		pattern = strings.ReplaceAll(pattern, `\?`, ".")
+		ok, _ := regexp.MatchString("(?s)^"+pattern+"$", hay)
 		return ok
 	}
 	return false
@@ -225,6 +271,10 @@ func (i *svInterp) expand(s string) string {
 	var b strings.Builder
 	rest := s
 	for {
+		if b.Len()+len(rest) > 1<<20 {
+			i.err = fmt.Errorf("Sieve expansion exceeds 1 MiB")
+			return ""
+		}
 		start := strings.Index(rest, "${")
 		if start < 0 {
 			b.WriteString(rest)
@@ -239,6 +289,10 @@ func (i *svInterp) expand(s string) string {
 		name := strings.ToLower(rest[start+2 : start+end])
 		b.WriteString(i.vars[name])
 		rest = rest[start+end+1:]
+	}
+	if b.Len() > 1<<20 {
+		i.err = fmt.Errorf("Sieve expansion exceeds 1 MiB")
+		return ""
 	}
 	return b.String()
 }
@@ -279,4 +333,33 @@ func svContains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// Body tests inspect decoded MIME text parts, excluding message headers.
+func sieveBody(raw []byte) (string, error) {
+	reader, err := messagemail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	var body strings.Builder
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, ok := part.Header.(*messagemail.InlineHeader); !ok {
+			continue
+		}
+		data, err := io.ReadAll(part.Body)
+		if err != nil {
+			return "", err
+		}
+		body.Write(data)
+		body.WriteByte('\n')
+	}
+	return strings.ToLower(body.String()), nil
 }

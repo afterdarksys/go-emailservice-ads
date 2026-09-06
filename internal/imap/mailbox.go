@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/emersion/go-imap"
@@ -21,6 +21,7 @@ type Mailbox struct {
 	store    Store
 	username string
 	name     string
+	readOnly bool
 }
 
 // NewMailbox creates a new mailbox instance
@@ -89,9 +90,9 @@ func (m *Mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
 	}
 
 	total := uint32(len(messages))
-	var unseen, recent uint32
+	var unseen, recent, firstUnseen uint32
 
-	for _, msg := range messages {
+	for idx, msg := range messages {
 		hasSeen := false
 		for _, flag := range msg.Flags {
 			if flag == "\\Seen" {
@@ -100,6 +101,9 @@ func (m *Mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
 		}
 		if !hasSeen {
 			unseen++
+			if firstUnseen == 0 {
+				firstUnseen = uint32(idx + 1)
+			}
 		}
 	}
 
@@ -113,19 +117,29 @@ func (m *Mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
 	}
 
 	status := &imap.MailboxStatus{
-		Name:        m.name,
-		Messages:    total,
-		Recent:      recent,
-		Unseen:      unseen,
-		UidNext:     uidNext,
-		UidValidity: uidValidity,
+		Name:           m.name,
+		UnseenSeqNum:   firstUnseen,
+		Items:          make(map[imap.StatusItem]interface{}),
+		Flags:          []string{imap.SeenFlag, imap.AnsweredFlag, imap.FlaggedFlag, imap.DeletedFlag, imap.DraftFlag},
+		PermanentFlags: []string{imap.SeenFlag, imap.AnsweredFlag, imap.FlaggedFlag, imap.DeletedFlag, imap.DraftFlag, "\\*"},
+		Messages:       total,
+		Recent:         recent,
+		Unseen:         unseen,
+		UidNext:        uidNext,
+		UidValidity:    uidValidity,
 	}
 
+	for _, item := range items {
+		status.Items[item] = nil
+	}
 	return status, nil
 }
 
 // SetSubscribed sets the subscription status
 func (m *Mailbox) SetSubscribed(subscribed bool) error {
+	if store, ok := m.store.(MutableStore); ok {
+		return store.SubscribeFolder(context.Background(), m.username, m.name, subscribed)
+	}
 	return errMailboxMutationUnsupported
 }
 
@@ -145,6 +159,11 @@ func (m *Mailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.Fetch
 		return err
 	}
 
+	max := uint32(len(messages))
+	if uid && len(messages) > 0 {
+		max = messages[len(messages)-1].UID
+	}
+	seqSet = resolveSet(seqSet, max)
 	// For each message in the sequence set
 	for seqNum, msg := range messages {
 		sequenceNumber := uint32(seqNum + 1)
@@ -220,6 +239,21 @@ func (m *Mailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.Fetch
 				if err != nil {
 					return err
 				}
+				if !m.readOnly && !section.Peek && !hasFlag(msg.Flags, imap.SeenFlag) {
+					if store, ok := m.store.(interface {
+						MarkMessageRead(context.Context, string, string, string) error
+					}); ok {
+						err = store.MarkMessageRead(ctx, msg.ID, m.username, m.name)
+					} else {
+						err = m.store.UpdateMessageFlags(ctx, msg.ID, m.username, m.name, imap.AddFlags, []string{imap.SeenFlag})
+					}
+					if err != nil {
+						return err
+					}
+					msg.Flags = append(msg.Flags, imap.SeenFlag)
+					imapMsg.Flags = msg.Flags
+					imapMsg.Items[imap.FetchFlags] = nil
+				}
 				header, body, err := imapHeaderAndBody(data)
 				if err != nil {
 					return err
@@ -253,112 +287,37 @@ func (m *Mailbox) SearchMessages(uid bool, criteria *imap.SearchCriteria) ([]uin
 		return nil, err
 	}
 
-	var ids []uint32
-	for seqNum, msg := range messages {
-		if searchMatcher(uint32(seqNum+1), msg, criteria) {
+	maxUID := uint32(0)
+	if len(messages) > 0 {
+		maxUID = messages[len(messages)-1].UID
+	}
+	criteria = resolveCriteria(criteria, uint32(len(messages)), maxUID)
+	ids := []uint32{}
+	for i, msg := range messages {
+		data, err := m.store.FetchMessage(ctx, msg.ID)
+		if err != nil {
+			return nil, err
+		}
+		match, err := matchMessage(uint32(i+1), msg, data, criteria)
+		if err != nil {
+			return nil, err
+		}
+		if match {
 			if uid {
 				ids = append(ids, msg.UID)
 			} else {
-				ids = append(ids, uint32(seqNum+1))
+				ids = append(ids, uint32(i+1))
 			}
 		}
 	}
 	return ids, nil
 }
 
-// searchMatcher returns true if msg satisfies all conditions in criteria.
-func searchMatcher(seqNum uint32, msg MessageSummary, c *imap.SearchCriteria) bool {
-	if c == nil {
-		return true
-	}
-
-	// Sequence number set
-	if c.SeqNum != nil && !c.SeqNum.Contains(seqNum) {
-		return false
-	}
-	// UID set
-	if c.Uid != nil && !c.Uid.Contains(msg.UID) {
-		return false
-	}
-
-	// Date filters (against internal date)
-	if !c.Since.IsZero() && !msg.Date.IsZero() && msg.Date.Before(c.Since) {
-		return false
-	}
-	if !c.Before.IsZero() && !msg.Date.IsZero() && !msg.Date.Before(c.Before) {
-		return false
-	}
-	if !c.SentSince.IsZero() && !msg.Date.IsZero() && msg.Date.Before(c.SentSince) {
-		return false
-	}
-	if !c.SentBefore.IsZero() && !msg.Date.IsZero() && !msg.Date.Before(c.SentBefore) {
-		return false
-	}
-
-	// Size filters
-	if c.Larger > 0 && uint32(msg.Size) <= c.Larger {
-		return false
-	}
-	if c.Smaller > 0 && uint32(msg.Size) >= c.Smaller {
-		return false
-	}
-
-	// Flag filters
-	flagSet := make(map[string]bool, len(msg.Flags))
-	for _, f := range msg.Flags {
-		flagSet[imap.CanonicalFlag(f)] = true
-	}
-	for _, f := range c.WithFlags {
-		if !flagSet[imap.CanonicalFlag(f)] {
-			return false
-		}
-	}
-	for _, f := range c.WithoutFlags {
-		if flagSet[imap.CanonicalFlag(f)] {
-			return false
-		}
-	}
-
-	// Header filters (Subject and From are stored; others unsupported → skip)
-	for key, vals := range c.Header {
-		var haystack string
-		switch strings.ToLower(key) {
-		case "subject":
-			haystack = strings.ToLower(msg.Subject)
-		case "from":
-			haystack = strings.ToLower(msg.From)
-		default:
-			continue
-		}
-		for _, v := range vals {
-			if !strings.Contains(haystack, strings.ToLower(v)) {
-				return false
-			}
-		}
-	}
-
-	// NOT sub-criteria
-	for _, sub := range c.Not {
-		if searchMatcher(seqNum, msg, sub) {
-			return false
-		}
-	}
-
-	// OR sub-criteria (at least one pair must have a match)
-	for _, pair := range c.Or {
-		if !searchMatcher(seqNum, msg, pair[0]) && !searchMatcher(seqNum, msg, pair[1]) {
-			return false
-		}
-	}
-
-	return true
-}
-
 // CreateMessage creates a new message
 // RFC 3501 Section 6.3.11 - APPEND Command
 func (m *Mailbox) CreateMessage(flags []string, date time.Time, body imap.Literal) error {
 	ctx := context.Background()
-	if len(flags) > 0 || !date.IsZero() {
+	if _, ok := m.store.(MutableStore); !ok && (len(flags) > 0 || !date.IsZero()) {
 		return errMailboxMutationUnsupported
 	}
 
@@ -369,7 +328,12 @@ func (m *Mailbox) CreateMessage(flags []string, date time.Time, body imap.Litera
 	}
 
 	// Store message
-	msgID, err := m.store.StoreMessage(ctx, m.username, m.name, data)
+	var msgID string
+	if store, ok := m.store.(MutableStore); ok {
+		msgID, err = store.AppendMessage(ctx, m.username, m.name, data, flags, date)
+	} else {
+		msgID, err = m.store.StoreMessage(ctx, m.username, m.name, data)
+	}
 	if err != nil {
 		m.logger.Error("Failed to store message",
 			zap.String("user", m.username),
@@ -396,29 +360,28 @@ func (m *Mailbox) UpdateMessagesFlags(uid bool, seqSet *imap.SeqSet, op imap.Fla
 		return err
 	}
 
-	for seqNum, msg := range messages {
-		var matched bool
-		if uid {
-			matched = seqSet.Contains(msg.UID)
-		} else {
-			matched = seqSet.Contains(uint32(seqNum + 1))
-		}
-		if !matched {
-			continue
-		}
-		if err := m.store.UpdateMessageFlags(ctx, msg.ID, m.username, m.name, op, flags); err != nil {
-			m.logger.Warn("Flag update failed",
-				zap.String("msg_id", msg.ID),
-				zap.Error(err))
+	for _, id := range selectedIDs(messages, uid, seqSet) {
+		if err := m.store.UpdateMessageFlags(ctx, id, m.username, m.name, op, flags); err != nil {
+			return fmt.Errorf("persist flags: %w", err)
 		}
 	}
+
 	return nil
 }
 
 // CopyMessages copies messages to another mailbox
 // RFC 3501 Section 6.4.7 - COPY Command
 func (m *Mailbox) CopyMessages(uid bool, seqSet *imap.SeqSet, destName string) error {
-	return errMailboxMutationUnsupported
+	store, ok := m.store.(MutableStore)
+	if !ok {
+		return errMailboxMutationUnsupported
+	}
+	ctx := context.Background()
+	messages, err := m.store.GetMessages(ctx, m.username, m.name)
+	if err != nil {
+		return err
+	}
+	return store.CopyMessageIDs(ctx, m.username, m.name, destName, selectedIDs(messages, uid, seqSet))
 }
 
 // Expunge permanently removes messages flagged for deletion.

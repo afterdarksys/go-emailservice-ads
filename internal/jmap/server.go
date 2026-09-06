@@ -10,9 +10,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
-	"net/mail"
+
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,7 +24,7 @@ import (
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
-	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
+	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 )
 
 const (
@@ -35,12 +38,17 @@ const (
 // RFC 8621 - JMAP for Mail
 // Modern alternative to IMAP with better performance and simpler API
 
+type MailStore interface {
+	GetMessages(context.Context, string, string) ([]imap.MessageSummary, error)
+	FetchMessage(context.Context, string) ([]byte, error)
+}
+
 // JMAPServer implements a JMAP server
 type JMAPServer struct {
 	logger       *zap.Logger
 	config       *config.Config
 	validator    *auth.Validator
-	store        *storage.IMAPAdapter
+	store        MailStore
 	jwtPublicKey crypto.PublicKey
 	httpServer   *http.Server
 	requestSem   chan struct{}
@@ -48,7 +56,7 @@ type JMAPServer struct {
 
 // NewJMAPServer creates a new JMAP server.
 // store may be nil if JMAP Email/get is not required.
-func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Validator, store *storage.IMAPAdapter) *JMAPServer {
+func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Validator, store MailStore) *JMAPServer {
 	s := &JMAPServer{
 		logger:     logger,
 		config:     cfg,
@@ -96,6 +104,13 @@ func loadPublicKey(path string) (crypto.PublicKey, error) {
 
 // Start begins serving JMAP requests
 func (j *JMAPServer) Start(addr string) error {
+	if j.config.JMAP.JWTPublicKeyPath != "" && j.jwtPublicKey == nil {
+		return fmt.Errorf("configured JMAP JWT key unavailable")
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	mux := http.NewServeMux()
 
 	// RFC 8620 Section 2 - Session Resource
@@ -121,7 +136,7 @@ func (j *JMAPServer) Start(addr string) error {
 	j.logger.Info("Starting JMAP server", zap.String("addr", addr))
 
 	go func() {
-		if err := j.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := j.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			j.logger.Error("JMAP server error", zap.Error(err))
 		}
 	}()
@@ -176,6 +191,11 @@ func (j *JMAPServer) authMiddleware(next http.Handler) http.Handler {
 				http.Error(w, "Authentication required", http.StatusUnauthorized)
 				return
 			}
+			user, exists := j.validator.GetUserStore().GetUser(subject)
+			if !exists || !user.Enabled {
+				http.Error(w, "Authentication failed", http.StatusUnauthorized)
+				return
+			}
 			authUser = subject
 		}
 
@@ -210,15 +230,15 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 				MaxMailboxDepth:            10,
 				MaxSizeMailboxName:         255,
 				MaxSizeAttachmentsPerEmail: 50 * 1024 * 1024,
-				EmailQuerySortOptions:      []string{"receivedAt", "from", "to", "subject"},
-				MayCreateTopLevelMailbox:   true,
+				EmailQuerySortOptions:      []string{},
+				MayCreateTopLevelMailbox:   false,
 			},
 		},
 		Accounts: map[string]Account{
 			"primary": {
 				Name:       "Primary Account",
 				IsPersonal: true,
-				IsReadOnly: false,
+				IsReadOnly: true,
 				AccountCapabilities: map[string]interface{}{
 					"urn:ietf:params:jmap:mail": map[string]interface{}{},
 				},
@@ -231,7 +251,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		APIUrl:         fmt.Sprintf("https://%s/jmap/api/", r.Host),
 		DownloadUrl:    fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?accept={type}", r.Host),
 		UploadUrl:      fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
-		EventSourceUrl: fmt.Sprintf("https://%s/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}", r.Host),
+		EventSourceUrl: "",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -259,7 +279,8 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var req Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			http.Error(w, "JMAP request exceeds maximum size", http.StatusRequestEntityTooLarge)
@@ -267,6 +288,11 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		j.logger.Warn("Invalid JMAP request", zap.Error(err))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "Invalid trailing request data", 400)
 		return
 	}
 	if len(req.MethodCalls) > maxJMAPCalls {
@@ -312,19 +338,22 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		zap.String("method", methodName),
 		zap.String("call_id", callID))
 
+	if account, ok := args["accountId"].(string); ok && account != "primary" && account != authUser {
+		return methodError("accountNotFound", callID)
+	}
 	switch methodName {
 	case "Mailbox/get":
-		return j.handleMailboxGet(args, callID)
+		return j.mailboxGet(ctx, authUser, args, callID)
 	case "Mailbox/set":
-		return j.handleMailboxSet(args, callID)
+		return methodError("accountReadOnly", callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/set":
-		return j.handleEmailSet(args, callID)
+		return methodError("accountReadOnly", callID)
 	case "Email/query":
-		return j.handleEmailQuery(args, callID)
+		return j.emailQuery(ctx, authUser, args, callID)
 	case "Email/changes":
-		return j.handleEmailChanges(args, callID)
+		return methodError("cannotCalculateChanges", callID)
 	default:
 		return MethodResponse{
 			Name: "error",
@@ -338,61 +367,6 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 }
 
 // JMAP method handlers (simplified implementations)
-
-func (j *JMAPServer) handleMailboxGet(args map[string]interface{}, callID string) MethodResponse {
-	// Return standard mailboxes
-	mailboxes := []map[string]interface{}{
-		{
-			"id":            "inbox",
-			"name":          "Inbox",
-			"role":          "inbox",
-			"sortOrder":     0,
-			"totalEmails":   0,
-			"unreadEmails":  0,
-			"totalThreads":  0,
-			"unreadThreads": 0,
-		},
-		{
-			"id":            "sent",
-			"name":          "Sent",
-			"role":          "sent",
-			"sortOrder":     1,
-			"totalEmails":   0,
-			"unreadEmails":  0,
-			"totalThreads":  0,
-			"unreadThreads": 0,
-		},
-	}
-
-	return MethodResponse{
-		Name: "Mailbox/get",
-		Arguments: map[string]interface{}{
-			"accountId": "primary",
-			"state":     "0",
-			"list":      mailboxes,
-			"notFound":  []string{},
-		},
-		CallID: callID,
-	}
-}
-
-func (j *JMAPServer) handleMailboxSet(args map[string]interface{}, callID string) MethodResponse {
-	return MethodResponse{
-		Name: "Mailbox/set",
-		Arguments: map[string]interface{}{
-			"accountId":    "primary",
-			"oldState":     "0",
-			"newState":     "1",
-			"created":      map[string]interface{}{},
-			"updated":      map[string]interface{}{},
-			"destroyed":    []string{},
-			"notCreated":   map[string]interface{}{},
-			"notUpdated":   map[string]interface{}{},
-			"notDestroyed": map[string]interface{}{},
-		},
-		CallID: callID,
-	}
-}
 
 func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args map[string]interface{}, callID string) MethodResponse {
 	notFound := []string{}
@@ -417,29 +391,24 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 	accountID := "primary"
 
 	if j.store == nil || authUser == "" {
-		return MethodResponse{
-			Name:      "Email/get",
-			Arguments: map[string]interface{}{"accountId": accountID, "state": "0", "list": list, "notFound": notFound},
-			CallID:    callID,
-		}
+		return methodError("serverFail", callID)
 	}
 
 	// Build the set of message IDs the authenticated user actually owns. Every
 	// read — whether by explicit id or "return all" — is filtered through this
 	// set so a guessed/enumerated message id from another mailbox cannot be
 	// fetched (object-level authorization).
-	owned := map[string]MessageOwnedSummary{}
-	if summaries, err := j.store.GetMessages(ctx, authUser, "INBOX"); err != nil {
-		j.logger.Warn("Email/get store error", zap.String("user", authUser), zap.Error(err))
-	} else {
-		for _, s := range summaries {
-			owned[s.ID] = MessageOwnedSummary{Size: s.Size, Flags: s.Flags}
-		}
+	owned, err := j.ownedMessages(ctx, authUser)
+	if err != nil {
+		return methodError("serverFail", callID)
 	}
 
 	if rawIDs, ok := args["ids"]; ok && rawIDs != nil {
 		// Specific IDs requested: only return those the user owns.
 		ids := toStringSlice(rawIDs)
+		if ids == nil {
+			return methodError("invalidArguments", callID)
+		}
 		if len(ids) > maxJMAPObjects {
 			return MethodResponse{
 				Name: "error",
@@ -460,24 +429,32 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 				notFound = append(notFound, id)
 				continue
 			}
-			list = append(list, emailObjectFromRaw(id, data))
+			list = append(list, emailObject(id, data, owned[id]))
 		}
 	} else {
-		// No IDs specified — return all messages the user owns.
-		for id, meta := range owned {
-			list = append(list, map[string]interface{}{
-				"id":    id,
-				"size":  meta.Size,
-				"flags": meta.Flags,
-			})
+		if len(owned) > maxJMAPObjects {
+			return methodError("tooManyObjectsInGet", callID)
 		}
+		ids := make([]string, 0, len(owned))
+		for id := range owned {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			data, err := j.store.FetchMessage(ctx, id)
+			if err != nil {
+				return methodError("serverFail", callID)
+			}
+			list = append(list, emailObject(id, data, owned[id]))
+		}
+
 	}
 
 	return MethodResponse{
 		Name: "Email/get",
 		Arguments: map[string]interface{}{
 			"accountId": accountID,
-			"state":     "0",
+			"state":     emailState(owned),
 			"list":      list,
 			"notFound":  notFound,
 		},
@@ -488,27 +465,8 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 // MessageOwnedSummary captures the minimal metadata needed to answer Email/get
 // for a message confirmed to belong to the authenticated user.
 type MessageOwnedSummary struct {
-	Size  int64
-	Flags []string
-}
-
-// emailObjectFromRaw parses raw RFC 5322 bytes into a minimal JMAP Email object.
-func emailObjectFromRaw(id string, data []byte) map[string]interface{} {
-	obj := map[string]interface{}{
-		"id":   id,
-		"size": len(data),
-	}
-	msg, err := mail.ReadMessage(strings.NewReader(string(data)))
-	if err != nil {
-		return obj
-	}
-	h := msg.Header
-	obj["subject"] = h.Get("Subject")
-	obj["from"] = h.Get("From")
-	obj["to"] = h.Get("To")
-	obj["date"] = h.Get("Date")
-	obj["messageId"] = h.Get("Message-ID")
-	return obj
+	imap.MessageSummary
+	Folder string
 }
 
 // toStringSlice converts an interface{} that is []interface{} of strings to []string.
@@ -519,62 +477,13 @@ func toStringSlice(v interface{}) []string {
 	}
 	out := make([]string, 0, len(raw))
 	for _, item := range raw {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
+		s, ok := item.(string)
+		if !ok {
+			return nil
 		}
+		out = append(out, s)
 	}
 	return out
-}
-
-func (j *JMAPServer) handleEmailSet(args map[string]interface{}, callID string) MethodResponse {
-	return MethodResponse{
-		Name: "Email/set",
-		Arguments: map[string]interface{}{
-			"accountId": "primary",
-			"oldState":  "0",
-			"newState":  "1",
-			"created":   map[string]interface{}{},
-			"updated":   map[string]interface{}{},
-			"destroyed": []string{},
-		},
-		CallID: callID,
-	}
-}
-
-func (j *JMAPServer) handleEmailQuery(args map[string]interface{}, callID string) MethodResponse {
-	return MethodResponse{
-		Name: "Email/query",
-		Arguments: map[string]interface{}{
-			"accountId":           "primary",
-			"queryState":          "0",
-			"canCalculateChanges": true,
-			"position":            0,
-			"total":               0,
-			"ids":                 []string{},
-		},
-		CallID: callID,
-	}
-}
-
-func (j *JMAPServer) handleEmailChanges(args map[string]interface{}, callID string) MethodResponse {
-	return MethodResponse{
-		Name: "Email/changes",
-		Arguments: map[string]interface{}{
-			"accountId":      "primary",
-			"oldState":       "0",
-			"newState":       "0",
-			"hasMoreChanges": false,
-			"created":        []string{},
-			"updated":        []string{},
-			"destroyed":      []string{},
-		},
-		CallID: callID,
-	}
-}
-
-func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
-	// RFC 8621 Section 6 - Binary Data
-	http.Error(w, "Not implemented", http.StatusNotImplemented)
 }
 
 func (j *JMAPServer) handleUpload(w http.ResponseWriter, r *http.Request) {

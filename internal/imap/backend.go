@@ -61,7 +61,9 @@ func NewBackend(logger *zap.Logger, store Store, validator *auth.Validator, mast
 		master:    master,
 		updatesCh: make(chan backend.Update, 64),
 	}
-	if upd, ok := store.(Updater); ok {
+	if upd, ok := store.(interface{ ProtocolUpdates() chan backend.Update }); ok {
+		b.updatesCh = upd.ProtocolUpdates()
+	} else if upd, ok := store.(Updater); ok {
 		go b.relayDeliveryUpdates(upd.DeliveryUpdates())
 	}
 	return b
@@ -81,6 +83,7 @@ func (b *Backend) relayDeliveryUpdates(ch <-chan [2]string) {
 			Update: backend.NewUpdate(username, mailbox),
 			MailboxStatus: &imap.MailboxStatus{
 				Name:     mailbox,
+				Items:    map[imap.StatusItem]interface{}{imap.StatusMessages: nil},
 				Messages: count,
 			},
 		}

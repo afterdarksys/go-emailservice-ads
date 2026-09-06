@@ -200,3 +200,9 @@ under `/api/v1`. Older router code and CLI commands describing those paths do no
 make them available. The placeholder management gRPC listener was removed.
 Use file configuration, `/mailboxes`, policy APIs and supported operational tools.
 A machine-readable OpenAPI contract remains tracked in [TODO](../TODO).
+
+Mailbox payloads cannot be deleted through the generic message DELETE endpoint
+(409); remove mailbox membership through IMAP EXPUNGE. Read-only health, readiness
+and queue-list routes accept GET/HEAD and reject other methods with 405. See
+[JMAP API](JMAP_API.md) for the separate optional protocol and
+[QA/UAT](QA_UAT.md) for executable REST acceptance checks.

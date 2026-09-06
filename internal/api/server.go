@@ -287,6 +287,10 @@ func (s *Server) validateBasicAuth(username, password string) bool {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	health := map[string]interface{}{
 		"status": "ok",
 		"uptime": time.Since(s.startTime).String(),
@@ -295,6 +299,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	// Check if critical components are ready
 	ready := true
 	checks := make(map[string]bool)
@@ -337,6 +345,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQueueStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	metrics := s.qm.GetMetrics()
 	storageStats := s.store.Stats()
 
@@ -355,12 +367,20 @@ func (s *Server) handleQueueStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQueuePending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	tier := r.URL.Query().Get("tier")
 	pending := s.store.ListPending(tier)
 	s.jsonResponse(w, http.StatusOK, pending)
 }
 
 func (s *Server) handleDLQList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	dlq := s.store.GetDLQ()
 	s.jsonResponse(w, http.StatusOK, dlq)
 }
@@ -406,6 +426,10 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, http.StatusOK, entry)
 
 	case http.MethodDelete:
+		if entry, err := s.store.Get(messageID); err == nil && entry.Status == "stored" {
+			http.Error(w, "Use IMAP EXPUNGE to delete mailbox messages", 409)
+			return
+		}
 		if err := s.store.UpdateStatus(messageID, "deleted", "manual deletion"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -418,6 +442,10 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
 	if s.replicator == nil {
 		http.Error(w, "Replication not configured", http.StatusNotImplemented)
 		return

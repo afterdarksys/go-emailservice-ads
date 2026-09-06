@@ -74,8 +74,9 @@ func (a *IMAPAdapter) storeMessageID(ctx context.Context, id, username, folder s
 		Tier:      "mailbox",
 		Status:    "stored",
 		Metadata: map[string]string{
-			"username": username,
-			"mailbox":  folder,
+			"mailbox_managed": "true",
+			"username":        username,
+			"mailbox":         folder,
 		},
 	}
 

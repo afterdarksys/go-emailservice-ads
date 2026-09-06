@@ -82,12 +82,17 @@ func (lx *svLexer) next() (svTok, error) {
 		}
 		if c == '/' && lx.pos+1 < len(lx.src) && lx.src[lx.pos+1] == '*' {
 			lx.pos += 2
+			closed := false
 			for lx.pos+1 < len(lx.src) {
 				if lx.src[lx.pos] == '*' && lx.src[lx.pos+1] == '/' {
 					lx.pos += 2
+					closed = true
 					break
 				}
 				lx.pos++
+			}
+			if !closed {
+				return svTok{}, fmt.Errorf("unterminated comment")
 			}
 			continue
 		}
@@ -115,10 +120,12 @@ func (lx *svLexer) next() (svTok, error) {
 	case ';':
 		return svTok{kind: svTokSemi, val: ";"}, nil
 	case '"':
+		closed := false
 		var sb strings.Builder
 		for lx.pos < len(lx.src) {
 			ch := lx.adv()
 			if ch == '"' {
+				closed = true
 				break
 			}
 			if ch == '\\' && lx.pos < len(lx.src) {
@@ -135,6 +142,9 @@ func (lx *svLexer) next() (svTok, error) {
 			}
 			sb.WriteRune(ch)
 		}
+		if !closed {
+			return svTok{}, fmt.Errorf("unterminated string")
+		}
 		return svTok{kind: svTokString, val: sb.String()}, nil
 	case ':':
 		var sb strings.Builder
@@ -149,16 +159,28 @@ func (lx *svLexer) next() (svTok, error) {
 		for lx.pos < len(lx.src) && unicode.IsDigit(lx.peek()) {
 			sb.WriteRune(lx.adv())
 		}
-		n, _ := strconv.ParseInt(sb.String(), 10, 64)
+		n, err := strconv.ParseInt(sb.String(), 10, 64)
+		if err != nil {
+			return svTok{}, fmt.Errorf("invalid size: %w", err)
+		}
 		if lx.pos < len(lx.src) {
 			switch unicode.ToUpper(lx.peek()) {
 			case 'K':
+				if n > (1<<63-1)/1024 {
+					return svTok{}, fmt.Errorf("size overflow")
+				}
 				n *= 1024
 				lx.adv()
 			case 'M':
+				if n > (1<<63-1)/(1024*1024) {
+					return svTok{}, fmt.Errorf("size overflow")
+				}
 				n *= 1024 * 1024
 				lx.adv()
 			case 'G':
+				if n > (1<<63-1)/(1024*1024*1024) {
+					return svTok{}, fmt.Errorf("size overflow")
+				}
 				n *= 1024 * 1024 * 1024
 				lx.adv()
 			}
@@ -271,17 +293,42 @@ func (*svHasflagTest) svTest() {}
 type svParser struct {
 	toks []svTok
 	pos  int
+	err  error
 }
 
 func svParse(src string) (*svScript, error) {
+	if len(src) > 1<<20 {
+		return nil, fmt.Errorf("Sieve script exceeds 1 MiB")
+	}
 	toks, err := svTokenize(src)
 	if err != nil {
 		return nil, err
+	}
+	depth := 0
+	for _, t := range toks {
+		switch t.kind {
+		case svTokLBrace, svTokLParen, svTokLBracket:
+			depth++
+		case svTokRBrace, svTokRParen, svTokRBracket:
+			depth--
+		}
+		if depth < 0 || depth > 64 {
+			return nil, fmt.Errorf("invalid Sieve nesting")
+		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("unbalanced Sieve delimiters")
 	}
 	p := &svParser{toks: toks}
 	cmds, err := p.block()
 	if err != nil {
 		return nil, err
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.peek().kind != svTokEOF {
+		return nil, fmt.Errorf("unexpected trailing Sieve input")
 	}
 	return &svScript{cmds: cmds}, nil
 }
@@ -294,8 +341,10 @@ func (p *svParser) peek() svTok {
 }
 
 func (p *svParser) adv() svTok {
-	t := p.toks[p.pos]
-	p.pos++
+	t := p.peek()
+	if p.pos < len(p.toks) {
+		p.pos++
+	}
 	return t
 }
 
@@ -400,13 +449,35 @@ func (p *svParser) actionCmd() (*svActionCmd, error) {
 	for p.peek().kind == svTokString || p.peek().kind == svTokLBracket {
 		cmd.args = append(cmd.args, p.strList()...)
 	}
-	// optional block (e.g. vacation text)
-	if p.peek().kind == svTokLBrace {
-		p.braceBlock()
+	if _, err := p.expect(svTokSemi); err != nil {
+		return nil, err
 	}
-	if p.peek().kind == svTokSemi {
-		p.adv()
+	if len(cmd.tags) > 0 {
+		return nil, fmt.Errorf("unsupported Sieve action tags")
 	}
+	min, max := 0, 0
+	switch name {
+	case "keep", "discard", "stop":
+	case "fileinto", "reject", "ereject":
+		min, max = 1, 1
+	case "set":
+		min, max = 2, 2
+	case "setflag", "addflag", "removeflag", "require":
+		min, max = 1, 100
+	default:
+		return nil, fmt.Errorf("unsupported Sieve action %q", name)
+	}
+	if len(cmd.args) < min || len(cmd.args) > max {
+		return nil, fmt.Errorf("invalid arguments for %s", name)
+	}
+	if name == "require" {
+		for _, cap := range cmd.args {
+			if !svCapability(cap) {
+				return nil, fmt.Errorf("unsupported Sieve capability %q", cap)
+			}
+		}
+	}
+
 	return cmd, nil
 }
 
@@ -460,8 +531,7 @@ func (p *svParser) test() (svTest, error) {
 		headers := p.strList()
 		return &svHeaderTest{match: "exists", headers: headers}, nil
 	default:
-		p.adv() // skip unknown test
-		return &svTrueTest{}, nil
+		return nil, fmt.Errorf("unsupported Sieve test %q", t.val)
 	}
 }
 
@@ -480,7 +550,12 @@ func (p *svParser) testList() ([]svTest, error) {
 			p.adv()
 		}
 	}
-	p.expect(svTokRParen)
+	if _, err := p.expect(svTokRParen); err != nil {
+		return nil, err
+	}
+	if len(tests) == 0 {
+		return nil, fmt.Errorf("empty test list")
+	}
 	return tests, nil
 }
 
@@ -495,12 +570,16 @@ func (p *svParser) consumeTags() string {
 			match = "contains"
 		case "matches":
 			match = "matches"
-		case "comparator", "value", "count":
+		case "comparator":
 			if p.peek().kind == svTokString || p.peek().kind == svTokTag {
-				p.adv()
+				if p.adv().val != "i;ascii-casemap" {
+					p.err = fmt.Errorf("unsupported comparator")
+				}
+			} else {
+				p.err = fmt.Errorf("missing comparator")
 			}
 		default:
-			// address-part or other — ignore
+			p.err = fmt.Errorf("unsupported Sieve tag %q", tag)
 		}
 	}
 	return match
@@ -510,7 +589,7 @@ func (p *svParser) headerTest() (svTest, error) {
 	p.adv()
 	match := p.consumeTags()
 	if match == "" {
-		match = "contains"
+		match = "is"
 	}
 	headers := p.strList()
 	keys := p.strList()
@@ -554,23 +633,25 @@ func (p *svParser) sizeTest() (svTest, error) {
 	over := true
 	if p.peek().kind == svTokTag {
 		tag := p.adv().val
+		if tag != "over" && tag != "under" {
+			return nil, fmt.Errorf("invalid size tag")
+		}
 		over = (tag == "over")
 	}
 	var limit int64
 	if p.peek().kind == svTokNumber {
 		limit = p.adv().num
+	} else {
+		return nil, fmt.Errorf("missing size limit")
 	}
 	return &svSizeTest{over: over, limit: limit}, nil
 }
 
 func (p *svParser) hasflagTest() (svTest, error) {
 	p.adv()
-	// skip optional variable name
-	for p.peek().kind == svTokTag {
-		p.adv()
-		if p.peek().kind == svTokString {
-			p.adv()
-		}
+
+	if p.peek().kind == svTokTag {
+		return nil, fmt.Errorf("unsupported hasflag tag")
 	}
 	flags := p.strList()
 	return &svHasflagTest{flags: flags}, nil
@@ -581,22 +662,34 @@ func (p *svParser) strList() []string {
 	if p.peek().kind == svTokString {
 		return []string{p.adv().val}
 	}
-	if p.peek().kind == svTokLBracket {
-		p.adv()
-		var out []string
-		for p.peek().kind != svTokRBracket && p.peek().kind != svTokEOF {
-			if p.peek().kind == svTokString {
-				out = append(out, p.adv().val)
-			} else if p.peek().kind == svTokComma {
-				p.adv()
-			} else {
-				p.adv()
-			}
+	if p.peek().kind != svTokLBracket {
+		p.err = fmt.Errorf("expected string or string list")
+		return nil
+	}
+	p.adv()
+	var out []string
+	for {
+		token, err := p.expect(svTokString)
+		if err != nil {
+			p.err = err
+			return nil
 		}
+		out = append(out, token.val)
 		if p.peek().kind == svTokRBracket {
 			p.adv()
+			return out
 		}
-		return out
+		if _, err = p.expect(svTokComma); err != nil {
+			p.err = err
+			return nil
+		}
 	}
-	return nil
+}
+
+func svCapability(name string) bool {
+	switch name {
+	case "fileinto", "reject", "envelope", "body", "variables", "imap4flags":
+		return true
+	}
+	return false
 }

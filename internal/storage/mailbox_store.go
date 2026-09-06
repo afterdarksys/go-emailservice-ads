@@ -6,12 +6,12 @@ import (
 	"database/sql"
 	"fmt"
 	"net/mail"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	goiMap "github.com/emersion/go-imap"
+	"github.com/emersion/go-imap/backend"
 	_ "modernc.org/sqlite"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
@@ -21,6 +21,10 @@ import (
 // It wraps IMAPAdapter for raw message storage and adds persistent
 // UID tracking, flag management, and IMAP IDLE delivery notifications.
 type MailboxStore struct {
+	eventMu    sync.Mutex
+	protocolCh chan backend.Update
+	stopEvents chan struct{}
+	closeOnce  sync.Once
 	deliveryMu sync.Mutex
 	quotaBytes int64
 	adapter    *IMAPAdapter
@@ -36,20 +40,28 @@ func NewMailboxStore(adapter *IMAPAdapter, dbPath string) (*MailboxStore, error)
 		return nil, fmt.Errorf("open mailbox db: %w", err)
 	}
 
+	db.SetMaxOpenConns(1)
 	if err := initSchema(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 
-	return &MailboxStore{
+	s := &MailboxStore{
 		adapter:    adapter,
 		db:         db,
 		deliveryCh: make(chan [2]string, 64),
-	}, nil
+		stopEvents: make(chan struct{}),
+	}
+	if err := s.recoverMailboxData(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 // Close closes the underlying SQLite database.
 func (s *MailboxStore) Close() error {
+	s.closeOnce.Do(func() { close(s.stopEvents) })
 	return s.db.Close()
 }
 
@@ -62,7 +74,9 @@ func (s *MailboxStore) DeliveryUpdates() <-chan [2]string {
 // initSchema creates the required tables if they do not exist.
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`
-	CREATE TABLE IF NOT EXISTS mailbox_state (
+	CREATE TABLE IF NOT EXISTS mailbox_users (username TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS mailbox_catalog (username TEXT NOT NULL, mailbox TEXT NOT NULL, subscribed INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(username,mailbox));
+ CREATE TABLE IF NOT EXISTS mailbox_state (
 		username    TEXT NOT NULL,
 		mailbox     TEXT NOT NULL,
 		uidvalidity INTEGER NOT NULL DEFAULT 1,
@@ -137,6 +151,9 @@ func (s *MailboxStore) AllocateUID(ctx context.Context, username, mailbox string
 		username, mailbox); err != nil {
 		return 0, err
 	}
+	if next <= 0 || next >= int64(^uint32(0)) {
+		return 0, fmt.Errorf("mailbox UID space exhausted")
+	}
 	return uint32(next), tx.Commit()
 }
 
@@ -152,53 +169,28 @@ func (s *MailboxStore) ensureMailboxState(ctx context.Context, username, mailbox
 // GetMessages returns message summaries for the mailbox, enriched with UID
 // and flag data from SQLite. Expunged messages are excluded.
 func (s *MailboxStore) GetMessages(ctx context.Context, username, folder string) ([]imap.MessageSummary, error) {
-	raw, err := s.adapter.GetMessages(ctx, username, folder)
+	rows, err := s.db.QueryContext(ctx, `SELECT msg_id,uid,flags,sender,subject,size,sent_at,deleted FROM message_flags WHERE username=? AND mailbox=? AND expunged=0 ORDER BY uid`, username, folder)
 	if err != nil {
 		return nil, err
 	}
-
-	// Build a set of expunged msg_ids to filter out.
-	expunged, err := s.expungedSet(ctx, username, folder)
-	if err != nil {
-		return nil, err
-	}
-
-	var out []imap.MessageSummary
-	for _, r := range raw {
-		if expunged[r.ID] {
-			continue
-		}
-		summary := imap.MessageSummary{
-			ID:   r.ID,
-			Size: r.Size,
-		}
-		// Enrich from SQLite if a flags row exists.
-		var uid int64
-		var flagsStr, sender, subject string
-		var sentAt int64
+	defer rows.Close()
+	out := []imap.MessageSummary{}
+	for rows.Next() {
+		var m imap.MessageSummary
+		var flags string
+		var date int64
 		var deleted int
-		err := s.db.QueryRowContext(ctx,
-			`SELECT uid, flags, sender, subject, sent_at, deleted
-			 FROM message_flags WHERE msg_id=? AND username=? AND mailbox=?`,
-			r.ID, username, folder).Scan(&uid, &flagsStr, &sender, &subject, &sentAt, &deleted)
-		if err == nil {
-			summary.UID = uint32(uid)
-			if flagsStr != "" {
-				summary.Flags = strings.Split(flagsStr, " ")
-			}
-			summary.From = sender
-			summary.Subject = subject
-			if sentAt > 0 {
-				summary.Date = time.Unix(sentAt, 0)
-			}
-			summary.Deleted = deleted == 1
-		} else {
-			summary.Flags = r.Flags
+		if err := rows.Scan(&m.ID, &m.UID, &flags, &m.From, &m.Subject, &m.Size, &date, &deleted); err != nil {
+			return nil, err
 		}
-		out = append(out, summary)
+		if flags != "" {
+			m.Flags = strings.Split(flags, " ")
+		}
+		m.Date = time.Unix(date, 0)
+		m.Deleted = deleted == 1
+		out = append(out, m)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UID < out[j].UID })
-	return out, nil
+	return out, rows.Err()
 }
 
 // FetchMessage delegates to the underlying IMAPAdapter.
@@ -219,8 +211,33 @@ func (s *MailboxStore) SetQuota(bytes int64) {
 
 // DeliverOnce deduplicates retries by the durable queue transaction and recipient.
 func (s *MailboxStore) DeliverOnce(ctx context.Context, key, username, folder string, data []byte) (string, error) {
+	return s.deliverMetadata(ctx, key, username, folder, data, nil, time.Now(), true)
+}
+func (s *MailboxStore) deliverMetadata(ctx context.Context, key, username, folder string, data []byte, flags []string, date time.Time, create bool) (string, error) {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
+	if err := s.ensureUser(ctx, username); err != nil {
+		return "", err
+	}
+	var err error
+	folder, err = imap.NormalizeMailbox(folder)
+	if err != nil {
+		return "", err
+	}
+	if create {
+		if err = s.createFolder(ctx, username, folder, true); err != nil {
+			return "", err
+		}
+	} else if err = s.folderExists(ctx, username, folder); err != nil {
+		return "", err
+	}
+	flags, err = validFlags(flags)
+	if err != nil {
+		return "", err
+	}
+	if date.IsZero() {
+		date = time.Now()
+	}
 	id := ""
 	if key != "" {
 		id = fmt.Sprintf("delivery-%x", sha256.Sum256([]byte(key)))
@@ -255,13 +272,13 @@ func (s *MailboxStore) DeliverOnce(ctx context.Context, key, username, folder st
 		return "", fmt.Errorf("allocate mailbox UID: %w", err)
 	}
 
-	sender, subject, sentAt := parseHeaders(data)
+	sender, subject, _ := parseHeaders(data)
 
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO message_flags
-		 (msg_id, username, mailbox, uid, flags, sender, subject, size, sent_at)
-		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		msgID, username, folder, uid, sender, subject, int64(len(data)), sentAt.Unix()); err != nil {
+		 (msg_id, username, mailbox, uid, flags, sender, subject, size, sent_at, deleted)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msgID, username, folder, uid, strings.Join(flags, " "), sender, subject, int64(len(data)), date.Unix(), boolInt(containsFlag(flags, `\Deleted`))); err != nil {
 		if discardErr := s.adapter.discardMessage(msgID); discardErr != nil {
 			return "", fmt.Errorf("persist mailbox metadata: %w (also failed to discard orphaned message: %v)", err, discardErr)
 		}
@@ -274,21 +291,28 @@ func (s *MailboxStore) DeliverOnce(ctx context.Context, key, username, folder st
 	default:
 	}
 
+	s.notifyMailbox(username, folder)
 	return msgID, nil
 }
 
 // UpdateMessageFlags applies a flag operation to the message in SQLite.
 // RFC 3501 §6.4.6 — STORE command.
 func (s *MailboxStore) UpdateMessageFlags(ctx context.Context, msgID, username, mailbox string, op goiMap.FlagsOp, flags []string) error {
-	var current []string
-	var flagsStr string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT flags FROM message_flags WHERE msg_id=? AND username=? AND mailbox=?`,
-		msgID, username, mailbox).Scan(&flagsStr)
-	if err == nil && flagsStr != "" {
-		current = strings.Split(flagsStr, " ")
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	var err error
+	flags, err = validFlags(flags)
+	if err != nil {
+		return err
 	}
-
+	var value string
+	if err = s.db.QueryRowContext(ctx, `SELECT flags FROM message_flags WHERE msg_id=? AND username=? AND mailbox=? AND expunged=0`, msgID, username, mailbox).Scan(&value); err != nil {
+		return err
+	}
+	var current []string
+	if value != "" {
+		current = strings.Split(value, " ")
+	}
 	switch op {
 	case goiMap.SetFlags:
 		current = flags
@@ -296,16 +320,13 @@ func (s *MailboxStore) UpdateMessageFlags(ctx context.Context, msgID, username, 
 		current = unionFlags(current, flags)
 	case goiMap.RemoveFlags:
 		current = subtractFlags(current, flags)
+	default:
+		return fmt.Errorf("invalid flag operation")
 	}
-
-	deleted := containsFlag(current, `\Deleted`)
-	newFlagsStr := strings.Join(current, " ")
-
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO message_flags (msg_id, username, mailbox, flags, deleted)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(msg_id, username, mailbox) DO UPDATE SET flags=excluded.flags, deleted=excluded.deleted`,
-		msgID, username, mailbox, newFlagsStr, boolInt(deleted))
+	_, err = s.db.ExecContext(ctx, `UPDATE message_flags SET flags=?,deleted=? WHERE msg_id=? AND username=? AND mailbox=? AND expunged=0`, strings.Join(current, " "), boolInt(containsFlag(current, `\Deleted`)), msgID, username, mailbox)
+	if err == nil {
+		s.notifyFlags(ctx, username, mailbox, msgID, current)
+	}
 	return err
 }
 
@@ -315,9 +336,13 @@ func (s *MailboxStore) UpdateMessageFlags(ctx context.Context, msgID, username, 
 func (s *MailboxStore) ExpungeDeleted(ctx context.Context, username, mailbox string) ([]string, error) {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
+	before, err := s.GetMessages(ctx, username, mailbox)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT msg_id FROM message_flags
-		 WHERE username=? AND mailbox=? AND deleted=1 AND expunged=0`,
+   WHERE username=? AND mailbox=? AND deleted=1 AND expunged=0`,
 		username, mailbox)
 	if err != nil {
 		return nil, err
@@ -333,6 +358,10 @@ func (s *MailboxStore) ExpungeDeleted(ctx context.Context, username, mailbox str
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 
@@ -362,6 +391,15 @@ func (s *MailboxStore) ExpungeDeleted(ctx context.Context, username, mailbox str
 	for id := range cleanup {
 		if _, err := s.adapter.store.Transition(id, "stored", "deleted"); err != nil {
 			return nil, err
+		}
+	}
+	removed := map[string]bool{}
+	for _, id := range ids {
+		removed[id] = true
+	}
+	for i := len(before) - 1; i >= 0; i-- {
+		if removed[before[i].ID] {
+			s.publish(&backend.ExpungeUpdate{Update: backend.NewUpdate(username, mailbox), SeqNum: uint32(i + 1)})
 		}
 	}
 	return ids, nil
@@ -447,4 +485,9 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// DeliverOnceWithFlags preserves Sieve flags with the delivery checkpoint.
+func (s *MailboxStore) DeliverOnceWithFlags(ctx context.Context, key, user, folder string, data []byte, flags []string) (string, error) {
+	return s.deliverMetadata(ctx, key, user, folder, data, flags, time.Now(), true)
 }

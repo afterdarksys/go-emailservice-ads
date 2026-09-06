@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 )
 
 // sieveEngine implements the Sieve mail filtering language (RFC 5228)
@@ -12,20 +13,7 @@ type sieveEngine struct {
 // newSieveEngine creates a new Sieve engine
 func newSieveEngine() (*sieveEngine, error) {
 	return &sieveEngine{
-		capabilities: []string{
-			"fileinto",       // RFC 5228
-			"reject",         // RFC 5429
-			"envelope",       // RFC 5228
-			"body",           // RFC 5173
-			"variables",      // RFC 5229
-			"vacation",       // RFC 5230
-			"relational",     // RFC 5231
-			"comparator-i;ascii-numeric", // RFC 5231
-			"imap4flags",     // RFC 5232
-			"subaddress",     // RFC 5233
-			"copy",           // RFC 3894
-			"editheader",     // RFC 5293
-		},
+		capabilities: []string{"fileinto", "reject", "envelope", "body", "variables", "imap4flags"},
 	}, nil
 }
 
@@ -46,11 +34,18 @@ func (e *sieveEngine) Compile(script string) (interface{}, error) {
 }
 
 func (e *sieveEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailContext, compiled interface{}) (*Action, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ast, ok := compiled.(*svScript)
 	if !ok {
-		return &Action{Type: ActionKeep}, nil
+		return nil, fmt.Errorf("invalid compiled Sieve script")
 	}
-	return svExec(emailCtx, ast)
+	action, err := svExec(ctx, emailCtx, ast)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return action, err
 }
 
 func (e *sieveEngine) Validate(script string) error {
