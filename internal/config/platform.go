@@ -14,6 +14,7 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
+	FencingLeaseFile           string                  `yaml:"fencing_lease_file"`
 	DestinationThrottle        delivery.ThrottleConfig `yaml:"destination_throttle"`
 	ClamAVAddress              string                  `yaml:"clamav_address"`
 	MalwareRequired            bool                    `yaml:"malware_required"`

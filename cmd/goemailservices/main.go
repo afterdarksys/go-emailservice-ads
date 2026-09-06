@@ -20,6 +20,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
+	"github.com/afterdarksys/go-emailservice-ads/internal/failover"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/jmap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
@@ -57,6 +58,13 @@ func main() {
 		logger.Fatal("Failed to load config", zap.Error(err))
 	}
 
+	if cfg.Platform.FencingLeaseFile != "" {
+		lease, err := failover.Acquire(cfg.Platform.FencingLeaseFile)
+		if err != nil {
+			logger.Fatal("Mailhub ownership lease unavailable", zap.Error(err))
+		}
+		defer lease.Close()
+	}
 	// Re-configure logger based on config
 	level, err := zapcore.ParseLevel(cfg.Logging.Level)
 	if err == nil {
