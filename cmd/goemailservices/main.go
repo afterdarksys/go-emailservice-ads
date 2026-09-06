@@ -35,10 +35,20 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	checkConfig := flag.Bool("check-config", false, "Validate configuration without starting services or writing files")
 	showVersion := flag.Bool("version", false, "Print release version")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version.Version)
+		return
+	}
+
+	if *checkConfig {
+		if err := validateConfigFile(*configPath); err != nil {
+			fmt.Fprintln(os.Stderr, "Configuration invalid:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Configuration valid (runtime dependencies not checked)")
 		return
 	}
 
@@ -432,4 +442,15 @@ logging:
   level: "debug"
 `)
 	return os.WriteFile(path, content, 0644)
+}
+
+// validateConfigFile deliberately stops before defaults are written, ownership
+// locks are acquired, or listeners, databases and delivery workers are started.
+func validateConfigFile(path string) error {
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	_, err = zapcore.ParseLevel(cfg.Logging.Level)
+	return err
 }

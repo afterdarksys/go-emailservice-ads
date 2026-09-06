@@ -349,3 +349,33 @@ func TestMailboxPersistenceRoundTrip(t *testing.T) {
 		t.Fatal("deleted user resurrected after reload")
 	}
 }
+
+func TestMailboxPasswordByteBoundaries(t *testing.T) {
+	for _, password := range []string{strings.Repeat("a", 72), strings.Repeat("é", 36)} {
+		s, store := newMailboxTestServer(t, false)
+		name := "boundary@example.test"
+		rec := doMailboxRequest(s, "POST", "/api/v1/mailboxes", testAPIKey, map[string]string{"username": name, "password": password})
+		if rec.Code != 201 {
+			t.Fatalf("72-byte create: %d %s", rec.Code, rec.Body.String())
+		}
+		if _, err := store.Authenticate(name, password); err != nil {
+			t.Fatal(err)
+		}
+		for _, tooLong := range []string{password + "a", strings.Repeat("é", 37)} {
+			rec = doMailboxRequest(s, "POST", "/api/v1/mailboxes", testAPIKey, map[string]string{"username": "rejected@example.test", "password": tooLong})
+			if rec.Code != 400 {
+				t.Fatalf("oversized create: %d %s", rec.Code, rec.Body.String())
+			}
+			if _, exists := store.GetUser("rejected@example.test"); exists {
+				t.Fatal("rejected account persisted")
+			}
+			rec = doMailboxRequest(s, "PUT", "/api/v1/mailboxes/"+name, testAPIKey, map[string]string{"password": tooLong})
+			if rec.Code != 400 {
+				t.Fatalf("oversized update: %d %s", rec.Code, rec.Body.String())
+			}
+			if _, err := store.Authenticate(name, password); err != nil {
+				t.Fatalf("failed update changed password: %v", err)
+			}
+		}
+	}
+}

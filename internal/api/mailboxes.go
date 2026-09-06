@@ -27,7 +27,7 @@ import (
 const (
 	maxMailboxBodyBytes = 64 * 1024
 	minPasswordLen      = 12
-	maxPasswordLen      = 128
+	maxPasswordLen      = 72
 	maxIdentifierLen    = 255
 )
 
@@ -221,10 +221,10 @@ func validateIdentifier(field, value string) string {
 // bcrypt cost path against oversized input.
 func validatePassword(password string) string {
 	if len(password) < minPasswordLen {
-		return "password must be at least 12 characters"
+		return "password must be at least 12 bytes"
 	}
 	if len(password) > maxPasswordLen {
-		return "password too long (max 128 characters)"
+		return "password too long (max 72 bytes)"
 	}
 	return ""
 }

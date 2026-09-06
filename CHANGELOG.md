@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `--check-config` validates configuration without creating defaults, opening listeners, acquiring storage locks or starting delivery.
+
+### Fixed
+- Unknown YAML fields and additional configuration documents now fail loading instead of being silently ignored.
+- Mailbox create/update rejects passwords longer than bcrypt's 72-byte limit with HTTP 400 before changing account state.
+
+### Upgrade notes
+- Remove or correct previously ignored YAML settings before upgrading; run `--check-config --config /path/to/config.yaml`. This validates configuration rules, not runtime files or external dependencies.
+
 ## [2.7.0] - 2026-09-06
 
 ### Added
