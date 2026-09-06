@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-09-06
+
+### Added
+- SMTP DSN preferences, durable one-time delay/success notices, incoming report tracking and configured recipient suppression.
+- Domain-specific compliance access grants with separate read/export/release/legal-hold/delete scopes.
+- S3 Object Lock COMPLIANCE artifact preservation with retention verification and an isolated WORM/recovery drill.
+- Production OAuth qualification command for valid tokens, denied scopes and revoked tokens.
+- End-to-end authenticated SMTP/IMAP, shutdown and restore qualification in the release script.
+
+### Fixed
+- Compliance release now commits the decision and delivery transaction atomically, surviving restart and compaction without recreating completed deliveries.
+- Container command builds use the target architecture and package the new operational utilities.
+
 ## [2.6.0] - 2026-09-06
 
 ### Added

@@ -2,6 +2,11 @@
 # file override built-in defaults. Reloading requires a controlled restart.
 platform:
   bounce:
+    enable_dsn: true
+    delay_warning_after: 4h
+    full_return_max_bytes: 0 # Header-only privacy policy; FULL may fall back to headers.
+    track_incoming: false
+    suppressed_recipients: []
     suppress: false
     postmaster: postmaster@example.test
     include_original_headers: false
@@ -10,6 +15,11 @@ platform:
     initial_delay: 5m
     max_delay: 4h
   compliance:
+    enforce_domain_access: true
+    access:
+      - principal: oauth:replace-with-officer-subject
+        domains: [example.test]
+        actions: [read, export, release, legal-hold, delete]
     rules:
       - name: example-domain-case
         domain: example.test

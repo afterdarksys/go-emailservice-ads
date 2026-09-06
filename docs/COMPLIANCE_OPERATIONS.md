@@ -22,9 +22,23 @@ the envelope sender. Exhausted temporary retries now attempt a final DSN before
 moving to the failed queue. Null senders and DSNs do not generate another bounce.
 Explicit suppression is audited. Invalid recipients should still be rejected
 during SMTP rather than accepted and bounced to potentially forged senders.
-Delay-warning generation exists but periodic delay warnings and SMTP NOTIFY/RET
-negotiation are not implemented by this change. DSN submission is at least once:
-a crash between notification persistence and source checkpoint can duplicate it.
+`enable_dsn` advertises SMTP DSN support and captures ENVID, RET and per-recipient
+NOTIFY/ORCPT preferences. `delay_warning_after` enables one durable delay notice
+per recipient after that age; zero disables it. SUCCESS requests produce a local
+`delivered` or remote `relayed` notice. Delay/success notification checkpoints and
+outbox messages commit together. Failure DSN submission remains at least once:
+a crash between notification submission and source completion can duplicate it.
+
+`full_return_max_bytes` bounds RET=FULL content; zero keeps reports header-only.
+`track_incoming` stores parsed reports in `/api/v1/bounce/reports` (`bounce:read`).
+These reports are explicitly untrusted and never automatically suppress a
+recipient. Manage `suppressed_recipients` in the configuration file; suppression
+is enforced at recipient admission and queued dispatch. Report metadata remains
+until an operator disposes of it through queue controls; choose a retention
+schedule before enabling tracking. RFC references:
+https://www.rfc-editor.org/rfc/rfc3461.html
+https://www.rfc-editor.org/rfc/rfc3464.html
+
 
 ## Compliance engine and queues
 
@@ -51,7 +65,9 @@ preserve attempted transactions whose later submission failed. Compliance
 storage consumes spool quota and is included in full data-directory backups.
 Automatic quarantine expiration does not expire compliance evidence.
 
-The following API uses `compliance:read` for GET and `compliance:write` for POST:
+List/config access uses `compliance:read`. Export, release, deletion and hold
+changes require `compliance:export`, `compliance:release`, `compliance:delete`,
+and `compliance:legal-hold`, respectively:
 
 - `GET /api/v1/compliance/config`: inspect configured rules.
 - `GET /api/v1/compliance?domain=example.test`: list case metadata.
@@ -66,12 +82,20 @@ in force. Deletion requires expired, finite retention and no legal hold; removal
 from the active index is followed by physical journal cleanup at compaction.
 Backups and exported copies have separate disposal obligations.
 
-Release uses a durable claim. A crash or storage failure during release leaves
-`compliance_releasing` evidence for manual reconciliation against the stable
-`release-{case-id}` delivery ID; it is not automatically resent. Preserve the
-audit and delivery journals before resolving an ambiguous release. Ordinary
-queue APIs cannot read or mutate preserved evidence. Compliance officers have
-access across configured domains; per-domain officer isolation is not provided.
+Release now writes the evidence decision and delivery outbox in one journal
+transaction. A crash applies both or neither; compaction cannot recreate a
+completed delivery. SMTP delivery itself still has the usual remote-acknowledgment
+ambiguity. Legacy 2.6 records already stuck in `compliance_releasing` require
+manual reconciliation; the new transaction format cannot reconstruct facts that
+were not preserved by the old workflow.
+
+Enable `platform.compliance.enforce_domain_access` and configure `access` grants
+with principal, domains and actions. OAuth principals use `oauth:<subject>`; API
+keys use their configured name. Every domain in a combined case must be allowed.
+Listing hides unauthorized records; item access returns 404. Explicit `*` grants
+are supported for designated administrators. Domain enforcement defaults off for
+upgrade compatibility; enable it before delegating officer access.
+
 
 ## OAuth access protection
 
@@ -139,11 +163,5 @@ default and may be raised up to 1 GiB. Split larger files before conversion.
 
 ## Release validation
 
-Version 2.6.0 passed module verification, full-tree vet/tests, selected race
-tests, all command builds, and executable/version agreement. Focused tests cover
-configuration precedence, final bounce notifications, legal-hold and retention
-enforcement, existing-queue interception, protected evidence access, OAuth claim
-and scope rejection, audit tampering, and large-integer log conversion. A CLI
-smoke test loaded its YAML configuration and converted detected JSON to YAML.
-Hosted CI, container builds, a production identity provider and regulatory
-certification were not exercised by this local validation.
+See `docs/DEPLOYMENT_QUALIFICATION.md` for version 2.7 commands and the distinction
+between isolated qualification and production deployment gates.
