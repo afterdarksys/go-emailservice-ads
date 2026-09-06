@@ -1,0 +1,6 @@
+input: auto
+output: json
+file: '-'
+max_bytes: 67108864
+verify_audit: false
+expected_head: ''

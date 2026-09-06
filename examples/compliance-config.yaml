@@ -1,0 +1,37 @@
+# Merge these sections into the active mailhub configuration. Values in that
+# file override built-in defaults. Reloading requires a controlled restart.
+platform:
+  bounce:
+    suppress: false
+    postmaster: postmaster@example.test
+    include_original_headers: false
+    max_header_bytes: 1024
+    max_attempts: 12
+    initial_delay: 5m
+    max_delay: 4h
+  compliance:
+    rules:
+      - name: example-domain-case
+        domain: example.test
+        match: either
+        mode: hold
+        legal_hold: true
+        retention: 8760h # Illustrative only; choose the approved retention policy.
+      # mode: copy preserves evidence while original delivery continues.
+      # mode: reroute intercepts the whole envelope into the compliance queue.
+      # mode: bcc adds an envelope recipient without adding a Bcc header:
+      # bcc: monitoring@example.test
+api:
+  oauth:
+    enabled: false
+    compliance_only: true
+    require_for_compliance: false # Set true together with enabled and API TLS.
+    introspection_url: https://identity.example.test/oauth2/introspect
+    client_id: mailhub
+    client_secret_env: MAILHUB_OAUTH_SECRET
+    issuer: https://identity.example.test
+    audience: mailhub
+    timeout: 5s
+logging:
+  level: info
+  format: json # json, yaml, syslog, console. Collector controls output retention.

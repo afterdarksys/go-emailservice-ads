@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-09-06
+
+### Added
+- File-managed bounce identity, header privacy, retry limits and effective-settings API.
+- Domain compliance engine with hold/intercept, preserved monitoring copies, and envelope BCC rules.
+- Dedicated evidence queues, audited exports, legal holds, retention-protected deletion and explicit release.
+- OAuth access-token introspection with issuer, audience, expiry and resource-scope validation.
+- Verifiable audit hash chains and audit-aware backup verification.
+- Configurable JSON, YAML and RFC 5424 operational output; mailhub-log format detection/conversion and audit verification.
+
+### Fixed
+- Exhausted delivery retries now generate a final DSN before entering the failed queue.
+- Bounce fields reject line injection and bounded original-header inclusion avoids malformed body disclosure.
+- Generic queue controls cannot access or mutate compliance evidence.
+- Existing queued mail is intercepted when a domain hold is enabled before dispatch.
+
 ## [2.5.0] - 2026-09-06
 
 ### Added
