@@ -15,6 +15,7 @@ import (
 
 // JournalEntry represents a single message in the journal
 type JournalEntry struct {
+	Transaction  []*JournalEntry   `json:"transaction,omitempty"`
 	ID           string            `json:"id"`
 	MessageID    string            `json:"message_id"`
 	From         string            `json:"from"`
@@ -27,6 +28,12 @@ type JournalEntry struct {
 	Status       string            `json:"status"` // pending, processing, delivered, failed
 	ErrorMessage string            `json:"error_message,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+// WriteBatch commits related state changes in one JSON record and one fsync.
+// Recovery either sees the complete record or discards an incomplete tail.
+func (j *Journal) WriteBatch(entries ...*JournalEntry) error {
+	return j.Write(&JournalEntry{Status: "transaction", Transaction: entries})
 }
 
 // Journal provides write-ahead logging for message persistence
@@ -173,7 +180,19 @@ func (j *Journal) replayFile(filename string) ([]*JournalEntry, error) {
 			}
 			return nil, fmt.Errorf("failed to decode journal entry: %w", err)
 		}
-		entries = append(entries, &entry)
+		if entry.Status == "transaction" {
+			if len(entry.Transaction) == 0 {
+				return nil, fmt.Errorf("empty journal transaction")
+			}
+			for _, child := range entry.Transaction {
+				if child == nil || child.MessageID == "" || child.Transaction != nil || child.Status == "transaction" {
+					return nil, fmt.Errorf("invalid journal transaction")
+				}
+				entries = append(entries, child)
+			}
+		} else {
+			entries = append(entries, &entry)
+		}
 	}
 
 	return entries, nil

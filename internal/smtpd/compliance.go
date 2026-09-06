@@ -112,9 +112,6 @@ func (qm *QueueManager) ReleaseCompliance(id, actor, reason string) error {
 	if e.Metadata["mode"] == "copy" {
 		return fmt.Errorf("monitoring copies cannot be delivered")
 	}
-	if ok, err := qm.store.ClaimComplianceRelease(id, actor, reason); err != nil || !ok {
-		return fmt.Errorf("unable to claim compliance release: %v", err)
-	}
 	msg := &Message{}
 	if err := json.Unmarshal([]byte(e.Metadata["message"]), msg); err != nil {
 		return err
@@ -125,8 +122,25 @@ func (qm *QueueManager) ReleaseCompliance(id, actor, reason string) error {
 	msg.ID = "release-" + id
 	msg.ComplianceReleaseID = id
 	msg.complianceBypass = true
-	if err := qm.Enqueue(msg); err != nil {
-		return fmt.Errorf("release submission failed; item retained in compliance_releasing for reconciliation: %w", err)
+	saved := *msg
+	saved.Data = nil
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return err
 	}
-	return qm.store.FinishComplianceRelease(id)
+	status := "pending"
+	if msg.Quarantine {
+		status = "held"
+	}
+	child := &storage.JournalEntry{MessageID: msg.ID, From: msg.From, To: msg.To, Data: msg.Data, Tier: string(msg.Tier), Status: status, Metadata: map[string]string{"message": string(raw), "client_ip": msg.ClientIP}}
+	if err := qm.store.ReleaseCompliance(id, actor, reason, child); err != nil {
+		return err
+	}
+	if status == "held" {
+		return nil
+	}
+	if ok, err := qm.store.Transition(msg.ID, "pending", "queued"); err != nil || !ok {
+		return nil
+	}
+	return qm.enqueueToChannel(msg.Tier, msg)
 }
