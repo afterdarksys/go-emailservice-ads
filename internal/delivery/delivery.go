@@ -222,7 +222,7 @@ func (d *MailDelivery) deliverToMX(ctx context.Context, mxHost, from string, rec
 	mxHost = strings.TrimSuffix(mxHost, ".")
 
 	client, err := d.dialSMTP(ctx, mxHost)
-	if d.reports != nil && len(recipients) > 0 {
+	if d.reports != nil && reportsEnabled(ctx) && len(recipients) > 0 {
 		domain := strings.Split(recipients[0], "@")
 		if len(domain) == 2 && (err == nil || strings.Contains(err.Error(), "TLS") || strings.Contains(err.Error(), "DANE")) {
 			if e := d.reports.Record(domain[1], mxHost, "no-policy-found", err == nil); e != nil {

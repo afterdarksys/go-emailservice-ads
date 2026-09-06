@@ -97,7 +97,7 @@ func (qm *QueueManager) enqueueTLSReport(ctx context.Context, to string, raw []b
 	wrapped.WriteString(b + "\r\n")
 	boundary := generateTraceID()
 	body := fmt.Sprintf("From: postmaster@%s\r\nTo: %s\r\nDate: %s\r\nSubject: SMTP TLS report\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=tlsrpt; boundary=%q\r\n\r\n--%s\r\nContent-Type: text/plain\r\n\r\nSMTP TLS aggregate report attached.\r\n--%s\r\nContent-Type: application/tlsrpt+json\r\nContent-Disposition: attachment; filename=tls-report.json\r\nContent-Transfer-Encoding: base64\r\n\r\n%s--%s--\r\n", qm.hostname, to, time.Now().Format(time.RFC1123Z), boundary, boundary, boundary, wrapped.String(), boundary)
-	return qm.Enqueue(&Message{From: "", To: []string{to}, Data: []byte(body), Tier: TierEmergency, IsBounce: true})
+	return qm.Enqueue(&Message{From: "", To: []string{to}, Data: []byte(body), Tier: TierEmergency, IsBounce: true, IsTLSReport: true})
 }
 
 func (qm *QueueManager) Ready(ctx context.Context) bool {

@@ -67,6 +67,7 @@ type Message struct {
 	SPFResult        string            // Result of SPF verification ("pass", "fail", "softfail", "none", ...)
 	DMARCResult      string            // Result of DMARC evaluation ("pass", "fail", "none")
 	ExtraHeaders     map[string]string // Additional headers to prepend to message
+	IsTLSReport      bool              // Set only on locally generated reports; persisted for retries
 	IsBounce         bool              // True if this message is a bounce/DSN
 	Quarantine       bool              // True if DMARC enforce mode quarantined this message
 	QuarantineFolder string            // Target folder for quarantined local delivery (e.g. "Junk")
@@ -469,6 +470,9 @@ func (qm *QueueManager) signOutbound(msg *Message) ([]byte, error) {
 func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 	ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
 	defer cancel()
+	if msg.IsTLSReport {
+		ctx = delivery.WithoutTLSReports(ctx)
+	}
 
 	data, err := qm.signOutbound(msg)
 	if err != nil {

@@ -22,6 +22,7 @@ type DurableTLSReports struct {
 	SendMail func(context.Context, string, []byte) error
 	dir, org string
 	mu       sync.Mutex
+	sendMu   sync.Mutex
 	lookup   func(context.Context, string) ([]string, error)
 	client   *http.Client
 }
@@ -90,17 +91,35 @@ func (t *DurableTLSReports) Record(domain, host, kind string, success bool) erro
 		p.Summary.TotalSuccessfulSessionCount++
 	} else {
 		p.Summary.TotalFailureSessionCount++
-		p.FailureDetails = append(p.FailureDetails, FailureDetails{ResultType: "validation-failure", ReceivingMXHostname: host, FailedSessionCount: 1})
+		found := false
+		for j := range p.FailureDetails {
+			f := &p.FailureDetails[j]
+			if f.ResultType == "validation-failure" && f.ReceivingMXHostname == host {
+				f.FailedSessionCount++
+				found = true
+				break
+			}
+		}
+		if !found {
+			p.FailureDetails = append(p.FailureDetails, FailureDetails{ResultType: "validation-failure", ReceivingMXHostname: host, FailedSessionCount: 1})
+		}
 	}
 	return atomicJSON(path, &report)
 }
 func (t *DurableTLSReports) SendPending(ctx context.Context) error {
+	// Serialize senders so periodic and manual flushes cannot upload the same
+	// report concurrently. Recording current-day events remains independent.
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
 	files, err := filepath.Glob(filepath.Join(t.dir, "*.json"))
 	if err != nil {
 		return err
 	}
 	var failures []string
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			failures = append(failures, err.Error())

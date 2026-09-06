@@ -72,7 +72,7 @@ func (d *MailDelivery) deliverRoute(ctx context.Context, hops []NextHop, from st
 	var last error
 	for _, h := range hops {
 		c, err := d.dialNextHop(ctx, h)
-		if d.reports != nil && h.RequireTLS && len(to) > 0 {
+		if d.reports != nil && reportsEnabled(ctx) && h.RequireTLS && len(to) > 0 {
 			parts := strings.Split(to[0], "@")
 			if len(parts) == 2 {
 				kind := h.reportType
