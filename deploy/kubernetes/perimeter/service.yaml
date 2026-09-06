@@ -7,12 +7,12 @@ metadata:
     app: smtp
     component: perimeter-mta
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: 'true'
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
 spec:
   type: LoadBalancer
-  externalTrafficPolicy: Local  # Preserve source IP
+  externalTrafficPolicy: Local
   selector:
     app: smtp
     component: perimeter-mta
@@ -20,14 +20,6 @@ spec:
   - name: smtp
     port: 25
     targetPort: 25
-    protocol: TCP
-  - name: submission
-    port: 587
-    targetPort: 587
-    protocol: TCP
-  - name: smtps
-    port: 465
-    targetPort: 465
     protocol: TCP
 ---
 apiVersion: v1
@@ -44,7 +36,7 @@ spec:
     app: smtp
     component: perimeter-mta
   ports:
-  - name: metrics
-    port: 8080
-    targetPort: 8080
+  - name: smtp
+    port: 25
+    targetPort: 25
     protocol: TCP

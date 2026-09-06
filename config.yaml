@@ -9,6 +9,14 @@ server:
   require_tls: true # SECURITY: Require STARTTLS before allowing AUTH
   mode: "test"
 
+  # SMTP peer IP filtering; see docs/IP_FILTERING.md. Denylist wins.
+  ip_filter:
+    allowlist: []
+    denylist: []
+    rbl_zones: []
+    timeout: "5s"
+    defer_on_error: false
+
   # Connection and Rate Limiting
   max_connections: 1000 # Total concurrent connections
   max_per_ip: 10 # Connections per IP
@@ -56,14 +64,13 @@ jmap:
 api:
   rest_addr: ":8080"
   grpc_addr: ":50051"
-  # NOTE: read literally — unlike elasticsearch.api_key, this field is NOT
-  # passed through os.ExpandEnv, so "${VAR}" would become the key itself.
-  # Set the real value in your deployed config, never in git.
+  # Use key_env: MAILHUB_ADMIN_KEY in deployed configs to read a secret.
+  # Literal key values never expand ${VAR}.
   api_keys:
   - name: "Web Platform"
     key: "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
     description: "API key for web platform integration"
-    permissions: ["read", "write"]
+    permissions: ["queue:read", "queue:write", "mailboxes:read", "mailboxes:write", "policies:read", "policies:write", "quarantine:read", "quarantine:write", "mailstorm:read", "mailstorm:write"]
   # IP Whitelist - Only these IPs can access the API (even with valid API key)
   allowed_ips:
     - "127.0.0.1"              # Localhost
@@ -183,3 +190,28 @@ elasticsearch:
       # Regex patterns to redact from header values
       # - "password=\\S+"             # Redact password parameters
       # - "token=\\S+"                # Redact token parameters
+
+# Operational limits shared by all listeners. See docs/PLATFORM_OPERATIONS.md.
+platform:
+  data_dir: ./data
+  validate_recipients: true
+  max_spool_bytes: 10737418240
+  max_spool_messages: 100000
+  min_free_bytes: 1073741824
+  mailbox_quota_bytes: 1073741824
+  max_hops: 30
+  quarantine_retention_days: 30
+  mailstorm:
+    enabled: true
+    window: 1m
+    messages_per_window: 120
+    recipients_per_window: 1000
+    global_messages_per_window: 2000
+    duplicate_limit: 20
+    trip_after: 3
+    cooldown: 5m
+    max_cooldown: 1h
+    baseline_windows: 5
+    anomaly_factor: 4
+    anomaly_floor: 20
+    max_identities: 10000

@@ -20,3 +20,11 @@ spec:
     port: 587
     targetPort: 587
     protocol: TCP
+  - name: imap
+    port: 1143
+    targetPort: 1143
+    protocol: TCP
+  - name: http-api
+    port: 8080
+    targetPort: 8080
+    protocol: TCP

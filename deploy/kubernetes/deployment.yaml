@@ -1,3 +1,4 @@
+# Single owner: use role-specific manifests for perimeter/internal setups.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,24 +8,21 @@ metadata:
     app: goemailservices
     version: v1.0.0
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: goemailservices
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   template:
     metadata:
       labels:
         app: goemailservices
         version: v1.0.0
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+        prometheus.io/path: /metrics
     spec:
       serviceAccountName: goemailservices
       securityContext:
@@ -53,16 +51,18 @@ spec:
           protocol: TCP
         env:
         - name: GOMAXPROCS
-          value: "4"
+          value: '4'
         - name: TZ
-          value: "UTC"
+          value: UTC
+        - name: MAILHUB_DATA_DIR
+          value: /data
         resources:
           requests:
-            cpu: "1000m"
-            memory: "1Gi"
+            cpu: 1000m
+            memory: 1Gi
           limits:
-            cpu: "4000m"
-            memory: "4Gi"
+            cpu: 4000m
+            memory: 4Gi
         livenessProbe:
           httpGet:
             path: /health
@@ -84,7 +84,7 @@ spec:
           mountPath: /etc/goemailservices
           readOnly: true
         - name: data
-          mountPath: /var/lib/goemailservices
+          mountPath: /data
         - name: tls-certs
           mountPath: /etc/goemailservices/certs
           readOnly: true

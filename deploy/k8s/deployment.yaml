@@ -1,3 +1,4 @@
+# Single owner: use role-specific manifests for perimeter/internal setups.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,12 +8,9 @@ metadata:
     app: go-emailservice-ads
     tier: primary
 spec:
-  replicas: 2
+  replicas: 1
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       app: go-emailservice-ads
@@ -42,27 +40,29 @@ spec:
           protocol: TCP
         env:
         - name: LOG_LEVEL
-          value: "info"
+          value: info
         - name: STORAGE_PATH
-          value: "/var/lib/mail-storage"
+          value: /var/lib/mail-storage
         - name: REPLICATION_MODE
-          value: "primary"
+          value: primary
+        - name: MAILHUB_DATA_DIR
+          value: /data
         volumeMounts:
         - name: config
           mountPath: /opt/goemailservices/config.yaml
           subPath: config.yaml
           readOnly: true
         - name: storage
-          mountPath: /var/lib/mail-storage
+          mountPath: /data
         - name: logs
           mountPath: /var/log/mail
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "100m"
+            memory: 256Mi
+            cpu: 100m
           limits:
-            memory: "2Gi"
-            cpu: "2000m"
+            memory: 2Gi
+            cpu: 2000m
         livenessProbe:
           httpGet:
             path: /health

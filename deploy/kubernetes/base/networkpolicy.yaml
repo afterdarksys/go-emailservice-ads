@@ -11,7 +11,6 @@ spec:
   - Ingress
   - Egress
   ingress:
-  # Allow SMTP traffic from internet
   - from:
     - ipBlock:
         cidr: 0.0.0.0/0
@@ -22,7 +21,6 @@ spec:
       port: 587
     - protocol: TCP
       port: 465
-  # Allow metrics scraping from Prometheus
   - from:
     - namespaceSelector:
         matchLabels:
@@ -31,7 +29,6 @@ spec:
     - protocol: TCP
       port: 8080
   egress:
-  # Allow DNS
   - to:
     - namespaceSelector:
         matchLabels:
@@ -39,7 +36,6 @@ spec:
     ports:
     - protocol: UDP
       port: 53
-  # Allow traffic to internal hub
   - to:
     - podSelector:
         matchLabels:
@@ -47,7 +43,6 @@ spec:
     ports:
     - protocol: TCP
       port: 2525
-  # Allow traffic to etcd
   - to:
     - podSelector:
         matchLabels:
@@ -55,7 +50,6 @@ spec:
     ports:
     - protocol: TCP
       port: 2379
-  # Allow external SMTP for relay
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
@@ -64,6 +58,32 @@ spec:
       port: 25
     - protocol: TCP
       port: 587
+  - to:
+    - podSelector:
+        matchLabels:
+          component: internal-hub
+    ports:
+    - protocol: TCP
+      port: 8080
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rspamd
+    ports:
+    - protocol: TCP
+      port: 11333
+  - ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 53
+  - to:
+    - podSelector:
+        matchLabels:
+          app: clamav
+    ports:
+    - protocol: TCP
+      port: 3310
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -77,7 +97,6 @@ spec:
   policyTypes:
   - Ingress
   ingress:
-  # Allow from perimeter MTAs
   - from:
     - podSelector:
         matchLabels:
@@ -85,17 +104,22 @@ spec:
     ports:
     - protocol: TCP
       port: 2525
-  # Allow from any pod in the cluster (authenticated submission)
   - from:
     - namespaceSelector: {}
     ports:
     - protocol: TCP
       port: 587
-  # Allow metrics scraping
   - from:
     - namespaceSelector:
         matchLabels:
           name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  - from:
+    - podSelector:
+        matchLabels:
+          component: perimeter-mta
     ports:
     - protocol: TCP
       port: 8080

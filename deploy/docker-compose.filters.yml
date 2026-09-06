@@ -1,0 +1,28 @@
+# Private filtering dependencies. Connect the mailhub to this network and use
+# platform.scanner_url: http://rspamd:11333. Images are pinned to the validated digests.
+services:
+  rspamd:
+    image: rspamd/rspamd@sha256:be35d1cd6b32f9347bcd397a5047d3dbc1e1e4640c3d7ae57e32cdbb72652d5c
+    restart: unless-stopped
+    volumes:
+      - ./rspamd:/etc/rspamd/local.d:ro
+      - rspamd-data:/var/lib/rspamd
+    depends_on: [redis, clamav]
+    networks: [mail-filters]
+  redis:
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    command: [redis-server, --appendonly, 'yes']
+    restart: unless-stopped
+    volumes: [redis-data:/data]
+    networks: [mail-filters]
+  clamav:
+    image: clamav/clamav@sha256:24cab211a882e9f767b84b76afe197d82554306ad6d43b782f80cd6aa1e61427
+    restart: unless-stopped
+    volumes: [clamav-data:/var/lib/clamav]
+    networks: [mail-filters]
+volumes:
+  rspamd-data: {}
+  redis-data: {}
+  clamav-data: {}
+networks:
+  mail-filters: {}

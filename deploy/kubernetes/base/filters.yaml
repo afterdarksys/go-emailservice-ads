@@ -1,0 +1,294 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rspamd-config
+  namespace: mail-system
+data:
+  antivirus.conf: |
+    clamav {
+      type = "clamav";
+      servers = "clamav:3310";
+      symbol = "CLAM_VIRUS";
+      action = "reject";
+      scan_mime_parts = false;
+    }
+  redis.conf: |
+    servers = "redis:6379";
+  worker-normal.inc: |
+    bind_socket = "0.0.0.0:11333";
+  force_actions.conf: |
+    rules {
+      SCANNER_UNAVAILABLE {
+        action = "soft reject";
+        expression = "CLAM_VIRUS_FAIL";
+        message = "Malware scanner unavailable; retry later";
+      }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rspamd
+  namespace: mail-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rspamd
+  namespace: mail-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rspamd
+  template:
+    metadata:
+      labels:
+        app: rspamd
+    spec:
+      containers:
+      - name: rspamd
+        image: rspamd/rspamd@sha256:be35d1cd6b32f9347bcd397a5047d3dbc1e1e4640c3d7ae57e32cdbb72652d5c
+        ports:
+        - containerPort: 11333
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/rspamd
+        - name: config
+          mountPath: /etc/rspamd/local.d
+          readOnly: true
+        readinessProbe:
+          tcpSocket:
+            port: 11333
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: rspamd
+      - name: config
+        configMap:
+          name: rspamd-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rspamd
+  namespace: mail-system
+spec:
+  selector:
+    app: rspamd
+  ports:
+  - port: 11333
+    targetPort: 11333
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rspamd
+  namespace: mail-system
+spec:
+  podSelector:
+    matchLabels:
+      app: rspamd
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: smtp
+    ports:
+    - protocol: TCP
+      port: 11333
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis
+  namespace: mail-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: mail-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+        args:
+        - redis-server
+        - --appendonly
+        - 'yes'
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: mail-system
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: mail-system
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rspamd
+    ports:
+    - protocol: TCP
+      port: 6379
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clamav
+  namespace: mail-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clamav
+  namespace: mail-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: clamav
+  template:
+    metadata:
+      labels:
+        app: clamav
+    spec:
+      containers:
+      - name: clamav
+        image: clamav/clamav@sha256:24cab211a882e9f767b84b76afe197d82554306ad6d43b782f80cd6aa1e61427
+        ports:
+        - containerPort: 3310
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/clamav
+        readinessProbe:
+          tcpSocket:
+            port: 3310
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 1Gi
+          limits:
+            memory: 3Gi
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: clamav
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clamav
+  namespace: mail-system
+spec:
+  selector:
+    app: clamav
+  ports:
+  - port: 3310
+    targetPort: 3310
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clamav
+  namespace: mail-system
+spec:
+  podSelector:
+    matchLabels:
+      app: clamav
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rspamd
+    - podSelector:
+        matchLabels:
+          app: smtp
+    ports:
+    - protocol: TCP
+      port: 3310

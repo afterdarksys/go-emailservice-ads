@@ -1,3 +1,16 @@
+# One owner per mail spool. Do not scale this Deployment horizontally.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: smtp-perimeter-data
+  namespace: mail-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,12 +21,9 @@ metadata:
     component: perimeter-mta
     tier: edge
 spec:
-  replicas: 3
+  replicas: 1
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       app: smtp
@@ -25,9 +35,10 @@ spec:
         component: perimeter-mta
         tier: edge
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+        prometheus.io/path: /metrics
+        prometheus.io/scheme: https
     spec:
       serviceAccountName: smtp-service
       securityContext:
@@ -36,9 +47,7 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
-
       affinity:
-        # Spread pods across zones for HA
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100
@@ -48,18 +57,11 @@ spec:
                   app: smtp
                   component: perimeter-mta
               topologyKey: topology.kubernetes.io/zone
-
       containers:
       - name: smtp
         image: goemailservices:latest
         imagePullPolicy: IfNotPresent
-
         env:
-        # Deployment mode
-        - name: DEPLOYMENT_MODE
-          value: "perimeter"
-
-        # Pod information
         - name: POD_NAME
           valueFrom:
             fieldRef:
@@ -80,49 +82,23 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.labels['topology.kubernetes.io/zone']
-
-        # Perimeter-specific settings
-        - name: ENABLE_GREYLISTING
-          value: "true"
-        - name: REQUIRE_TLS
-          value: "true"
-        - name: RATE_LIMIT_PER_IP
-          value: "100"
-        - name: MAX_CONNECTIONS_PER_IP
-          value: "10"
-        - name: ENABLE_RBL
-          value: "true"
-        - name: ENABLE_REPUTATION
-          value: "true"
-
-        # Kubernetes integration
-        - name: ENABLE_SERVICE_DISCOVERY
-          value: "true"
-        - name: ENABLE_ENDPOINT_WATCHING
-          value: "true"
-        - name: ENABLE_GLOBAL_ROUTING
-          value: "true"
-
-        # State store
-        - name: STATE_STORE_TYPE
-          value: "etcd"
-        - name: STATE_STORE_ENDPOINTS
-          value: "etcd-0.etcd.mail-system.svc.cluster.local:2379,etcd-1.etcd.mail-system.svc.cluster.local:2379"
-
+        - name: MAILHUB_ADMIN_KEY
+          valueFrom:
+            secretKeyRef:
+              name: smtp-admin
+              key: admin-key
+        - name: MAILHUB_DIRECTORY_KEY
+          valueFrom:
+            secretKeyRef:
+              name: smtp-admin
+              key: directory-key
         ports:
         - name: smtp
           containerPort: 25
           protocol: TCP
-        - name: submission
-          containerPort: 587
-          protocol: TCP
-        - name: smtps
-          containerPort: 465
-          protocol: TCP
-        - name: http-metrics
+        - name: http-api
           containerPort: 8080
           protocol: TCP
-
         resources:
           requests:
             cpu: 500m
@@ -130,34 +106,32 @@ spec:
           limits:
             cpu: 2000m
             memory: 2Gi
-
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - ALL
             add:
-            - NET_BIND_SERVICE  # For port 25
+            - NET_BIND_SERVICE
           readOnlyRootFilesystem: true
-
         livenessProbe:
           httpGet:
             path: /health
             port: 8080
+            scheme: HTTPS
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-
         readinessProbe:
           httpGet:
             path: /ready
             port: 8080
+            scheme: HTTPS
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 2
-
         volumeMounts:
         - name: config
           mountPath: /etc/smtp
@@ -165,19 +139,22 @@ spec:
         - name: tls
           mountPath: /etc/tls
           readOnly: true
-        - name: tmp
-          mountPath: /tmp
         - name: data
           mountPath: /data
-
+        - name: tmp
+          mountPath: /tmp
+        args:
+        - --config
+        - /etc/smtp/config.yaml
       volumes:
       - name: config
         configMap:
-          name: smtp-config
+          name: smtp-perimeter-config
       - name: tls
         secret:
           secretName: smtp-tls
-      - name: tmp
-        emptyDir: {}
       - name: data
+        persistentVolumeClaim:
+          claimName: smtp-perimeter-data
+      - name: tmp
         emptyDir: {}

@@ -1,0 +1,7 @@
+# Mount signing keys from a secret before enabling platform.arc.
+enabled = true;
+selector = "arc";
+path = "/run/secrets/$domain.$selector.key";
+sign_authenticated = true;
+# Set this to the precise, private hub networks that may request sealing.
+sign_networks = ["127.0.0.1"];

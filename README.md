@@ -63,7 +63,7 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 - **15+ SMTP Restrictions** - permit_mynetworks, reject_rbl_client, reject_unauth_destination, check_client_access, check_policy_service, etc.
 - **Stage-Based Filtering** - Client, HELO, sender, recipient, data, end-of-data stages
 - **CIDR Matching** - Network-based access control
-- **RBL/DNSBL** - Real-time blacklist integration
+- **RBL/DNSBL and IP allow/deny lists** - Active SMTP peer filtering via `server.ip_filter`; see [configuration and reputation support](docs/IP_FILTERING.md)
 - **DNS Validation** - Domain verification for senders and recipients
 - **Policy Service Protocol** - External policy server support
 - **Restriction Classes** - Reusable rule sets
@@ -1409,3 +1409,11 @@ Internal use only - msgs.global infrastructure
 **Deployment:** Standalone, Docker, Docker Compose, Kubernetes (perimeter/internal/hybrid/multi-region)
 
 **Status:** v2.1.0 complete - Production-ready enterprise platform with comprehensive observability and next-gen protocol support (delivery implementation pending)
+
+### Mail hub operations (2.4.0)
+
+See [Platform operations](docs/PLATFORM_OPERATIONS.md) for internal/perimeter
+listeners, persistent identities, verified next-hop transports, required malware
+and spam scanning, quarantine, and deployment migration. Adaptive mailstorm
+protection includes repeated-message detection, learned volume baselines,
+persistent sender circuit breakers, and an operator pause/resume API.

@@ -1,68 +1,220 @@
+# Replace example.com, certificate names, and connector networks before deployment.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: smtp-config
+  name: smtp-internal-config
   namespace: mail-system
 data:
   config.yaml: |
     server:
-      addr: ":25"
-      domain: "mail.example.com"
-      banner: "mail.example.com ESMTP Mail Service"
-      max_message_bytes: 52428800  # 50MB
+      addr: :2525
+      domain: mail.example.com
+      local_domains:
+      - example.com
+      max_message_bytes: 26214400
       max_recipients: 100
-      allow_insecure_auth: false
-      require_auth: false  # Depends on deployment mode
-      require_tls: true
-      mode: "production"
-
-      # TLS configuration
-      tls:
-        cert: "/etc/tls/tls.crt"
-        key: "/etc/tls/tls.key"
-
-    # IMAP configuration
-    imap:
-      addr: ":1143"
+      require_auth: false
       require_tls: true
       tls:
-        cert: "/etc/tls/tls.crt"
-        key: "/etc/tls/tls.key"
-
-    # API configuration
-    api:
-      rest_addr: ":8080"
-      grpc_addr: ":50051"
-
-    # Authentication
-    auth:
-      default_users: []  # Configured via Secrets
-
-    # Logging
-    logging:
-      level: "info"
-      format: "json"
-
-    # Kubernetes integration
-    kubernetes:
-      enabled: true
-      service_discovery: true
-      endpoint_watching: true
-
-    # State store for global coordination
-    state_store:
-      type: "etcd"
-      endpoints:
-        - "etcd-0.etcd.mail-system.svc.cluster.local:2379"
-        - "etcd-1.etcd.mail-system.svc.cluster.local:2379"
-        - "etcd-2.etcd.mail-system.svc.cluster.local:2379"
-      prefix: "/mail-system"
-
-  policies.yaml: |
-    policies:
-      - name: "Rate Limiting"
-        type: starlark
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      spf:
         enabled: true
-        priority: 5
-        scope:
-          type: global
+        mode: monitor
+      dmarc:
+        enabled: true
+        mode: enforce
+      ip_filter:
+        allowlist: []
+        denylist: []
+        rbl_zones: []
+        timeout: 5s
+        defer_on_error: true
+    platform:
+      data_dir: /data
+      max_spool_bytes: 10737418240
+      max_spool_messages: 100000
+      min_free_bytes: 1073741824
+      mailbox_quota_bytes: 1073741824
+      validate_recipients: true
+      policy_required: true
+      policy_path: /etc/smtp/policies.yaml
+      max_hops: 30
+      scanner_url: http://rspamd:11333
+      scanner_required: true
+      scanner_timeout: 15s
+      user_recipients_per_hour: 1000
+      domain_recipients_per_hour: 10000
+      quarantine_retention_days: 30
+      mta_sts: true
+      tls_reporting: true
+      listeners:
+      - addr: :2525
+        role: internal
+        tls:
+          cert: /etc/tls/tls.crt
+          key: /etc/tls/tls.key
+        trusted_networks:
+        - 10.0.0.0/8
+      - addr: :587
+        role: submission
+        tls:
+          cert: /etc/tls/tls.crt
+          key: /etc/tls/tls.key
+      mailstorm:
+        enabled: true
+        window: 1m
+        messages_per_window: 120
+        recipients_per_window: 1000
+        global_messages_per_window: 2000
+        duplicate_limit: 20
+        trip_after: 3
+        cooldown: 5m
+        max_cooldown: 1h
+        baseline_windows: 5
+        anomaly_factor: 4
+        anomaly_floor: 20
+        max_identities: 10000
+      clamav_address: clamav:3310
+      malware_required: true
+    imap:
+      addr: :1143
+      tls:
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      tls_mode: starttls
+    api:
+      rest_addr: :8080
+      grpc_addr: :50051
+      tls:
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      api_keys:
+      - name: admin
+        key_env: MAILHUB_ADMIN_KEY
+        permissions:
+        - '*'
+      - name: perimeter-directory
+        key_env: MAILHUB_DIRECTORY_KEY
+        permissions:
+        - recipients:read
+    auth:
+      user_database_url: /data/users.db
+      default_users: []
+    logging:
+      level: info
+    content_filter:
+      enabled: true
+      trusted_proxy_networks:
+      - 10.0.0.0/8
+  policies.yaml: |
+    policies: []
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smtp-perimeter-config
+  namespace: mail-system
+data:
+  config.yaml: |
+    server:
+      addr: :25
+      domain: mail.example.com
+      local_domains:
+      - example.com
+      max_message_bytes: 26214400
+      max_recipients: 100
+      require_auth: false
+      require_tls: false
+      tls:
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      spf:
+        enabled: true
+        mode: monitor
+      dmarc:
+        enabled: true
+        mode: enforce
+      ip_filter:
+        allowlist: []
+        denylist: []
+        rbl_zones: []
+        timeout: 5s
+        defer_on_error: true
+    platform:
+      data_dir: /data
+      max_spool_bytes: 10737418240
+      max_spool_messages: 100000
+      min_free_bytes: 1073741824
+      mailbox_quota_bytes: 1073741824
+      validate_recipients: true
+      policy_required: true
+      policy_path: /etc/smtp/policies.yaml
+      max_hops: 30
+      scanner_url: http://rspamd:11333
+      scanner_required: true
+      scanner_timeout: 15s
+      user_recipients_per_hour: 1000
+      domain_recipients_per_hour: 10000
+      quarantine_retention_days: 30
+      mta_sts: true
+      tls_reporting: true
+      listeners:
+      - addr: :25
+        role: perimeter
+        tls:
+          cert: /etc/tls/tls.crt
+          key: /etc/tls/tls.key
+      recipient_directory_url: https://smtp-internal:8080/api/v1/recipients
+      recipient_directory_token_env: MAILHUB_DIRECTORY_KEY
+      transports:
+      - domain: example.com
+        next_hops:
+        - address: smtp-internal:2525
+          require_tls: true
+          server_name: smtp-internal
+      mailstorm:
+        enabled: true
+        window: 1m
+        messages_per_window: 120
+        recipients_per_window: 1000
+        global_messages_per_window: 2000
+        duplicate_limit: 20
+        trip_after: 3
+        cooldown: 5m
+        max_cooldown: 1h
+        baseline_windows: 5
+        anomaly_factor: 4
+        anomaly_floor: 20
+        max_identities: 10000
+      clamav_address: clamav:3310
+      malware_required: true
+    imap:
+      addr: :1143
+      tls:
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      tls_mode: starttls
+      disabled: true
+    api:
+      rest_addr: :8080
+      grpc_addr: :50051
+      tls:
+        cert: /etc/tls/tls.crt
+        key: /etc/tls/tls.key
+      api_keys:
+      - name: admin
+        key_env: MAILHUB_ADMIN_KEY
+        permissions:
+        - '*'
+      - name: perimeter-directory
+        key_env: MAILHUB_DIRECTORY_KEY
+        permissions:
+        - recipients:read
+    auth:
+      user_database_url: /data/users.db
+      default_users: []
+    logging:
+      level: info
+  policies.yaml: |
+    policies: []

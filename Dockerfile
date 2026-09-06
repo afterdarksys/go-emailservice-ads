@@ -39,10 +39,12 @@ COPY --from=builder /build/bin/mailflow-probe /usr/local/bin/
 
 # Copy default configuration
 COPY config.yaml /opt/goemailservices/config.yaml
+COPY policies.yaml /opt/goemailservices/policies.yaml
+COPY examples/policies /opt/goemailservices/examples/policies
 
 # Create data directories
-RUN mkdir -p /var/lib/mail-storage /var/log/mail && \
-    chown -R mailservice:mailservice /var/lib/mail-storage /var/log/mail /opt/goemailservices
+RUN mkdir -p /data /var/lib/mail-storage /var/log/mail && \
+    chown -R mailservice:mailservice /data /var/lib/mail-storage /var/log/mail /opt/goemailservices
 
 # Switch to non-root user
 USER mailservice
@@ -55,7 +57,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Environment variables
-ENV STORAGE_PATH=/var/lib/mail-storage \
+ENV MAILHUB_DATA_DIR=/data \
     LOG_LEVEL=info \
     SMTP_ADDR=:2525 \
     API_REST_ADDR=:8080 \
