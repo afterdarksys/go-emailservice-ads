@@ -1,0 +1,4 @@
+# CI-only exposure for the Go scanner integration test.
+services:
+  clamav:
+    ports: ['127.0.0.1:3310:3310']

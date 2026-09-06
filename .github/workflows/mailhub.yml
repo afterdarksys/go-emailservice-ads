@@ -1,0 +1,47 @@
+name: Mailhub release qualification
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qualification-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.24.6'
+          cache: true
+      - run: bash scripts/verify-release.sh
+  scanners:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.24.6'
+          cache: true
+      - run: docker compose -f deploy/docker-compose.filters.yml -f deploy/docker-compose.filters-ci.yml up -d --wait --wait-timeout 600
+      - run: docker compose -f deploy/docker-compose.filters.yml -f deploy/docker-compose.filters-ci.yml exec -T rspamd rspamadm configtest
+      - run: go test -count=1 -timeout 2m ./internal/filtering -run TestLiveClamAV
+        env:
+          MAILHUB_CLAMAV_TEST_ADDR: 127.0.0.1:3310
+      - if: always()
+        run: docker compose -f deploy/docker-compose.filters.yml -f deploy/docker-compose.filters-ci.yml logs --tail 100
+      - if: always()
+        run: docker compose -f deploy/docker-compose.filters.yml -f deploy/docker-compose.filters-ci.yml down -v
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t mailhub:qualification .
+      - run: test "$(docker run --rm mailhub:qualification -version)" = "$(cat VERSION)"
