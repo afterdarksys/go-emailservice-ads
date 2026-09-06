@@ -8,7 +8,7 @@ the active `cmd/goemailservices` executable as reviewed on 2026-09-06.
 | Start, stop, upgrade, manage users and queues | [Administration](ADMINISTRATION.md) |
 | Configure listeners, storage, authentication and filtering | [Configuration](CONFIGURATION.md) |
 | Diagnose admission, delivery, TLS and API failures | [Troubleshooting](TROUBLESHOOTING.md) |
-| Integrate with the management REST API | [API reference](API_REFERENCE.md) and [authentication](../API_AUTHENTICATION.md) |
+| Integrate with the management REST API | [API reference](API_REFERENCE.md), [OpenAPI contract](openapi.json) and [authentication](../API_AUTHENTICATION.md) |
 | Choose topology and understand the mail path | [Platform operations](PLATFORM_OPERATIONS.md) |
 | Manage bounce, evidence and legal holds | [Compliance operations](COMPLIANCE_OPERATIONS.md) |
 | Back up, restore and activate a standby | [Backup/recovery](BACKUP_RECOVERY.md) and [failover](FAILOVER.md) |

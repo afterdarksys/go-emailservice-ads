@@ -199,7 +199,14 @@ There are no active management REST endpoints for `/listeners`, `/filters`,
 under `/api/v1`. Older router code and CLI commands describing those paths do not
 make them available. The placeholder management gRPC listener was removed.
 Use file configuration, `/mailboxes`, policy APIs and supported operational tools.
-A machine-readable OpenAPI contract remains tracked in [TODO](../TODO).
+Import [openapi.json](openapi.json) into your API tooling for the machine-readable
+contract. Run `go test ./internal/api -run TestOpenAPI` to check document structure,
+references, version, route coverage, permission mapping, serialized fields and
+representative response schemas. These tests also run in release CI. Update the
+contract with handler changes. Nested policy scope/action response fields use
+Go field capitalization (for example `Type`, `Users`), unlike the outer policy
+object. Password bounds are UTF-8 byte limits, recorded as `x-minBytes` and
+`x-maxBytes`, rather than OpenAPI character counts.
 
 Mailbox payloads cannot be deleted through the generic message DELETE endpoint
 (409); remove mailbox membership through IMAP EXPUNGE. Read-only health, readiness

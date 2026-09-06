@@ -67,7 +67,9 @@ Rspamd configuration validation. Rspamd reported a task-timeout warning; review
 its scanner time budgets against production traffic before deployment.
 
 The release workflow now runs the process smoke test through verify-release.sh.
-Hosted CI has not been dispatched against these local commits. Production
+Hosted qualification passed for PRs #3 and #4, including scanner integration,
+container builds and the full release suite. The main branch now requires those
+three checks on an up-to-date base, including administrator changes. Production
 identity-provider, storage-destination and provider-specific fencing tests remain
 deployment gates. Existing failover tests validate the activation sequence and
 lock behavior; they do not prove a cloud or hypervisor fencing API works.

@@ -8,7 +8,7 @@ plans are design proposals, not current completion checklists.
 
 ## Production qualification and operations
 
-- [ ] Run hosted release CI for the release commits; configure required branch checks.
+- [x] Run hosted release CI; require qualify, scanners and container on up-to-date main, including administrators. Configuration is recorded in .github/branch-protection.json.
 - [ ] Qualify the actual OAuth identity provider with valid, insufficient-scope and revoked tokens using mailhub-authcheck.
 - [ ] Qualify production Object Lock storage, access separation, retention, encryption and recovery; preserve independent receipts/checkpoints.
 - [ ] Configure and test provider-specific fencing, independent verification, standby activation, readiness and traffic switching. Measure RPO/RTO.
@@ -39,7 +39,7 @@ external gates. No production rollout is implied by the implementation checklist
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.
 - [ ] Add dedicated security/DNS/greylisting statistics APIs if needed; these legacy proposed routes are not registered by the active REST server.
-- [ ] Add a machine-readable OpenAPI specification and contract drift checks; the current supported REST contract is documented in docs/API_REFERENCE.md.
+- [x] Add docs/openapi.json for the active management API, with CI checks for document structure/references, routes, permissions, JSON field drift and representative handler responses.
 - [ ] Implement general configuration reload if needed. Policies, TLS material and file-backed API keys have specific live-update mechanisms; other settings require restart.
 - [ ] Evaluate message compression, streaming/lazy listing and DNS negative-cache/prefetch optimizations using measured bottlenecks.
 - [ ] Define comprehensive personal-data export/deletion coverage, including mailbox data, evidence, logs and retained backups. Existing compliance APIs are not a complete privacy workflow.
