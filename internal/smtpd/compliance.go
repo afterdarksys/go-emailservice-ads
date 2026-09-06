@@ -78,12 +78,14 @@ func (qm *QueueManager) captureCompliance(msg *Message, r compliance.Rule) error
 		return err
 	}
 	metadata := map[string]string{"compliance": "true", "rule": r.Name, "domain": strings.ToLower(r.Domain), "mode": r.Mode, "legal_hold": strconv.FormatBool(r.LegalHold), "source_id": msg.ID, "message": string(raw)}
+	digest := storage.EvidenceHash(msg.From, msg.To, msg.Data)
+	metadata["evidence_sha256"] = digest
 	if r.Retention > 0 {
 		metadata["retain_until"] = time.Now().Add(r.Retention).UTC().Format(time.RFC3339Nano)
 	}
 	// No retention value means indefinite preservation, never immediate expiry.
 	id := uuid.NewString()
-	if err := qm.store.Audit("compliance:"+r.Name, "capture_requested", id); err != nil {
+	if err := qm.store.Audit("compliance:"+r.Name, "capture_requested:"+digest, id); err != nil {
 		return err
 	}
 	_, _, err = qm.store.Store(&storage.JournalEntry{MessageID: id, From: msg.From, To: append([]string(nil), msg.To...), Data: msg.Data, Tier: "compliance", Status: "compliance", Metadata: metadata})
@@ -100,6 +102,9 @@ func (qm *QueueManager) ReleaseCompliance(id, actor, reason string) error {
 	}
 	if e.Metadata["compliance"] != "true" || e.Status != "compliance" {
 		return fmt.Errorf("not an active compliance item")
+	}
+	if err := storage.VerifyEvidence(e); err != nil {
+		return err
 	}
 	if e.Metadata["legal_hold"] == "true" {
 		return fmt.Errorf("clear legal hold before release")

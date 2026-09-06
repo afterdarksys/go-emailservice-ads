@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 	"net/http"
 	"strings"
 )
@@ -49,6 +50,10 @@ func (s *Server) handleCompliance(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.store.Audit(principal(r), "compliance_export", id); err != nil {
 			http.Error(w, "Audit unavailable", 503)
+			return
+		}
+		if err := storage.VerifyEvidence(e); err != nil {
+			http.Error(w, "Evidence integrity failure", 409)
 			return
 		}
 		w.Header().Set("Content-Type", "message/rfc822")
