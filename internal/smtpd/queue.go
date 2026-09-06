@@ -602,6 +602,9 @@ func (qm *QueueManager) handleRecipientOutcomes(msg *Message, result *delivery.D
 
 // generateBounce creates and sends a bounce message
 func (qm *QueueManager) generateBounce(msg *Message, result *delivery.DeliveryResult, recipients []string) error {
+	if qm.platform.Bounce.Suppress {
+		return qm.store.Audit("system", "bounce_suppressed_by_configuration", msg.ID)
+	}
 	// Never bounce to a null envelope sender — prevents bounce loops (RFC 5321 §4.5.5)
 	if msg.From == "" || msg.From == "<>" {
 		qm.logger.Info("Skipping bounce for null envelope sender", zap.String("msg_id", msg.ID))
@@ -1004,6 +1007,7 @@ func getErrorMessage(err error, result *delivery.DeliveryResult) string {
 }
 
 func (qm *QueueManager) ConfigurePlatform(cfg *config.Config, users *auth.UserStore) error {
+	qm.bounceGenerator.Configure(cfg.Platform.Bounce)
 	if cfg.Platform.ReputationDatabaseEnv != "" {
 		dsn := os.Getenv(cfg.Platform.ReputationDatabaseEnv)
 		if dsn == "" {

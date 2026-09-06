@@ -191,6 +191,10 @@ func main() {
 
 	// Initialize retry scheduler
 	retryPolicy := smtpd.DefaultRetryPolicy()
+	bounceConfig := cfg.Platform.Bounce.Defaults()
+	retryPolicy.MaxAttempts = bounceConfig.MaxAttempts
+	retryPolicy.InitialDelay = bounceConfig.InitialDelay
+	retryPolicy.MaxDelay = bounceConfig.MaxDelay
 	retryScheduler := smtpd.NewRetryScheduler(store, queueManager, retryPolicy, logger)
 
 	defer retryScheduler.Shutdown()

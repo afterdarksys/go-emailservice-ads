@@ -14,7 +14,8 @@ import (
 // RFC 3464 - An Extensible Message Format for Delivery Status Notifications
 // RFC 5321 Section 3.7 - Relaying and Mail Routing
 type BounceGenerator struct {
-	hostname string
+	config     Config
+	hostname   string
 	postmaster string
 }
 
@@ -38,6 +39,16 @@ type BounceReason struct {
 
 // GenerateBounce creates an RFC 3464 compliant bounce message
 func (bg *BounceGenerator) GenerateBounce(originalFrom string, reason *BounceReason, originalMessage []byte) ([]byte, error) {
+	if reason == nil {
+		return nil, fmt.Errorf("bounce reason required")
+	}
+	copyReason := *reason
+	reason = &copyReason
+	originalFrom = cleanField(originalFrom)
+	reason.Message = cleanField(reason.Message)
+	reason.Recipient = cleanField(reason.Recipient)
+	reason.RemoteHost = cleanField(reason.RemoteHost)
+	reason.EnhancedCode = cleanField(reason.EnhancedCode)
 	messageID := fmt.Sprintf("<%s@%s>", uuid.New().String(), bg.hostname)
 	timestamp := time.Now().Format(time.RFC1123Z)
 
@@ -155,6 +166,13 @@ func (bg *BounceGenerator) getHumanReadableMessage(reason *BounceReason) string 
 
 // extractHeaders extracts headers from the original message
 func (bg *BounceGenerator) extractHeaders(message []byte) string {
+	cfg := bg.config.Defaults()
+	if cfg.IncludeOriginalHeaders != nil && !*cfg.IncludeOriginalHeaders {
+		return ""
+	}
+	if len(message) > cfg.MaxHeaderBytes {
+		message = message[:cfg.MaxHeaderBytes]
+	}
 	// Find the blank line that separates headers from body
 	headerEnd := bytes.Index(message, []byte("\r\n\r\n"))
 	if headerEnd == -1 {
@@ -162,11 +180,8 @@ func (bg *BounceGenerator) extractHeaders(message []byte) string {
 	}
 
 	if headerEnd == -1 {
-		// No body separator found, use first 1KB
-		if len(message) > 1024 {
-			return string(message[:1024])
-		}
-		return string(message)
+		// Do not mistake a malformed message body for original headers.
+		return ""
 	}
 
 	headers := string(message[:headerEnd])

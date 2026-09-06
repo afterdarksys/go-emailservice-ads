@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/delivery"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
@@ -90,8 +91,19 @@ func (rs *RetryScheduler) processRetries() {
 	pending := fairPending(rs.store.ListPending(""))
 
 	for _, entry := range pending {
+		if entry.Status != "pending" {
+			continue
+		}
 		if entry.Attempts >= rs.policy.MaxAttempts {
-			rs.store.UpdateStatus(entry.MessageID, "failed", "retry attempts exhausted")
+			if ok, err := rs.store.Transition(entry.MessageID, "pending", "queued"); err != nil || !ok {
+				continue
+			}
+			err := rs.qm.generateBounce(messageFromEntry(entry), &delivery.DeliveryResult{SMTPCode: 554, Message: "Delivery retry limit exceeded", IsPermanent: true}, entry.To)
+			if err != nil {
+				rs.store.UpdateStatus(entry.MessageID, "pending", "unable to persist final bounce")
+				continue
+			}
+			rs.store.UpdateStatus(entry.MessageID, "failed", "retry attempts exhausted; notification processed")
 			continue
 		}
 		if entry.Status != "pending" {

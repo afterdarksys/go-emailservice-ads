@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/bounce"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
 	"net"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
+	Bounce                     bounce.Config           `yaml:"bounce"`
 	FencingLeaseFile           string                  `yaml:"fencing_lease_file"`
 	DestinationThrottle        delivery.ThrottleConfig `yaml:"destination_throttle"`
 	ClamAVAddress              string                  `yaml:"clamav_address"`
@@ -58,6 +60,9 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if err := p.Bounce.Validate(); err != nil {
+		return err
+	}
 	if err := p.DestinationThrottle.Validate(); err != nil {
 		return err
 	}
