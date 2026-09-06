@@ -35,6 +35,7 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Fix post-merge review defects: Sieve any-flag matching, space-separated flag operations, strict condition separators, and account-wide JMAP mailbox state; add regressions including local delivery.
 - [x] Replace fabricated JMAP reads/write success with durable owner-scoped reads/downloads and explicit unsupported-operation errors.
 - [x] Complete Sieve flag compatibility: delivery :flags, named flag sets, hasflag match types/comparators, snapshot semantics and stored-delivery regressions. See docs/SIEVE_FLAGS.md.
+- [x] Fix shared IMAP notification responses; qualify three simultaneous sessions, IDLE flag delivery, silent STORE, expunge fan-out and account isolation over TLS.
 - [ ] Qualify named desktop/mobile clients; implement writable JMAP, incremental synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.

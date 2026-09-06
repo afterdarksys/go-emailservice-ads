@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import runpy
 
 def port():
     with socket.socket() as sock:
@@ -130,7 +131,7 @@ def run(binary, backup):
                     ok(client.fetch('1:*','(BODY[])'))
                     assert len(ok(client.search(None,'SEEN'))[0].split()) == 260, 'bulk FETCH lost flags'
                     ok(client.close());ok(client.delete('Bulk'))
-
+                runpy.run_path(str(pathlib.Path(__file__).with_name('imap-multisession.py')))['qualify']('localhost', imap_port, tls)
 
             finally:
                 process.terminate()

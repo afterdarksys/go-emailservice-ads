@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/imapserver"
 	imap "github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/server"
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
