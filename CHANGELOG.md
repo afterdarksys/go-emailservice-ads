@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-09-06
+
+### Added
+- IP/CIDR allowlists and denylists, bounded DNSBL lookups, and premail/HTTP reputation integration.
+- Internal, perimeter, and authenticated submission listener roles; trusted original-client metadata.
+- Explicit next-hop connectors with verified TLS, SMTP authentication, and failover.
+- Required Rspamd scanning, ARC response handling, durable quarantine with rescanning and audit records.
+- Adaptive mailstorm admission and queued-delivery pauses, duplicate detection, learned volume baselines, escalating persistent circuit breakers, and operator pause/resume API.
+- Spool/mailbox quotas, recipient directory checks, aliases, durable MTA-STS cache, and TLS report delivery.
+
+### Fixed
+- SMTP, IMAP, and mailbox administration now share live persistent identities.
+- Recipient validation excludes missing and disabled accounts; password changes preserve disabled status.
+- Queue ownership, journal updates, retry accounting, recipient checkpoints, local delivery idempotence, expunge cleanup, and journal compaction.
+- Starlark action isolation, policy result propagation, timeout cancellation, and atomic policy loading.
+- API permission checks now enforce resource scopes and reject unscoped keys.
+- Deployment volumes match runtime paths; stateful deployments use one owner and Recreate updates.
+
+### Upgrade notes
+- Review [platform operations](docs/PLATFORM_OPERATIONS.md) before upgrading. Persistent identities and explicit API scopes change legacy defaults.
+- Local state is single-owner; replicated/high-availability storage is not implemented.
+- ARC signing requires configured Rspamd signing keys and DNS records; the old standalone ARC code is not used by SMTP.
+
 ## [2.1.0] - 2026-03-09
 
 ### Added - Elasticsearch Integration for Mail Event Logging

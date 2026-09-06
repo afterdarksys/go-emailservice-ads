@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	release "github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"os"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailtest"
@@ -9,7 +10,7 @@ import (
 )
 
 var (
-	version = "2.3.0"
+	version = release.Version
 
 	// Global flags
 	host     string
