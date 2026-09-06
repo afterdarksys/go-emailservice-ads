@@ -1,4 +1,7 @@
-# Mail hub operations — 2.4.0
+# Mail hub operations — 2.7.0
+
+For daily tasks see [administration](ADMINISTRATION.md), [configuration](CONFIGURATION.md),
+[troubleshooting](TROUBLESHOOTING.md) and [API reference](API_REFERENCE.md).
 
 The supported topology is one persistent internal hub, optionally preceded by
 one perimeter MTA. Each process owns its own spool. The internal hub provides

@@ -1,4 +1,9 @@
-# Code Review TODO
+# Code Review TODO — closed findings
+
+Status reconciled 2026-09-06 for 2.7.0: all findings and verification entries below
+are recorded complete. This is historical review evidence, not a fresh test run.
+Current deployment and engineering follow-ups are tracked in [TODO](TODO),
+including existing-installation permissions and production qualification.
 
 Review target: `security/tls-dane-dmarc-spf` against `main`.
 

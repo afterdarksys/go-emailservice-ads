@@ -1,5 +1,8 @@
 # After Dark Systems SSO Setup Guide
 
+> Historical feature guide. For the supported 2.7 platform use [administration](docs/ADMINISTRATION.md), [configuration](docs/CONFIGURATION.md), [API reference](docs/API_REFERENCE.md) and [current recovery procedure](docs/BACKUP_RECOVERY.md). Those guides supersede conflicting commands and authentication/deployment claims below.
+
+
 ## Overview
 
 The email service now supports **Single Sign-On (SSO)** authentication with After Dark Systems for **@msgs.global** users.

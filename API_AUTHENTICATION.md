@@ -1,484 +1,83 @@
-# API Authentication Guide
+# API authentication — 2.7.0
 
-## Overview
+The active management REST server accepts `Authorization: Bearer <token>`.
+Use a configured scoped API key or a configured OAuth access token over TLS.
+Basic Auth and SMTP/IMAP account passwords do not grant management access.
+See [the endpoint reference](docs/API_REFERENCE.md) for exact methods and scopes.
 
-The go-emailservice-ads REST API supports **two authentication methods**:
-1. **API Key Authentication** (Bearer token) - Recommended for programmatic access
-2. **Basic Authentication** - User-based authentication
-
----
-
-## 1. API Key Authentication (Bearer Token)
-
-**Recommended for:** Web platforms, mobile apps, automated scripts, CI/CD pipelines
-
-### Your API Key
-
-```
-REPLACE_ME_SEE_DEPLOYMENT_DOCS
-```
-
-**Name:** Web Platform
-**Permissions:** read, write
-**Description:** API key for web platform integration
-
-### Usage
-
-#### cURL Example
-```bash
-curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  http://apps.afterdarksys.com:8080/api/v1/queue/stats
-```
-
-#### JavaScript (Fetch API)
-```javascript
-fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
-  headers: {
-    'Authorization': 'Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS'
-  }
-})
-.then(response => response.json())
-.then(data => console.log(data));
-```
-
-#### Python (requests)
-```python
-import requests
-
-headers = {
-    'Authorization': 'Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS'
-}
-
-response = requests.get(
-    'http://apps.afterdarksys.com:8080/api/v1/queue/stats',
-    headers=headers
-)
-print(response.json())
-```
-
-#### Go
-```go
-req, _ := http.NewRequest("GET", "http://apps.afterdarksys.com:8080/api/v1/queue/stats", nil)
-req.Header.Set("Authorization", "Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS")
-
-client := &http.Client{}
-resp, err := client.Do(req)
-```
-
----
-
-## 2. Basic Authentication
-
-**Recommended for:** Testing, interactive use, admin access
-
-### Available Users
-
-#### User 1: testuser
-- **Username:** `testuser`
-- **Password:** `REPLACE_ME_USE_A_STRONG_PASSWORD`
-- **Email:** `testuser@localhost.local`
-
-#### User 2: admin
-- **Username:** `admin`
-- **Password:** `REPLACE_ME_USE_A_STRONG_PASSWORD`
-- **Email:** `admin@localhost.local`
-
-### Usage
-
-#### cURL Example
-```bash
-curl -u testuser:REPLACE_ME_USE_A_STRONG_PASSWORD http://apps.afterdarksys.com:8080/api/v1/queue/stats
-# or
-curl -u admin:REPLACE_ME_USE_A_STRONG_PASSWORD http://apps.afterdarksys.com:8080/api/v1/queue/stats
-```
-
-#### JavaScript (Fetch API)
-```javascript
-// Method 1: Using basic auth header
-const credentials = btoa('testuser:REPLACE_ME_USE_A_STRONG_PASSWORD');
-fetch('http://apps.afterdarksys.com:8080/api/v1/queue/stats', {
-  headers: {
-    'Authorization': 'Basic ' + credentials
-  }
-})
-.then(response => response.json())
-.then(data => console.log(data));
-
-// Method 2: Using URL
-fetch('http://testuser:REPLACE_ME_USE_A_STRONG_PASSWORD@apps.afterdarksys.com:8080/api/v1/queue/stats')
-  .then(response => response.json())
-  .then(data => console.log(data));
-```
-
-#### Python (requests)
-```python
-import requests
-
-response = requests.get(
-    'http://apps.afterdarksys.com:8080/api/v1/queue/stats',
-    auth=('testuser', 'REPLACE_ME_USE_A_STRONG_PASSWORD')
-)
-print(response.json())
-```
-
----
-
-## API Endpoints
-
-### Public Endpoints (No Authentication Required)
-
-#### Health Check
-```bash
-GET /health
-```
-Returns service health status and uptime.
-
-**Example:**
-```bash
-curl http://apps.afterdarksys.com:8080/health
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "uptime": "5m30s"
-}
-```
-
-#### Readiness Check
-```bash
-GET /ready
-```
-Returns service readiness status.
-
-#### Prometheus Metrics
-```bash
-GET /metrics
-```
-Returns Prometheus-formatted metrics.
-
----
-
-### Protected Endpoints (Authentication Required)
-
-All endpoints below require either **API Key** or **Basic Auth**.
-
-#### Queue Management
-
-##### Get Queue Statistics
-```bash
-GET /api/v1/queue/stats
-```
-
-**Example with API Key:**
-```bash
-curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  http://apps.afterdarksys.com:8080/api/v1/queue/stats
-```
-
-**Response:**
-```json
-{
-  "metrics": {
-    "enqueued": {},
-    "processed": {},
-    "failed": {},
-    "duplicates": 0,
-    "last_update": "2026-03-10T01:00:00Z"
-  },
-  "storage": {
-    "total": 0,
-    "pending": 0,
-    "processing": 0,
-    "dlq": 0
-  }
-}
-```
-
-##### Get Pending Messages
-```bash
-GET /api/v1/queue/pending?tier=<tier>
-```
-
-**Parameters:**
-- `tier` (optional): Queue tier (emergency, msa, int, out, bulk)
-
-**Example:**
-```bash
-curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  "http://apps.afterdarksys.com:8080/api/v1/queue/pending?tier=out"
-```
-
-#### Policy Management
-
-##### List Policies
-```bash
-GET /api/v1/policies
-```
-
-##### Get Policy Statistics
-```bash
-GET /api/v1/policies/stats
-```
-
-##### Reload Policies
-```bash
-POST /api/v1/policies/reload
-```
-
-#### Dead Letter Queue (DLQ)
-
-##### List DLQ Messages
-```bash
-GET /api/v1/dlq/list
-```
-
-##### Retry DLQ Message
-```bash
-POST /api/v1/dlq/retry/<message_id>
-```
-
-**Example:**
-```bash
-curl -X POST \
-  -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  http://apps.afterdarksys.com:8080/api/v1/dlq/retry/msg-12345
-```
-
-#### Message Management
-
-##### Get Message Details
-```bash
-GET /api/v1/message/<message_id>
-```
-
-**Example:**
-```bash
-curl -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  http://apps.afterdarksys.com:8080/api/v1/message/msg-12345
-```
-
-##### Delete Message
-```bash
-DELETE /api/v1/message/<message_id>
-```
-
-**Example:**
-```bash
-curl -X DELETE \
-  -H "Authorization: Bearer REPLACE_ME_SEE_DEPLOYMENT_DOCS" \
-  http://apps.afterdarksys.com:8080/api/v1/message/msg-12345
-```
-
-#### Replication Management
-
-##### Get Replication Status
-```bash
-GET /api/v1/replication/status
-```
-
-##### Promote to Primary
-```bash
-POST /api/v1/replication/promote
-```
-
----
-
-## Security Best Practices
-
-### 1. API Key Management
-
-✅ **DO:**
-- Store API keys in environment variables or secure secret management systems
-- Use HTTPS in production (currently HTTP for testing)
-- Rotate API keys periodically
-- Use different API keys for different environments (dev, staging, production)
-- Monitor API key usage and set up alerts for unusual activity
-
-❌ **DON'T:**
-- Hardcode API keys in your source code
-- Commit API keys to version control
-- Share API keys in plain text (Slack, email, etc.)
-- Use the same API key across multiple applications
-
-### 2. Production Deployment
-
-Before deploying to production:
-
-1. **Change default passwords** in `config.yaml`:
-   ```yaml
-   auth:
-     default_users:
-     - username: "admin"
-       password: "STRONG_RANDOM_PASSWORD"  # Change this!
-       email: "admin@yourdomain.com"
-   ```
-
-2. **Enable HTTPS/TLS** for all API endpoints
-
-3. **Implement rate limiting** per API key
-
-4. **Set up monitoring** for failed authentication attempts
-
-5. **Rotate API keys** regularly (recommended: every 90 days)
-
----
-
-## Adding New API Keys
-
-To add additional API keys, edit `config.yaml`:
+## Configure a static key
 
 ```yaml
 api:
-  rest_addr: ":8080"
-  grpc_addr: ":50051"
+  rest_addr: ':8080'
+  tls:
+    cert: /etc/mailhub/tls/tls.crt
+    key: /etc/mailhub/tls/tls.key
+  require_ip_auth: true
+  allowed_ips: ['127.0.0.1', '::1']
   api_keys:
-  - name: "Web Platform"
-    key: "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
-    description: "API key for web platform integration"
-    permissions: ["read", "write"]
-  - name: "Mobile App"
-    key: "YOUR_NEW_API_KEY_HERE"
-    description: "API key for mobile application"
-    permissions: ["read", "write"]
-  - name: "Analytics Service"
-    key: "ANOTHER_API_KEY_HERE"
-    description: "Read-only key for analytics"
-    permissions: ["read"]
+    - name: queue-observer
+      key_env: MAILHUB_QUEUE_KEY
+      permissions: [queue:read]
 ```
 
-### Generate a New API Key
+Provision the environment variable through your supervisor/secret manager and
+restart. `key_env` resolves at startup and missing referenced secrets fail config
+loading. Literal `key` does not interpolate `${VAR}`. Alternatively use
+`key_files: [/run/secrets/queue-key]`; file contents are trimmed, bounded to 4096
+bytes and reread per request. `expires_at` accepts an RFC3339 timestamp. Use
+[overlapping credentials](docs/CREDENTIAL_ROTATION.md) for rotation. There is no
+active key-issuance API; configure key entries and permissions in YAML.
 
-```bash
-openssl rand -base64 48 | tr -d '\n'
+Permissions match exact `resource:read` / `resource:write` strings or global `*`.
+Empty permissions deny access; `all`, bare `read` and `resource:*` do not match.
+Queue/message/DLQ use `queue`; users use `mailboxes`. Test/reload actions require
+`policies:write`. Compliance export, release, delete and legal-hold use their
+own scopes. Assign a distinct key name per actor because the name is the audit
+principal and is used for compliance domain grants.
+
+`allowed_ips` matches exact TCP peer IPs when `require_ip_auth` is enabled; an
+empty allowlist supplies no source restriction. CIDRs and forwarded HTTP headers
+are not supported here. Health, readiness, version and metrics bypass the
+protected-route middleware; restrict the management port at the network layer.
+
+## Make a request
+
+Set API_BASE to your HTTPS origin and supply MAILHUB_API_KEY securely:
+
+```sh
+curl --fail-with-body --cacert /etc/mailhub/ca.pem   -H "Authorization: Bearer $MAILHUB_API_KEY"   "$API_BASE/api/v1/queue/stats"
 ```
 
-After adding keys, restart the service:
-```bash
-ssh root@apps.afterdarksys.com 'cd /opt/go-emailservice-ads && docker-compose restart mail-primary'
-```
+Omit `--cacert` when the certificate chains to the system trust store. Do not
+embed administrative keys in browser-delivered JavaScript. Proxy administrative
+operations through an appropriately authorized server-side integration.
 
----
+## OAuth access tokens
 
-## Error Responses
+`api.oauth` uses token introspection with configured endpoint/client credentials,
+issuer, audience, expiry and requested resource scope. This is independent of
+legacy `sso` settings and JMAP JWT verification. Enabling it requires `api.tls`;
+TLS termination only at an upstream proxy does not satisfy the handler's TLS check.
 
-### 401 Unauthorized
+Use [examples/compliance-config.yaml](examples/compliance-config.yaml).
+`compliance_only` limits OAuth validation to compliance paths.
+`require_for_compliance` requires OAuth on those paths; otherwise a configured
+static key can still authenticate. OAuth principals are `oauth:<subject>`.
+With domain enforcement enabled, configure matching
+`platform.compliance.access` principal, domains and actions as well as scopes.
+Lists filter inaccessible cases/rules; individual inaccessible cases return 404.
 
-**Missing or invalid credentials:**
-```json
-{
-  "error": "Unauthorized - provide API key or Basic Auth"
-}
-```
+Build and run `mailhub-authcheck` as described in
+[deployment qualification](docs/DEPLOYMENT_QUALIFICATION.md) with the actual
+provider and valid/revoked tokens. API introspection support does not imply SMTP
+OAuth, SAML login, SCIM provisioning, or a token-issuing endpoint.
 
-**Invalid API key:**
-```json
-{
-  "error": "Invalid API key"
-}
-```
+## Error handling
 
-### 403 Forbidden
-
-User authenticated but lacks permission for the requested resource.
-
-### 405 Method Not Allowed
-
-Incorrect HTTP method for the endpoint.
-
----
-
-## Testing the API
-
-### Quick Test Script (Bash)
-
-```bash
-#!/bin/bash
-API_KEY="REPLACE_ME_SEE_DEPLOYMENT_DOCS"
-BASE_URL="http://apps.afterdarksys.com:8080"
-
-echo "Testing API Key authentication..."
-curl -H "Authorization: Bearer $API_KEY" "$BASE_URL/api/v1/queue/stats"
-
-echo -e "\n\nTesting Basic Auth..."
-curl -u testuser:REPLACE_ME_USE_A_STRONG_PASSWORD "$BASE_URL/api/v1/queue/stats"
-
-echo -e "\n\nTesting invalid credentials..."
-curl -u wrong:credentials "$BASE_URL/api/v1/queue/stats"
-```
-
-### Integration Test (Python)
-
-```python
-import requests
-import json
-
-API_KEY = "REPLACE_ME_SEE_DEPLOYMENT_DOCS"
-BASE_URL = "http://apps.afterdarksys.com:8080"
-
-def test_api_key_auth():
-    """Test API key authentication"""
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-    response = requests.get(f"{BASE_URL}/api/v1/queue/stats", headers=headers)
-    assert response.status_code == 200
-    print("✓ API key authentication works")
-    return response.json()
-
-def test_basic_auth():
-    """Test basic authentication"""
-    response = requests.get(
-        f"{BASE_URL}/api/v1/queue/stats",
-        auth=("testuser", "REPLACE_ME_USE_A_STRONG_PASSWORD")
-    )
-    assert response.status_code == 200
-    print("✓ Basic authentication works")
-    return response.json()
-
-def test_invalid_auth():
-    """Test invalid credentials are rejected"""
-    response = requests.get(
-        f"{BASE_URL}/api/v1/queue/stats",
-        auth=("wrong", "credentials")
-    )
-    assert response.status_code == 401
-    print("✓ Invalid credentials properly rejected")
-
-if __name__ == "__main__":
-    print("Running API authentication tests...\n")
-    test_api_key_auth()
-    test_basic_auth()
-    test_invalid_auth()
-    print("\n✓ All tests passed!")
-```
-
----
-
-## Support & Troubleshooting
-
-### Common Issues
-
-**Issue:** `401 Unauthorized`
-- **Solution:** Check that your API key or credentials are correct
-- Verify the Authorization header format: `Bearer <key>` or `Basic <base64>`
-
-**Issue:** `Invalid API key`
-- **Solution:** Ensure the API key matches exactly (no extra spaces, newlines)
-- Check that the config.yaml has been updated with the key
-
-**Issue:** Connection refused
-- **Solution:** Verify the service is running: `docker ps --filter name=mail-primary`
-- Check logs: `docker logs mail-primary`
-
-### Logs
-
-Check authentication attempts in the logs:
-```bash
-ssh root@apps.afterdarksys.com 'docker logs -f mail-primary | grep -i auth'
-```
-
----
-
-**Last Updated:** 2026-03-10
-**API Version:** v1
-**Service:** go-emailservice-ads v2.1.0
+Missing/invalid credentials return 401. IP restriction and recognized literal
+keys lacking scope can return 403. File-backed key or OAuth authorization failures
+may also return 401. Read the plain-text response before diagnosing. Expired
+credentials, unavailable introspection, wrong scopes and TLS errors need operator
+review. There is no uniform JSON error envelope. See
+[troubleshooting](docs/TROUBLESHOOTING.md) for concrete checks.

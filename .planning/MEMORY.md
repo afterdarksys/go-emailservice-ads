@@ -1,6 +1,8 @@
 # Planning Memory Index
 
-- [PROJECT_PLAN.md](PROJECT_PLAN.md) — Master plan: 6 milestones, 24 weeks, all review findings
+- [../TODO](../TODO) — Authoritative backlog, reconciled for 2.7.0
+- [../docs/README.md](../docs/README.md) — Current operator and API documentation
+- [PROJECT_PLAN.md](PROJECT_PLAN.md) — Historical six-milestone proposal; original timeline is superseded
 - [ROADMAP.md](ROADMAP.md) — Milestone timeline overview
 - [M1-P1.0](phases/M1-P1.0-critical-security.md) — P0 security: ARC stubs, DMARC alignment, DKIM goroutine, hardcoded creds, local delivery
 - [M1-P1.1](phases/M1-P1.1-high-security.md) — P1 security: SPF softfail, bounce loop, UUID IDs, non-blocking queue, SSRF

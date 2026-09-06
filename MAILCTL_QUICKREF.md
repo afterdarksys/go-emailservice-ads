@@ -1,5 +1,8 @@
 # mailctl Quick Reference
 
+> Historical feature guide. For the supported 2.7 platform use [administration](docs/ADMINISTRATION.md), [configuration](docs/CONFIGURATION.md), [API reference](docs/API_REFERENCE.md) and [current recovery procedure](docs/BACKUP_RECOVERY.md). Those guides supersede conflicting commands and authentication/deployment claims below.
+
+
 ## Setup
 
 ```bash

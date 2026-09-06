@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
+	"io"
 	"os"
 	"time"
 
@@ -429,8 +431,15 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Elasticsearch.HeaderLogging.ExcludeHeaders = []string{"Authorization", "X-API-Key", "X-Auth-Token"}
 	cfg.Elasticsearch.HeaderLogging.RedactPatterns = []string{}
 
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return nil, err
+	}
+
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("configuration must contain exactly one YAML document")
 	}
 
 	for i := range cfg.API.APIKeys {
