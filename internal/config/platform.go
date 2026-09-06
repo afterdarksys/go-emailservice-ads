@@ -62,6 +62,12 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if err := c.API.OAuth.Validate(); err != nil {
+		return err
+	}
+	if c.API.OAuth.Enabled && c.API.TLS == nil {
+		return fmt.Errorf("OAuth API access requires configured API TLS")
+	}
 	if err := p.Compliance.Validate(); err != nil {
 		return err
 	}

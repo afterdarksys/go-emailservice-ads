@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
 	"net"
@@ -179,6 +180,19 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+			compliancePath := strings.HasPrefix(r.URL.Path, "/api/v1/compliance")
+			oauthConfig := s.config.API.OAuth
+			requireOAuth := compliancePath && oauthConfig.RequireForCompliance
+			if oauthConfig.Enabled && (!oauthConfig.ComplianceOnly || compliancePath) && r.TLS != nil {
+				if name, err := oauthaccess.ValidateToken(r.Context(), oauthConfig, apiKey, requiredScope(r)); err == nil {
+					next(w, withPrincipal(r, name))
+					return
+				}
+			}
+			if requireOAuth {
+				http.Error(w, "OAuth access token over TLS required", http.StatusUnauthorized)
+				return
+			}
 			if name, ok := s.authorizeKey(apiKey, requiredScope(r)); ok {
 				next(w, withPrincipal(r, name))
 				return

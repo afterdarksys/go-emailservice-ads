@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
 	"os"
 	"time"
 
@@ -101,12 +102,13 @@ type Config struct {
 	} `yaml:"jmap"`
 
 	API struct {
-		TLS           *TLSConfig     `yaml:"tls"`
-		RESTAddr      string         `yaml:"rest_addr"`
-		GRPCAddr      string         `yaml:"grpc_addr"`
-		APIKeys       []APIKeyConfig `yaml:"api_keys"`        // API keys for programmatic access
-		AllowedIPs    []string       `yaml:"allowed_ips"`     // IP whitelist for API access
-		RequireIPAuth bool           `yaml:"require_ip_auth"` // Require IP whitelist in addition to API key
+		OAuth         oauthaccess.Config `yaml:"oauth"`
+		TLS           *TLSConfig         `yaml:"tls"`
+		RESTAddr      string             `yaml:"rest_addr"`
+		GRPCAddr      string             `yaml:"grpc_addr"`
+		APIKeys       []APIKeyConfig     `yaml:"api_keys"`        // API keys for programmatic access
+		AllowedIPs    []string           `yaml:"allowed_ips"`     // IP whitelist for API access
+		RequireIPAuth bool               `yaml:"require_ip_auth"` // Require IP whitelist in addition to API key
 	} `yaml:"api"`
 
 	Auth struct {
