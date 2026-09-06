@@ -8,12 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/auditlog"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // MessageStore provides persistent storage for delivery transactions and mailbox blobs.
 type MessageStore struct {
+	audit     *auditlog.Log
 	lockFile  *os.File
 	limits    Limits
 	closed    bool
@@ -58,6 +60,11 @@ func NewMessageStore(basePath string, logger *zap.Logger) (*MessageStore, error)
 	}
 
 	// Replay journal for disaster recovery
+	store.audit, err = auditlog.Open(filepath.Join(basePath, "audit-chain.jsonl"))
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("audit integrity: %w", err)
+	}
 	if err := store.recover(); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to recover from journal: %w", err)

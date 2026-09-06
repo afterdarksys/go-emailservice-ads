@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/auditlog"
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 )
@@ -334,6 +335,10 @@ func VerifyDatabases(ctx context.Context, root string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e
+		}
+		if d.Name() == "audit-chain.jsonl" && !d.IsDir() {
+			_, err := auditlog.Open(path)
+			return err
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".db") {
 			return nil
