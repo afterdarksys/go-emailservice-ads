@@ -79,3 +79,68 @@ func TestJMAPReflectsDurableFoldersFlagsAndExpunge(t *testing.T) {
 		}
 	}
 }
+
+func TestMailboxStateIndependentOfSelection(t *testing.T) {
+	raw, err := storage.NewMessageStore(t.TempDir(), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	m, err := storage.NewMailboxStore(storage.NewIMAPAdapter(raw), filepath.Join(t.TempDir(), "mailbox.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	j := &JMAPServer{store: m, logger: zap.NewNop()}
+	ctx := context.Background()
+	get := func(args map[string]interface{}) MethodResponse {
+		t.Helper()
+		r := j.mailboxGet(ctx, "alice", args, "a")
+		if r.Name != "Mailbox/get" {
+			t.Fatalf("get failed: %+v", r)
+		}
+		return r
+	}
+	inbox := map[string]interface{}{"ids": []interface{}{"inbox"}}
+	original := get(nil).Arguments["state"]
+	for _, args := range []map[string]interface{}{inbox, {"ids": []interface{}{}}, {"ids": []interface{}{"missing"}}, {"ids": []interface{}{"sent", "inbox"}}} {
+		if got := get(args).Arguments["state"]; got != original {
+			t.Fatalf("selection changed state: %v", args)
+		}
+	}
+	if err = m.CreateFolder(ctx, "alice", "OutsideSelection"); err != nil {
+		t.Fatal(err)
+	}
+	changed := get(inbox)
+	if changed.Arguments["state"] == original {
+		t.Fatal("unselected folder creation did not change state")
+	}
+	if changed.Arguments["state"] != get(nil).Arguments["state"] {
+		t.Fatal("subset and account state diverged")
+	}
+	list := changed.Arguments["list"].([]map[string]interface{})
+	if len(list) != 1 || list[0]["id"] != "inbox" {
+		t.Fatalf("projection lost: %v", list)
+	}
+	state := changed.Arguments["state"]
+	if _, err = m.AppendMessage(ctx, "alice", "OutsideSelection", []byte("Subject: test\r\n\r\nbody"), nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if get(inbox).Arguments["state"] == state {
+		t.Fatal("unselected mailbox count change did not change state")
+	}
+	state = get(inbox).Arguments["state"]
+	if err = m.CreateFolder(ctx, "bob", "OtherAccount"); err != nil {
+		t.Fatal(err)
+	}
+	if get(inbox).Arguments["state"] != state {
+		t.Fatal("another account changed state")
+	}
+	missing := get(map[string]interface{}{"ids": []interface{}{"missing", "inbox"}})
+	if nf := missing.Arguments["notFound"].([]string); len(nf) != 1 || nf[0] != "missing" {
+		t.Fatalf("wrong notFound: %v", nf)
+	}
+	if got := get(map[string]interface{}{"ids": []interface{}{}}).Arguments["list"].([]map[string]interface{}); len(got) != 0 {
+		t.Fatal("empty selection returned mailboxes")
+	}
+}

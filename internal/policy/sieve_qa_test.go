@@ -68,3 +68,61 @@ func TestSieveBodyDecodesMIMEAndExcludesHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestSieveFlagListsAndAnyMatch(t *testing.T) {
+	engine, _ := newSieveEngine()
+	email, err := NewEmailContext("sender@test", []string{"recipient@test"}, "127.0.0.1", "test", []byte("Subject: test\r\n\r\nbody"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, script string
+		want         ActionType
+		flags        []string
+	}{
+		{"any flag matches", `addflag "\\Seen"; if hasflag ["\\Flagged", "\\seen"] { discard; }`, ActionDiscard, []string{`\Seen`}},
+		{"no flags match", `addflag "\\Seen"; if hasflag "\\Flagged" { discard; }`, ActionKeep, []string{`\Seen`}},
+		{"empty list matches nothing", `addflag "\\Seen"; if hasflag " " { discard; }`, ActionKeep, []string{`\Seen`}},
+		{"space separated and duplicate flags", `addflag ["  \\Seen   \\Flagged ", "\\seen", ""];`, ActionKeep, []string{`\Seen`, `\Flagged`}},
+		{"set replaces and remove splits", `addflag "\\Answered"; setflag "\\Seen \\Flagged customer"; removeflag "\\seen CUSTOMER";`, ActionKeep, []string{`\Flagged`}},
+		{"empty set clears", `addflag "\\Seen"; setflag "";`, ActionKeep, nil},
+		{"expanded flags", `set "f" "\\Seen \\Flagged"; addflag "${f}"; if hasflag "\\Draft \\seen" { discard; }`, ActionDiscard, []string{`\Seen`, `\Flagged`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			action, err := engine.Evaluate(context.Background(), email, `require ["imap4flags", "variables"]; `+tc.script)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action.Type != tc.want || len(action.Tags) != len(tc.flags) {
+				t.Fatalf("got %+v; want %s %v", action, tc.want, tc.flags)
+			}
+			for idx, flag := range tc.flags {
+				if action.Tags[idx] != flag {
+					t.Fatalf("flags %v; want %v", action.Tags, tc.flags)
+				}
+			}
+		})
+	}
+}
+
+func TestSieveConditionListSeparators(t *testing.T) {
+	engine, _ := newSieveEngine()
+	for _, script := range []string{
+		`if anyof (true false) { discard; }`, `if anyof (true,) { discard; }`,
+		`if allof () { keep; }`, `if allof (,true) { keep; }`,
+		`if allof (true,,false) { keep; }`, `if anyof (true`,
+		`if allof (true, anyof (false true)) { discard; }`,
+	} {
+		if err := engine.Validate(script); err == nil {
+			t.Errorf("accepted %q", script)
+		}
+	}
+	for _, script := range []string{
+		`if anyof (true) { keep; }`, `if allof (true, false) { keep; }`,
+		`if allof (true, anyof (false, true)) { keep; }`,
+	} {
+		if err := engine.Validate(script); err != nil {
+			t.Errorf("rejected %q: %v", script, err)
+		}
+	}
+}
