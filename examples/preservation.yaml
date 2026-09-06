@@ -1,0 +1,11 @@
+source_file: /var/lib/mailhub/export/evidence.eml
+bucket: approved-mailhub-evidence
+prefix: evidence
+region: us-east-1
+# endpoint: https://approved-s3-endpoint.example.test
+# profile: evidence-archive
+# Set an approved date explicitly before use; expired dates fail validation.
+retain_until: 2026-01-01T00:00:00Z
+legal_hold: true
+timeout: 3m
+allow_local_http: false
