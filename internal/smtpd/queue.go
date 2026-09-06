@@ -75,6 +75,7 @@ type Message struct {
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
+	destinations *delivery.DestinationThrottle
 	reputationDB *filtering.PremailReputation
 	platform     config.PlatformConfig
 	abuse        abuseLimits
@@ -253,9 +254,10 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 
 	var deliveryErr error
 	var remaining []string
+	started := false
 	for i, rcpt := range msg.To {
 		if qm.StormGuard != nil && qm.StormGuard.Blocked(msg.AdmissionKey) {
-			if i == 0 {
+			if !started {
 				qm.store.Transition(msg.ID, "queued", "pending")
 				return
 			}
@@ -263,20 +265,35 @@ func (qm *QueueManager) processMessage(queueName string, msg *Message) {
 			deliveryErr = errors.Join(deliveryErr, fmt.Errorf("sender paused by mailstorm protection"))
 			break
 		}
-		if i == 0 {
-			if ok, err := qm.store.Transition(msg.ID, "queued", "processing"); err != nil || !ok {
-				return
-			}
-		}
 		attempt := *msg
 		attempt.To = []string{rcpt}
 		domain := qm.extractDomain(rcpt)
+		local := qm.localDomains[strings.ToLower(domain)] && !qm.mailDelivery.HasExplicitRoute(domain)
+		release := func() {}
+		if !local && qm.destinations != nil {
+			var ok bool
+			release, ok = qm.destinations.Acquire(domain)
+			if !ok {
+				remaining = append(remaining, rcpt)
+				deliveryErr = errors.Join(deliveryErr, fmt.Errorf("destination deferred"))
+				continue
+			}
+		}
+		if !started {
+			if ok, err := qm.store.Transition(msg.ID, "queued", "processing"); err != nil || !ok {
+				release()
+				return
+			}
+			started = true
+		}
 		var err error
-		if qm.localDomains[strings.ToLower(domain)] && !qm.mailDelivery.HasExplicitRoute(domain) {
+		if local {
 			err = qm.deliverLocal(&attempt, []string{rcpt})
 		} else {
 			err = qm.deliverRemote(&attempt, []string{rcpt})
 		}
+		release()
+
 		if err != nil {
 			remaining = append(remaining, rcpt)
 			deliveryErr = errors.Join(deliveryErr, err)
@@ -461,6 +478,12 @@ func (qm *QueueManager) deliverRemote(msg *Message, recipients []string) error {
 		data = append([]byte("X-Mailhub-Original-IP: "+msg.ClientIP+"\r\n"), data...)
 	}
 	result, err := qm.mailDelivery.Deliver(ctx, msg.From, recipients, data)
+	if qm.destinations != nil && len(recipients) > 0 {
+		success := err == nil && result != nil && result.Success
+		temporary := err != nil && (result == nil || !result.IsPermanent)
+		qm.destinations.Observe(qm.extractDomain(recipients[0]), success, temporary)
+	}
+
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -987,6 +1010,11 @@ func (qm *QueueManager) ConfigurePlatform(cfg *config.Config, users *auth.UserSt
 		return err
 	}
 	qm.StormGuard = guard
+	throttle, err := delivery.NewDestinationThrottle(cfg.Platform.DestinationThrottle)
+	if err != nil {
+		return err
+	}
+	qm.destinations = throttle
 	qm.platform = cfg.Platform
 	qm.abuse.buckets = make(map[string]*quotaBucket)
 	qm.users = users

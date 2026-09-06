@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -85,7 +87,7 @@ func (rs *RetryScheduler) retryLoop() {
 
 // processRetries finds and retries eligible messages
 func (rs *RetryScheduler) processRetries() {
-	pending := rs.store.ListPending("")
+	pending := fairPending(rs.store.ListPending(""))
 
 	for _, entry := range pending {
 		if entry.Attempts >= rs.policy.MaxAttempts {
@@ -158,4 +160,33 @@ func (rs *RetryScheduler) ShouldRetry(smtpCode int, attempts int) (bool, string)
 func (rs *RetryScheduler) Shutdown() {
 	rs.logger.Info("Shutting down retry scheduler")
 	rs.cancel()
+}
+
+// Interleave destination groups so a large failing domain cannot fill retry
+// dispatch buffers before unrelated destinations are offered service.
+func fairPending(entries []*storage.JournalEntry) []*storage.JournalEntry {
+	sort.Slice(entries, func(i, j int) bool { return entries[i].CreatedAt.Before(entries[j].CreatedAt) })
+	groups := map[string][]*storage.JournalEntry{}
+	var order []string
+	for _, e := range entries {
+		domain := ""
+		if len(e.To) > 0 {
+			_, domain, _ = strings.Cut(e.To[0], "@")
+			domain = strings.ToLower(domain)
+		}
+		if _, ok := groups[domain]; !ok {
+			order = append(order, domain)
+		}
+		groups[domain] = append(groups[domain], e)
+	}
+	result := make([]*storage.JournalEntry, 0, len(entries))
+	for len(result) < len(entries) {
+		for _, domain := range order {
+			if len(groups[domain]) > 0 {
+				result = append(result, groups[domain][0])
+				groups[domain] = groups[domain][1:]
+			}
+		}
+	}
+	return result
 }

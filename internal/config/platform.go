@@ -14,36 +14,37 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
-	ClamAVAddress              string              `yaml:"clamav_address"`
-	MalwareRequired            bool                `yaml:"malware_required"`
-	ReputationRejectBelow      int                 `yaml:"reputation_reject_below"`
-	Mailstorm                  mailstorm.Config    `yaml:"mailstorm"`
-	ReputationDatabaseEnv      string              `yaml:"reputation_database_env"`
-	RecipientDirectoryURL      string              `yaml:"recipient_directory_url"`
-	RecipientDirectoryTokenEnv string              `yaml:"recipient_directory_token_env"`
-	QuarantineRetentionDays    int                 `yaml:"quarantine_retention_days"`
-	ARC                        bool                `yaml:"arc"`
-	MTASTS                     bool                `yaml:"mta_sts"`
-	TLSReporting               bool                `yaml:"tls_reporting"`
-	DataDir                    string              `yaml:"data_dir"`
-	MaxSpoolBytes              int64               `yaml:"max_spool_bytes"`
-	MaxSpoolMessages           int                 `yaml:"max_spool_messages"`
-	MinFreeBytes               uint64              `yaml:"min_free_bytes"`
-	MailboxQuotaBytes          int64               `yaml:"mailbox_quota_bytes"`
-	PolicyRequired             bool                `yaml:"policy_required"`
-	PolicyPath                 string              `yaml:"policy_path"`
-	ValidateRecipients         bool                `yaml:"validate_recipients"`
-	Aliases                    map[string][]string `yaml:"aliases"`
-	Transports                 []delivery.Route    `yaml:"transports"`
-	Listeners                  []ListenerConfig    `yaml:"listeners"`
-	MaxHops                    int                 `yaml:"max_hops"`
-	UserRecipientsPerHour      int                 `yaml:"user_recipients_per_hour"`
-	DomainRecipientsPerHour    int                 `yaml:"domain_recipients_per_hour"`
-	ScannerURL                 string              `yaml:"scanner_url"`
-	ScannerRequired            bool                `yaml:"scanner_required"`
-	ScannerTimeout             string              `yaml:"scanner_timeout"`
-	ReputationURL              string              `yaml:"reputation_url"`
-	ReputationRequired         bool                `yaml:"reputation_required"`
+	DestinationThrottle        delivery.ThrottleConfig `yaml:"destination_throttle"`
+	ClamAVAddress              string                  `yaml:"clamav_address"`
+	MalwareRequired            bool                    `yaml:"malware_required"`
+	ReputationRejectBelow      int                     `yaml:"reputation_reject_below"`
+	Mailstorm                  mailstorm.Config        `yaml:"mailstorm"`
+	ReputationDatabaseEnv      string                  `yaml:"reputation_database_env"`
+	RecipientDirectoryURL      string                  `yaml:"recipient_directory_url"`
+	RecipientDirectoryTokenEnv string                  `yaml:"recipient_directory_token_env"`
+	QuarantineRetentionDays    int                     `yaml:"quarantine_retention_days"`
+	ARC                        bool                    `yaml:"arc"`
+	MTASTS                     bool                    `yaml:"mta_sts"`
+	TLSReporting               bool                    `yaml:"tls_reporting"`
+	DataDir                    string                  `yaml:"data_dir"`
+	MaxSpoolBytes              int64                   `yaml:"max_spool_bytes"`
+	MaxSpoolMessages           int                     `yaml:"max_spool_messages"`
+	MinFreeBytes               uint64                  `yaml:"min_free_bytes"`
+	MailboxQuotaBytes          int64                   `yaml:"mailbox_quota_bytes"`
+	PolicyRequired             bool                    `yaml:"policy_required"`
+	PolicyPath                 string                  `yaml:"policy_path"`
+	ValidateRecipients         bool                    `yaml:"validate_recipients"`
+	Aliases                    map[string][]string     `yaml:"aliases"`
+	Transports                 []delivery.Route        `yaml:"transports"`
+	Listeners                  []ListenerConfig        `yaml:"listeners"`
+	MaxHops                    int                     `yaml:"max_hops"`
+	UserRecipientsPerHour      int                     `yaml:"user_recipients_per_hour"`
+	DomainRecipientsPerHour    int                     `yaml:"domain_recipients_per_hour"`
+	ScannerURL                 string                  `yaml:"scanner_url"`
+	ScannerRequired            bool                    `yaml:"scanner_required"`
+	ScannerTimeout             string                  `yaml:"scanner_timeout"`
+	ReputationURL              string                  `yaml:"reputation_url"`
+	ReputationRequired         bool                    `yaml:"reputation_required"`
 }
 
 type ListenerConfig struct {
@@ -56,6 +57,9 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if err := p.DestinationThrottle.Validate(); err != nil {
+		return err
+	}
 	if p.MalwareRequired && p.ClamAVAddress == "" {
 		return fmt.Errorf("malware_required needs clamav_address")
 	}
