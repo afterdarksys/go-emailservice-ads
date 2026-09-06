@@ -1,5 +1,7 @@
 # Multi-stage build for go-emailservice-ads
 FROM golang:1.24-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -15,18 +17,20 @@ RUN go mod download
 COPY . .
 
 # Build both binaries
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/goemailservices ./cmd/goemailservices
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailctl ./cmd/mailctl
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailflow-probe ./cmd/mailflow-probe
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-backup ./cmd/mailhub-backup
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-failover ./cmd/mailhub-failover
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /build/bin/mailhub-log ./cmd/mailhub-log
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/goemailservices ./cmd/goemailservices
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailctl ./cmd/mailctl
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailflow-probe ./cmd/mailflow-probe
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-backup ./cmd/mailhub-backup
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-failover ./cmd/mailhub-failover
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-log ./cmd/mailhub-log
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-preserve ./cmd/mailhub-preserve
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-authcheck ./cmd/mailhub-authcheck
 
 # Final stage
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata bash curl
+RUN apk add --no-cache ca-certificates tzdata bash curl aws-cli
 
 # Create non-root user (mailservice group/user to avoid conflict with existing mail group)
 RUN addgroup -g 1000 mailservice && \
@@ -42,6 +46,8 @@ COPY --from=builder /build/bin/mailflow-probe /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-backup /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-failover /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-log /usr/local/bin/
+COPY --from=builder /build/bin/mailhub-preserve /usr/local/bin/
+COPY --from=builder /build/bin/mailhub-authcheck /usr/local/bin/
 
 # Copy default configuration
 COPY config.yaml /opt/goemailservices/config.yaml
