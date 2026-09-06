@@ -2,9 +2,14 @@ package security
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +31,8 @@ type MTASTSPolicy struct {
 
 // MTASTSManager handles MTA-STS policy fetching and caching
 type MTASTSManager struct {
+	cachePath  string
+	lookupTXT  func(context.Context, string) ([]string, error)
 	logger     *zap.Logger
 	httpClient *http.Client
 	cache      map[string]*MTASTSCacheEntry
@@ -42,9 +49,11 @@ type MTASTSCacheEntry struct {
 // NewMTASTSManager creates a new MTA-STS manager
 func NewMTASTSManager(logger *zap.Logger) *MTASTSManager {
 	return &MTASTSManager{
-		logger: logger,
+		logger:    logger,
+		lookupTXT: net.DefaultResolver.LookupTXT,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 			Transport: &http.Transport{
 				TLSHandshakeTimeout:   5 * time.Second,
 				ResponseHeaderTimeout: 5 * time.Second,
@@ -68,6 +77,22 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 	}
 	m.mu.RUnlock()
 
+	records, err := m.lookupTXT(ctx, "_mta-sts."+domain)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, record := range records {
+		if strings.HasPrefix(record, "v=STSv1;") && strings.Contains(record, "id=") {
+			if found {
+				return nil, fmt.Errorf("multiple MTA-STS records")
+			}
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("no published MTA-STS policy")
+	}
 	// Fetch policy from well-known URL
 	// RFC 8461 Section 3.2: https://mta-sts.example.com/.well-known/mta-sts.txt
 	policyURL := fmt.Sprintf("https://mta-sts.%s/.well-known/mta-sts.txt", domain)
@@ -91,11 +116,14 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 	}
 
 	// Read and parse policy
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 65537))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read policy: %w", err)
 	}
 
+	if len(body) > 65536 {
+		return nil, fmt.Errorf("MTA-STS policy too large")
+	}
 	policy, err := m.parsePolicy(string(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse policy: %w", err)
@@ -112,6 +140,10 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 		Policy:    policy,
 		FetchedAt: time.Now(),
 		ExpiresAt: time.Now().Add(time.Duration(policy.MaxAge) * time.Second),
+	}
+	if err := m.saveCache(); err != nil {
+		m.mu.Unlock()
+		return nil, err
 	}
 	m.mu.Unlock()
 
@@ -130,6 +162,7 @@ func (m *MTASTSManager) parsePolicy(content string) (*MTASTSPolicy, error) {
 		MX: make([]string, 0),
 	}
 
+	seen := map[string]bool{}
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -139,12 +172,16 @@ func (m *MTASTSManager) parsePolicy(content string) (*MTASTSPolicy, error) {
 
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) != 2 {
-			continue
+			return nil, fmt.Errorf("malformed policy line")
 		}
 
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
 
+		if key != "mx" && seen[key] {
+			return nil, fmt.Errorf("duplicate policy field %s", key)
+		}
+		seen[key] = true
 		switch key {
 		case "version":
 			policy.Version = value
@@ -153,13 +190,17 @@ func (m *MTASTSManager) parsePolicy(content string) (*MTASTSPolicy, error) {
 		case "mx":
 			policy.MX = append(policy.MX, value)
 		case "max_age":
-			var maxAge int
-			if _, err := fmt.Sscanf(value, "%d", &maxAge); err == nil {
-				policy.MaxAge = maxAge
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, err
 			}
+			policy.MaxAge = n
 		}
 	}
 
+	if !seen["max_age"] {
+		return nil, fmt.Errorf("missing max_age")
+	}
 	return policy, nil
 }
 
@@ -239,6 +280,8 @@ func (m *MTASTSManager) ShouldEnforceTLS(ctx context.Context, domain, mxHost str
 // matchesMXPattern checks if an MX host matches a pattern
 // RFC 8461 Section 3.2 - MX patterns support wildcards
 func (m *MTASTSManager) matchesMXPattern(mxHost, pattern string) bool {
+	mxHost = strings.ToLower(strings.TrimSuffix(mxHost, "."))
+	pattern = strings.ToLower(strings.TrimSuffix(pattern, "."))
 	// Exact match
 	if mxHost == pattern {
 		return true
@@ -247,7 +290,7 @@ func (m *MTASTSManager) matchesMXPattern(mxHost, pattern string) bool {
 	// Wildcard match (e.g., *.example.com)
 	if strings.HasPrefix(pattern, "*.") {
 		suffix := pattern[2:]
-		return strings.HasSuffix(mxHost, "."+suffix) || mxHost == suffix
+		return strings.HasSuffix(mxHost, "."+suffix) && !strings.Contains(strings.TrimSuffix(mxHost, "."+suffix), ".")
 	}
 
 	return false
@@ -283,4 +326,42 @@ func (m *MTASTSManager) GetCacheStats() map[string]interface{} {
 		"active":  active,
 		"expired": expired,
 	}
+}
+
+func (m *MTASTSManager) SetCachePath(path string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cachePath = path
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return os.MkdirAll(filepath.Dir(path), 0700)
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, &m.cache)
+}
+
+// saveCache is called under the policy lock before exposing a new policy.
+func (m *MTASTSManager) saveCache() error {
+	if m.cachePath == "" {
+		return nil
+	}
+	raw, err := json.Marshal(m.cache)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(m.cachePath), ".sts-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err = tmp.Write(raw); err == nil {
+		err = tmp.Sync()
+	}
+	tmp.Close()
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), m.cachePath)
 }

@@ -9,33 +9,33 @@ type ActionType string
 
 const (
 	// RFC 5228 Sieve actions
-	ActionKeep     ActionType = "keep"      // Keep message in inbox
-	ActionDiscard  ActionType = "discard"   // Silently discard
-	ActionReject   ActionType = "reject"    // Reject with message
-	ActionFileinto ActionType = "fileinto"  // File into folder
-	ActionRedirect ActionType = "redirect"  // Forward to address
+	ActionKeep     ActionType = "keep"     // Keep message in inbox
+	ActionDiscard  ActionType = "discard"  // Silently discard
+	ActionReject   ActionType = "reject"   // Reject with message
+	ActionFileinto ActionType = "fileinto" // File into folder
+	ActionRedirect ActionType = "redirect" // Forward to address
 
 	// Extended actions
-	ActionAccept      ActionType = "accept"       // Explicitly accept
-	ActionDefer       ActionType = "defer"        // Temporary failure
-	ActionQuarantine  ActionType = "quarantine"   // Quarantine message
-	ActionTag         ActionType = "tag"          // Add tags/flags
-	ActionModify      ActionType = "modify"       // Modify message
-	ActionNotify      ActionType = "notify"       // Send notification
-	ActionVacation    ActionType = "vacation"     // Vacation responder
+	ActionAccept     ActionType = "accept"     // Explicitly accept
+	ActionDefer      ActionType = "defer"      // Temporary failure
+	ActionQuarantine ActionType = "quarantine" // Quarantine message
+	ActionTag        ActionType = "tag"        // Add tags/flags
+	ActionModify     ActionType = "modify"     // Modify message
+	ActionNotify     ActionType = "notify"     // Send notification
+	ActionVacation   ActionType = "vacation"   // Vacation responder
 
 	// MailScript actions
-	ActionDrop         ActionType = "drop"          // Forcefully drop message
-	ActionBounce       ActionType = "bounce"        // Bounce back to sender
-	ActionAutoReply    ActionType = "auto_reply"    // Send automated reply
-	ActionAddToDigest  ActionType = "add_to_digest" // Add to digest queue
-	ActionDivertTo     ActionType = "divert_to"     // Divert to different address
-	ActionScreenTo     ActionType = "screen_to"     // Screen/copy to address
-	ActionSMTPError    ActionType = "smtp_error"    // Reply with SMTP error code
-	ActionSMTPDSN      ActionType = "smtp_dsn"      // Reply with SMTP DSN
+	ActionDrop            ActionType = "drop"              // Forcefully drop message
+	ActionBounce          ActionType = "bounce"            // Bounce back to sender
+	ActionAutoReply       ActionType = "auto_reply"        // Send automated reply
+	ActionAddToDigest     ActionType = "add_to_digest"     // Add to digest queue
+	ActionDivertTo        ActionType = "divert_to"         // Divert to different address
+	ActionScreenTo        ActionType = "screen_to"         // Screen/copy to address
+	ActionSMTPError       ActionType = "smtp_error"        // Reply with SMTP error code
+	ActionSMTPDSN         ActionType = "smtp_dsn"          // Reply with SMTP DSN
 	ActionForceSecondPass ActionType = "force_second_pass" // Route to another server
-	ActionSkipCheck    ActionType = "skip_check"    // Skip security checks
-	ActionSetDLP       ActionType = "set_dlp"       // Set DLP policy
+	ActionSkipCheck       ActionType = "skip_check"        // Skip security checks
+	ActionSetDLP          ActionType = "set_dlp"           // Set DLP policy
 )
 
 // Action represents the result of policy evaluation
@@ -48,17 +48,17 @@ type Action struct {
 	Priority int        // Action priority (higher = more important)
 
 	// Extended fields
-	RetryAfter int        // Seconds to wait before retry (for defer)
-	Vacation   *Vacation  // Vacation responder details
-	Notify     *Notify    // Notification details
+	RetryAfter int       // Seconds to wait before retry (for defer)
+	Vacation   *Vacation // Vacation responder details
+	Notify     *Notify   // Notification details
 
 	// MailScript-specific fields
-	SMTPCode       int    // SMTP error code (for smtp_error)
-	SMTPDSN        string // SMTP DSN string (for smtp_dsn)
-	AutoReplyText  string // Auto-reply message text
-	CheckToSkip    string // Type of check to skip (malware/spam/whitelist)
-	DLPMode        string // DLP policy mode
-	DLPTarget      string // DLP target (user/domain)
+	SMTPCode          int    // SMTP error code (for smtp_error)
+	SMTPDSN           string // SMTP DSN string (for smtp_dsn)
+	AutoReplyText     string // Auto-reply message text
+	CheckToSkip       string // Type of check to skip (malware/spam/whitelist)
+	DLPMode           string // DLP policy mode
+	DLPTarget         string // DLP target (user/domain)
 	ForceSecondServer string // Server for second pass
 }
 
@@ -111,11 +111,11 @@ const (
 type DKIMResult string
 
 const (
-	DKIMNone    DKIMResult = "none"
-	DKIMPass    DKIMResult = "pass"
-	DKIMFail    DKIMResult = "fail"
-	DKIMPolicy  DKIMResult = "policy"
-	DKIMNeutral DKIMResult = "neutral"
+	DKIMNone      DKIMResult = "none"
+	DKIMPass      DKIMResult = "pass"
+	DKIMFail      DKIMResult = "fail"
+	DKIMPolicy    DKIMResult = "policy"
+	DKIMNeutral   DKIMResult = "neutral"
 	DKIMTempError DKIMResult = "temperror"
 	DKIMPermError DKIMResult = "permerror"
 )
@@ -135,9 +135,9 @@ const (
 type ARCResult string
 
 const (
-	ARCNone    ARCResult = "none"
-	ARCPass    ARCResult = "pass"
-	ARCFail    ARCResult = "fail"
+	ARCNone ARCResult = "none"
+	ARCPass ARCResult = "pass"
+	ARCFail ARCResult = "fail"
 )
 
 // RBLResult represents a RBL lookup result
@@ -155,7 +155,7 @@ type ReputationScore struct {
 
 // PolicyScope defines where a policy applies
 type PolicyScope struct {
-	Type string   // "global", "user", "group", "domain", "direction"
+	Type string // "global", "user", "group", "domain", "direction"
 
 	// Type-specific fields
 	Users     []string // For type="user"
@@ -174,17 +174,15 @@ const (
 
 // PolicyConfig represents a single policy configuration
 type PolicyConfig struct {
-	Name       string
-	Type       PolicyType
-	Enabled    bool
-	Priority   int // Lower number = higher priority
-	Scope      PolicyScope
-	ScriptPath string
-	Script     string // Inline script (alternative to ScriptPath)
-
-	// Execution limits
-	MaxExecutionTime time.Duration // Default: 10s
-	MaxMemory        int64         // Default: 128MB
+	Name             string        `yaml:"name"`
+	Type             PolicyType    `yaml:"type"`
+	Enabled          bool          `yaml:"enabled"`
+	Priority         int           `yaml:"priority"`
+	Scope            PolicyScope   `yaml:"scope"`
+	ScriptPath       string        `yaml:"script_path"`
+	Script           string        `yaml:"script"`
+	MaxExecutionTime time.Duration `yaml:"max_execution_time"`
+	MaxMemory        int64         `yaml:"max_memory"`
 }
 
 // PolicyResult represents the evaluation result from a policy

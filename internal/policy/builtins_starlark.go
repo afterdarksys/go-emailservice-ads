@@ -1,12 +1,12 @@
 package policy
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"strings"
 
-	
 	"go.starlark.net/starlark"
 )
 
@@ -15,18 +15,29 @@ func CreateStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 	return createStarlarkBuiltins(emailCtx)
 }
 
-// ResetGlobalAction resets the global action state (exported)
-func ResetGlobalAction() {
-	globalAction = nil
-	globalHeaders = nil
+// executionState belongs to one Starlark thread, never another SMTP session.
+type executionState struct {
+	Action  *Action
+	Headers []Header
 }
 
-// GetGlobalAction returns the current global action (exported)
-func GetGlobalAction() *Action {
-	return globalAction
+func state(thread *starlark.Thread) *executionState {
+	if v, ok := thread.Local("mail-state").(*executionState); ok {
+		return v
+	}
+	v := &executionState{}
+	thread.SetLocal("mail-state", v)
+	return v
+}
+func ThreadAction(thread *starlark.Thread) *Action {
+	v := state(thread)
+	if v.Action == nil {
+		v.Action = &Action{Type: ActionKeep}
+	}
+	v.Action.Headers = v.Headers
+	return v.Action
 }
 
-// createStarlarkBuiltins creates all email-specific built-in functions for Starlark
 func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 	return starlark.StringDict{
 		// === Email Inspection ===
@@ -42,20 +53,20 @@ func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 		"get_remote_ip": starlark.NewBuiltin("get_remote_ip", makeGetRemoteIP(emailCtx)),
 
 		// === Security Checks ===
-		"check_spf":   starlark.NewBuiltin("check_spf", makeCheckSPF(emailCtx)),
-		"check_dkim":  starlark.NewBuiltin("check_dkim", makeCheckDKIM(emailCtx)),
-		"check_dmarc": starlark.NewBuiltin("check_dmarc", makeCheckDMARC(emailCtx)),
-		"check_rbl":   starlark.NewBuiltin("check_rbl", makeCheckRBL(emailCtx)),
+		"check_spf":         starlark.NewBuiltin("check_spf", makeCheckSPF(emailCtx)),
+		"check_dkim":        starlark.NewBuiltin("check_dkim", makeCheckDKIM(emailCtx)),
+		"check_dmarc":       starlark.NewBuiltin("check_dmarc", makeCheckDMARC(emailCtx)),
+		"check_rbl":         starlark.NewBuiltin("check_rbl", makeCheckRBL(emailCtx)),
 		"get_ip_reputation": starlark.NewBuiltin("get_ip_reputation", makeGetIPReputation(emailCtx)),
 
 		// === Actions ===
-		"accept":       starlark.NewBuiltin("accept", makeAccept()),
-		"reject":       starlark.NewBuiltin("reject", makeReject()),
-		"defer":        starlark.NewBuiltin("defer", makeDefer()),
-		"discard":      starlark.NewBuiltin("discard", makeDiscard()),
-		"redirect":     starlark.NewBuiltin("redirect", makeRedirect()),
-		"fileinto":     starlark.NewBuiltin("fileinto", makeFileinto()),
-		"add_header":   starlark.NewBuiltin("add_header", makeAddHeader()),
+		"accept":        starlark.NewBuiltin("accept", makeAccept()),
+		"reject":        starlark.NewBuiltin("reject", makeReject()),
+		"defer":         starlark.NewBuiltin("defer", makeDefer()),
+		"discard":       starlark.NewBuiltin("discard", makeDiscard()),
+		"redirect":      starlark.NewBuiltin("redirect", makeRedirect()),
+		"fileinto":      starlark.NewBuiltin("fileinto", makeFileinto()),
+		"add_header":    starlark.NewBuiltin("add_header", makeAddHeader()),
 		"remove_header": starlark.NewBuiltin("remove_header", makeRemoveHeader()),
 
 		// === Utilities ===
@@ -67,23 +78,23 @@ func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 
 		// === MailScript Extensions ===
 		// Content search
-		"search_body":   starlark.NewBuiltin("search_body", makeSearchBody(emailCtx)),
-		"regex_match":   starlark.NewBuiltin("regex_match", makeRegexMatch()),
+		"search_body": starlark.NewBuiltin("search_body", makeSearchBody(emailCtx)),
+		"regex_match": starlark.NewBuiltin("regex_match", makeRegexMatch()),
 
 		// Message metadata
-		"getmimetype":    starlark.NewBuiltin("getmimetype", makeGetMimeType(emailCtx)),
-		"getspamscore":   starlark.NewBuiltin("getspamscore", makeGetSpamScore(emailCtx)),
-		"getvirusstatus": starlark.NewBuiltin("getvirusstatus", makeGetVirusStatus(emailCtx)),
-		"body_size":      starlark.NewBuiltin("body_size", makeBodySize(emailCtx)),
-		"header_size":    starlark.NewBuiltin("header_size", makeHeaderSize(emailCtx)),
-		"num_envelope":   starlark.NewBuiltin("num_envelope", makeNumEnvelope(emailCtx)),
+		"getmimetype":       starlark.NewBuiltin("getmimetype", makeGetMimeType(emailCtx)),
+		"getspamscore":      starlark.NewBuiltin("getspamscore", makeGetSpamScore(emailCtx)),
+		"getvirusstatus":    starlark.NewBuiltin("getvirusstatus", makeGetVirusStatus(emailCtx)),
+		"body_size":         starlark.NewBuiltin("body_size", makeBodySize(emailCtx)),
+		"header_size":       starlark.NewBuiltin("header_size", makeHeaderSize(emailCtx)),
+		"num_envelope":      starlark.NewBuiltin("num_envelope", makeNumEnvelope(emailCtx)),
 		"get_recipient_did": starlark.NewBuiltin("get_recipient_did", makeGetRecipientDID(emailCtx)),
 
 		// Additional actions
-		"quarantine":        starlark.NewBuiltin("quarantine", makeQuarantine()),
-		"drop":              starlark.NewBuiltin("drop", makeDrop()),
-		"bounce":            starlark.NewBuiltin("bounce", makeBounce()),
-		"auto_reply":        starlark.NewBuiltin("auto_reply", makeAutoReply()),
+		"quarantine":         starlark.NewBuiltin("quarantine", makeQuarantine()),
+		"drop":               starlark.NewBuiltin("drop", makeDrop()),
+		"bounce":             starlark.NewBuiltin("bounce", makeBounce()),
+		"auto_reply":         starlark.NewBuiltin("auto_reply", makeAutoReply()),
 		"add_to_next_digest": starlark.NewBuiltin("add_to_next_digest", makeAddToNextDigest()),
 
 		// SMTP responses
@@ -91,8 +102,8 @@ func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 		"reply_with_smtp_dsn":   starlark.NewBuiltin("reply_with_smtp_dsn", makeReplyWithSMTPDSN()),
 
 		// Routing
-		"divert_to":        starlark.NewBuiltin("divert_to", makeDivertTo()),
-		"screen_to":        starlark.NewBuiltin("screen_to", makeScreenTo()),
+		"divert_to":         starlark.NewBuiltin("divert_to", makeDivertTo()),
+		"screen_to":         starlark.NewBuiltin("screen_to", makeScreenTo()),
 		"force_second_pass": starlark.NewBuiltin("force_second_pass", makeForceSecondPass()),
 
 		// Security controls
@@ -138,7 +149,7 @@ func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 // === Email Inspection Functions ===
 
 func makeHasHeader(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name string
 		if err := starlark.UnpackArgs("has_header", args, kwargs, "name", &name); err != nil {
 			return nil, err
@@ -148,7 +159,7 @@ func makeHasHeader(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, 
 }
 
 func makeGetHeader(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name string
 		if err := starlark.UnpackArgs("get_header", args, kwargs, "name", &name); err != nil {
 			return nil, err
@@ -158,7 +169,7 @@ func makeGetHeader(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, 
 }
 
 func makeGetAllHeaders(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name string
 		if err := starlark.UnpackArgs("get_all_headers", args, kwargs, "name", &name); err != nil {
 			return nil, err
@@ -173,7 +184,7 @@ func makeGetAllHeaders(ctx *EmailContext) func(*starlark.Thread, *starlark.Built
 }
 
 func makeGetBody(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_body", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -186,7 +197,7 @@ func makeGetBody(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, st
 }
 
 func makeGetAttachments(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_attachments", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -202,7 +213,7 @@ func makeGetAttachments(ctx *EmailContext) func(*starlark.Thread, *starlark.Buil
 // === Envelope Functions ===
 
 func makeGetFrom(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_from", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -211,7 +222,7 @@ func makeGetFrom(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, st
 }
 
 func makeGetTo(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_to", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -224,7 +235,7 @@ func makeGetTo(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, star
 }
 
 func makeGetRemoteIP(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_remote_ip", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -235,7 +246,7 @@ func makeGetRemoteIP(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin
 // === Security Check Functions ===
 
 func makeCheckSPF(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("check_spf", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -244,7 +255,7 @@ func makeCheckSPF(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 }
 
 func makeCheckDKIM(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("check_dkim", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -253,7 +264,7 @@ func makeCheckDKIM(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, 
 }
 
 func makeCheckDMARC(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("check_dmarc", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -262,7 +273,7 @@ func makeCheckDMARC(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin,
 }
 
 func makeCheckRBL(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var server string
 		if err := starlark.UnpackArgs("check_rbl", args, kwargs, "server", &server); err != nil {
 			return nil, err
@@ -286,7 +297,7 @@ func makeCheckRBL(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 		query := fmt.Sprintf("%s.%s", reversed, server)
 
 		// Simple DNS lookup to check if listed
-		addrs, err := net.LookupHost(query)
+		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
 		listed := err == nil && len(addrs) > 0
 
 		return starlark.Bool(listed), nil
@@ -294,7 +305,7 @@ func makeCheckRBL(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 }
 
 func makeGetIPReputation(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_ip_reputation", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -304,31 +315,28 @@ func makeGetIPReputation(ctx *EmailContext) func(*starlark.Thread, *starlark.Bui
 
 // === Action Functions ===
 
-var globalAction *Action
-var globalHeaders []Header
-
 func makeAccept() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var reason string
 		if err := starlark.UnpackArgs("accept", args, kwargs, "reason?", &reason); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:    ActionAccept,
 			Reason:  reason,
-			Headers: globalHeaders,
+			Headers: state(thread).Headers,
 		}
 		return starlark.None, nil
 	}
 }
 
 func makeReject() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var reason string
 		if err := starlark.UnpackArgs("reject", args, kwargs, "reason", &reason); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:   ActionReject,
 			Reason: reason,
 		}
@@ -337,13 +345,13 @@ func makeReject() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []st
 }
 
 func makeDefer() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var reason string
 		var retryAfter int = 300 // Default 5 minutes
 		if err := starlark.UnpackArgs("defer", args, kwargs, "reason", &reason, "retry_after?", &retryAfter); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:       ActionDefer,
 			Reason:     reason,
 			RetryAfter: retryAfter,
@@ -353,12 +361,12 @@ func makeDefer() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []sta
 }
 
 func makeDiscard() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var reason string
 		if err := starlark.UnpackArgs("discard", args, kwargs, "reason?", &reason); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:   ActionDiscard,
 			Reason: reason,
 		}
@@ -367,12 +375,12 @@ func makeDiscard() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 }
 
 func makeRedirect() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var target string
 		if err := starlark.UnpackArgs("redirect", args, kwargs, "target", &target); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:   ActionRedirect,
 			Target: target,
 		}
@@ -381,27 +389,27 @@ func makeRedirect() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 }
 
 func makeFileinto() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var folder string
 		if err := starlark.UnpackArgs("fileinto", args, kwargs, "folder", &folder); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:    ActionFileinto,
 			Target:  folder,
-			Headers: globalHeaders,
+			Headers: state(thread).Headers,
 		}
 		return starlark.None, nil
 	}
 }
 
 func makeAddHeader() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name, value string
 		if err := starlark.UnpackArgs("add_header", args, kwargs, "name", &name, "value", &value); err != nil {
 			return nil, err
 		}
-		globalHeaders = append(globalHeaders, Header{
+		state(thread).Headers = append(state(thread).Headers, Header{
 			Name:   name,
 			Value:  value,
 			Action: "add",
@@ -411,12 +419,12 @@ func makeAddHeader() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, [
 }
 
 func makeRemoveHeader() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var name string
 		if err := starlark.UnpackArgs("remove_header", args, kwargs, "name", &name); err != nil {
 			return nil, err
 		}
-		globalHeaders = append(globalHeaders, Header{
+		state(thread).Headers = append(state(thread).Headers, Header{
 			Name:   name,
 			Action: "remove",
 		})
@@ -427,7 +435,7 @@ func makeRemoveHeader() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple
 // === Utility Functions ===
 
 func makeMatchPattern() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var text, pattern string
 		if err := starlark.UnpackArgs("match_pattern", args, kwargs, "text", &text, "pattern", &pattern); err != nil {
 			return nil, err
@@ -442,7 +450,7 @@ func makeMatchPattern() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple
 }
 
 func makeLookupDNS() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain, recordType string
 		if err := starlark.UnpackArgs("lookup_dns", args, kwargs, "domain", &domain, "type", &recordType); err != nil {
 			return nil, err
@@ -450,7 +458,7 @@ func makeLookupDNS() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, [
 
 		// Simple implementation - only support A records for now
 		if recordType == "A" || recordType == "a" {
-			addrs, err := net.LookupHost(domain)
+			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
 			if err != nil {
 				return starlark.NewList(nil), nil
 			}
@@ -466,7 +474,7 @@ func makeLookupDNS() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, [
 }
 
 func makeIsInGroup(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var email, group string
 		if err := starlark.UnpackArgs("is_in_group", args, kwargs, "email", &email, "group", &group); err != nil {
 			return nil, err
@@ -495,7 +503,7 @@ func makeIsInGroup(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, 
 }
 
 func makeLog() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var level, message string
 		if err := starlark.UnpackArgs("log", args, kwargs, "level", &level, "message", &message); err != nil {
 			return nil, err
@@ -507,17 +515,17 @@ func makeLog() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starl
 }
 
 func makeNotify() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var target, message string
 		if err := starlark.UnpackArgs("notify", args, kwargs, "target", &target, "message", &message); err != nil {
 			return nil, err
 		}
 
 		// Store notification in action
-		if globalAction == nil {
-			globalAction = &Action{Type: ActionKeep}
+		if state(thread).Action == nil {
+			state(thread).Action = &Action{Type: ActionKeep}
 		}
-		globalAction.Notify = &Notify{
+		state(thread).Action.Notify = &Notify{
 			Method:  "mailto",
 			Target:  target,
 			Message: message,
@@ -583,7 +591,7 @@ func reverseIP(ip net.IP) string {
 // Content Search Functions
 
 func makeSearchBody(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var text string
 		if err := starlark.UnpackArgs("search_body", args, kwargs, "text", &text); err != nil {
 			return nil, err
@@ -594,7 +602,7 @@ func makeSearchBody(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin,
 }
 
 func makeRegexMatch() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var pattern, text string
 		if err := starlark.UnpackArgs("regex_match", args, kwargs, "pattern", &pattern, "text", &text); err != nil {
 			return nil, err
@@ -610,7 +618,7 @@ func makeRegexMatch() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, 
 // Message Metadata Functions
 
 func makeGetMimeType(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("getmimetype", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -623,7 +631,7 @@ func makeGetMimeType(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin
 }
 
 func makeGetSpamScore(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("getspamscore", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -632,7 +640,7 @@ func makeGetSpamScore(ctx *EmailContext) func(*starlark.Thread, *starlark.Builti
 }
 
 func makeGetVirusStatus(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("getvirusstatus", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -644,7 +652,7 @@ func makeGetVirusStatus(ctx *EmailContext) func(*starlark.Thread, *starlark.Buil
 }
 
 func makeBodySize(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("body_size", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -656,7 +664,7 @@ func makeBodySize(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 }
 
 func makeHeaderSize(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("header_size", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -675,7 +683,7 @@ func makeHeaderSize(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin,
 }
 
 func makeNumEnvelope(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("num_envelope", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -684,7 +692,7 @@ func makeNumEnvelope(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin
 }
 
 func makeGetRecipientDID(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_recipient_did", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -695,24 +703,24 @@ func makeGetRecipientDID(ctx *EmailContext) func(*starlark.Thread, *starlark.Bui
 // Action Functions
 
 func makeQuarantine() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("quarantine", args, kwargs); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:    ActionQuarantine,
-			Headers: globalHeaders,
+			Headers: state(thread).Headers,
 		}
 		return starlark.None, nil
 	}
 }
 
 func makeDrop() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("drop", args, kwargs); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type: ActionDrop,
 		}
 		return starlark.None, nil
@@ -720,11 +728,11 @@ func makeDrop() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []star
 }
 
 func makeBounce() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("bounce", args, kwargs); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type: ActionBounce,
 		}
 		return starlark.None, nil
@@ -732,12 +740,12 @@ func makeBounce() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []st
 }
 
 func makeAutoReply() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var text string
 		if err := starlark.UnpackArgs("auto_reply", args, kwargs, "text", &text); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:          ActionAutoReply,
 			AutoReplyText: text,
 		}
@@ -746,11 +754,11 @@ func makeAutoReply() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, [
 }
 
 func makeAddToNextDigest() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("add_to_next_digest", args, kwargs); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type: ActionAddToDigest,
 		}
 		return starlark.Bool(true), nil
@@ -760,12 +768,12 @@ func makeAddToNextDigest() func(*starlark.Thread, *starlark.Builtin, starlark.Tu
 // SMTP Response Functions
 
 func makeReplyWithSMTPError() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var code int
 		if err := starlark.UnpackArgs("reply_with_smtp_error", args, kwargs, "code", &code); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:     ActionSMTPError,
 			SMTPCode: code,
 		}
@@ -774,12 +782,12 @@ func makeReplyWithSMTPError() func(*starlark.Thread, *starlark.Builtin, starlark
 }
 
 func makeReplyWithSMTPDSN() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var dsn string
 		if err := starlark.UnpackArgs("reply_with_smtp_dsn", args, kwargs, "dsn", &dsn); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:    ActionSMTPDSN,
 			SMTPDSN: dsn,
 		}
@@ -790,12 +798,12 @@ func makeReplyWithSMTPDSN() func(*starlark.Thread, *starlark.Builtin, starlark.T
 // Routing Functions
 
 func makeDivertTo() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var emailAddress string
 		if err := starlark.UnpackArgs("divert_to", args, kwargs, "email_address", &emailAddress); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:   ActionDivertTo,
 			Target: emailAddress,
 		}
@@ -804,12 +812,12 @@ func makeDivertTo() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 }
 
 func makeScreenTo() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var emailAddress string
 		if err := starlark.UnpackArgs("screen_to", args, kwargs, "email_address", &emailAddress); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:   ActionScreenTo,
 			Target: emailAddress,
 		}
@@ -818,12 +826,12 @@ func makeScreenTo() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 }
 
 func makeForceSecondPass() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var mailserver string
 		if err := starlark.UnpackArgs("force_second_pass", args, kwargs, "mailserver", &mailserver); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:              ActionForceSecondPass,
 			ForceSecondServer: mailserver,
 		}
@@ -834,12 +842,12 @@ func makeForceSecondPass() func(*starlark.Thread, *starlark.Builtin, starlark.Tu
 // Security Control Functions
 
 func makeSkipMalwareCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var sender string
 		if err := starlark.UnpackArgs("skip_malware_check", args, kwargs, "sender", &sender); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:        ActionSkipCheck,
 			CheckToSkip: "malware",
 			Target:      sender,
@@ -849,12 +857,12 @@ func makeSkipMalwareCheck() func(*starlark.Thread, *starlark.Builtin, starlark.T
 }
 
 func makeSkipSpamCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var sender string
 		if err := starlark.UnpackArgs("skip_spam_check", args, kwargs, "sender", &sender); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:        ActionSkipCheck,
 			CheckToSkip: "spam",
 			Target:      sender,
@@ -864,12 +872,12 @@ func makeSkipSpamCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tupl
 }
 
 func makeSkipWhitelistCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var ip string
 		if err := starlark.UnpackArgs("skip_whitelist_check", args, kwargs, "ip", &ip); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:        ActionSkipCheck,
 			CheckToSkip: "whitelist",
 			Target:      ip,
@@ -879,12 +887,12 @@ func makeSkipWhitelistCheck() func(*starlark.Thread, *starlark.Builtin, starlark
 }
 
 func makeSetDLP() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var mode, target string
 		if err := starlark.UnpackArgs("set_dlp", args, kwargs, "mode", &mode, "target", &target); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:      ActionSetDLP,
 			DLPMode:   mode,
 			DLPTarget: target,
@@ -894,12 +902,12 @@ func makeSetDLP() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []st
 }
 
 func makeSkipDLP() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var mode, target string
 		if err := starlark.UnpackArgs("skip_dlp", args, kwargs, "mode", &mode, "target", &target); err != nil {
 			return nil, err
 		}
-		globalAction = &Action{
+		state(thread).Action = &Action{
 			Type:      ActionSetDLP,
 			DLPMode:   "skip_" + mode,
 			DLPTarget: target,
@@ -911,7 +919,7 @@ func makeSkipDLP() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 // Logging Functions
 
 func makeLogEntry() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var message string
 		if err := starlark.UnpackArgs("log_entry", args, kwargs, "message", &message); err != nil {
 			return nil, err
@@ -924,7 +932,7 @@ func makeLogEntry() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 // Content Filter Functions
 
 func makeGetContentFilter(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_content_filter", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -933,7 +941,7 @@ func makeGetContentFilter(ctx *EmailContext) func(*starlark.Thread, *starlark.Bu
 }
 
 func makeGetContentFilterName(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_content_filter_name", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -942,7 +950,7 @@ func makeGetContentFilterName(ctx *EmailContext) func(*starlark.Thread, *starlar
 }
 
 func makeGetContentFilterRules(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_content_filter_rules", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -952,7 +960,7 @@ func makeGetContentFilterRules(ctx *EmailContext) func(*starlark.Thread, *starla
 }
 
 func makeSetContentFilterRules() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var rule string
 		if err := starlark.UnpackArgs("set_content_filter_rules", args, kwargs, "rule", &rule); err != nil {
 			return nil, err
@@ -965,7 +973,7 @@ func makeSetContentFilterRules() func(*starlark.Thread, *starlark.Builtin, starl
 // Instance Functions
 
 func makeGetInstance(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_instance", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -974,7 +982,7 @@ func makeGetInstance(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin
 }
 
 func makeGetInstanceName(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_instance_name", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -985,7 +993,7 @@ func makeGetInstanceName(ctx *EmailContext) func(*starlark.Thread, *starlark.Bui
 // DNS and Network Functions
 
 func makeGetSenderIP(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_sender_ip", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -994,7 +1002,7 @@ func makeGetSenderIP(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin
 }
 
 func makeGetSenderDomain(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_sender_domain", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -1003,23 +1011,23 @@ func makeGetSenderDomain(ctx *EmailContext) func(*starlark.Thread, *starlark.Bui
 }
 
 func makeDNSCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("dns_check", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		_, err := net.LookupHost(domain)
+		_, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
 		return starlark.Bool(err == nil), nil
 	}
 }
 
 func makeDNSResolution() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("dns_resolution", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		addrs, err := net.LookupHost(domain)
+		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
 		if err != nil || len(addrs) == 0 {
 			return starlark.String(""), nil
 		}
@@ -1028,7 +1036,7 @@ func makeDNSResolution() func(*starlark.Thread, *starlark.Builtin, starlark.Tupl
 }
 
 func makeDomainResolution() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var sender string
 		var verify bool
 		if err := starlark.UnpackArgs("domain_resolution", args, kwargs, "sender", &sender, "verify", &verify); err != nil {
@@ -1040,13 +1048,13 @@ func makeDomainResolution() func(*starlark.Thread, *starlark.Builtin, starlark.T
 			return starlark.Bool(false), nil
 		}
 		domain := parts[1]
-		_, err := net.LookupHost(domain)
+		_, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
 		return starlark.Bool(err == nil), nil
 	}
 }
 
 func makeRBLCheck(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var ip, rblServer string
 		if err := starlark.UnpackArgs("rbl_check", args, kwargs, "ip", &ip, "rbl_server?", &rblServer); err != nil {
 			return nil, err
@@ -1062,13 +1070,13 @@ func makeRBLCheck(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 
 		reversed := reverseIP(parsedIP)
 		query := fmt.Sprintf("%s.%s", reversed, rblServer)
-		addrs, err := net.LookupHost(query)
+		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
 		return starlark.Bool(err == nil && len(addrs) > 0), nil
 	}
 }
 
 func makeGetRBLStatus(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_rbl_status", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -1085,23 +1093,23 @@ func makeGetRBLStatus(ctx *EmailContext) func(*starlark.Thread, *starlark.Builti
 }
 
 func makeValidMX() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("valid_mx", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.LookupMX(domain)
+		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
 		return starlark.Bool(err == nil && len(mxRecords) > 0), nil
 	}
 }
 
 func makeGetMXRecords() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("get_mx_records", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.LookupMX(domain)
+		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
 		if err != nil {
 			return starlark.NewList(nil), nil
 		}
@@ -1114,7 +1122,7 @@ func makeGetMXRecords() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple
 }
 
 func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain, rblServer string
 		if err := starlark.UnpackArgs("mx_in_rbl", args, kwargs, "domain", &domain, "rbl_server?", &rblServer); err != nil {
 			return nil, err
@@ -1123,13 +1131,13 @@ func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 			rblServer = "zen.spamhaus.org"
 		}
 
-		mxRecords, err := net.LookupMX(domain)
+		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
 		if err != nil {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.LookupHost(mx.Host)
+			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
 			if err != nil {
 				continue
 			}
@@ -1140,7 +1148,7 @@ func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 				}
 				reversed := reverseIP(ip)
 				query := fmt.Sprintf("%s.%s", reversed, rblServer)
-				_, err := net.LookupHost(query)
+				_, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
 				if err == nil {
 					return starlark.Bool(true), nil
 				}
@@ -1151,18 +1159,18 @@ func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 }
 
 func makeIsMXIPv4() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("is_mx_ipv4", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.LookupMX(domain)
+		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
 		if err != nil || len(mxRecords) == 0 {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.LookupHost(mx.Host)
+			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
 			if err != nil {
 				continue
 			}
@@ -1178,18 +1186,18 @@ func makeIsMXIPv4() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 }
 
 func makeIsMXIPv6() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var domain string
 		if err := starlark.UnpackArgs("is_mx_ipv6", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.LookupMX(domain)
+		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
 		if err != nil || len(mxRecords) == 0 {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.LookupHost(mx.Host)
+			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
 			if err != nil {
 				continue
 			}
@@ -1207,7 +1215,7 @@ func makeIsMXIPv6() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 // Received Headers Functions
 
 func makeCheckReceivedHeader(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var level int
 		if err := starlark.UnpackArgs("check_received_header", args, kwargs, "level", &level); err != nil {
 			return nil, err
@@ -1220,7 +1228,7 @@ func makeCheckReceivedHeader(ctx *EmailContext) func(*starlark.Thread, *starlark
 }
 
 func makeGetReceivedHeaders(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
-	return func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if err := starlark.UnpackArgs("get_received_headers", args, kwargs); err != nil {
 			return nil, err
 		}
@@ -1230,4 +1238,11 @@ func makeGetReceivedHeaders(ctx *EmailContext) func(*starlark.Thread, *starlark.
 		}
 		return starlark.NewList(headers), nil
 	}
+}
+
+func threadContext(t *starlark.Thread) context.Context {
+	if c, ok := t.Local("context").(context.Context); ok {
+		return c
+	}
+	return context.Background()
 }

@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/dns"
+	"github.com/afterdarksys/go-emailservice-ads/internal/security"
 	"github.com/afterdarksys/go-emailservice-ads/internal/security/dane"
 )
 
@@ -43,6 +44,9 @@ type RecipientResult struct {
 // MailDelivery handles outbound SMTP mail delivery
 // RFC 5321 - Simple Mail Transfer Protocol
 type MailDelivery struct {
+	reports  *security.DurableTLSReports
+	sts      *security.MTASTSManager
+	routes   []Route
 	logger   *zap.Logger
 	resolver *dns.Resolver
 	hostname string
@@ -110,53 +114,52 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 		return nil, fmt.Errorf("no recipients specified")
 	}
 
-	// Group recipients by domain for efficient delivery
-	recipientsByDomain := d.groupByDomain(to)
-
-	var lastResult *DeliveryResult
+	aggregate := &DeliveryResult{Success: true, SMTPCode: 250}
 	var failures []string
-
-	// Deliver to each domain
-	for domain, recipients := range recipientsByDomain {
+	for domain, recipients := range d.groupByDomain(to) {
 		result, err := d.deliverToDomain(ctx, domain, from, recipients, data)
-		if err != nil {
-			d.logger.Error("Delivery failed for domain",
-				zap.String("domain", domain),
-				zap.Int("recipients", len(recipients)),
-				zap.Error(err))
-			lastResult = result
-			if result != nil && len(result.Recipients) == 0 {
-				for _, recipient := range recipients {
-					result.Recipients = append(result.Recipients, RecipientResult{Recipient: recipient, SMTPCode: result.SMTPCode, IsPermanent: result.IsPermanent, Message: result.Message})
-				}
+		if result == nil {
+			result = &DeliveryResult{SMTPCode: 451, Message: "Delivery unavailable"}
+		}
+		if len(result.Recipients) == 0 {
+			for _, rcpt := range recipients {
+				result.Recipients = append(result.Recipients, RecipientResult{Recipient: rcpt, Success: result.Success, SMTPCode: result.SMTPCode, IsPermanent: result.IsPermanent, Message: result.Message})
 			}
-			failures = append(failures, fmt.Sprintf("%s: %v", domain, err))
-			continue
 		}
-
-		d.logger.Info("Delivery successful",
-			zap.String("domain", domain),
-			zap.Int("recipients", len(recipients)),
-			zap.String("mx_host", result.RemoteHost))
-		lastResult = result
-	}
-
-	// A later successful domain must never hide an earlier failure.
-	if len(failures) > 0 {
-		if lastResult == nil {
-			lastResult = &DeliveryResult{}
+		aggregate.Recipients = append(aggregate.Recipients, result.Recipients...)
+		aggregate.RemoteHost = result.RemoteHost
+		if err != nil {
+			failures = append(failures, err.Error())
 		}
-		lastResult.Success = false
-		return lastResult, fmt.Errorf("delivery incomplete: %s", strings.Join(failures, "; "))
 	}
-
-	return lastResult, nil
+	aggregate.IsPermanent = true
+	for _, r := range aggregate.Recipients {
+		if !r.Success {
+			aggregate.Success = false
+			if !r.IsPermanent {
+				aggregate.IsPermanent = false
+			}
+		}
+	}
+	if !aggregate.Success {
+		aggregate.SMTPCode = 451
+		if aggregate.IsPermanent {
+			aggregate.SMTPCode = 550
+		}
+		aggregate.Message = "Delivery incomplete"
+		return aggregate, fmt.Errorf("delivery incomplete: %s", strings.Join(failures, "; "))
+	}
+	aggregate.IsPermanent = false
+	return aggregate, nil
 }
 
 // deliverToDomain handles delivery to a specific domain
 func (d *MailDelivery) deliverToDomain(ctx context.Context, domain, from string, recipients []string, data []byte) (*DeliveryResult, error) {
 	// RFC 5321 Section 5 - Address Resolution and Mail Handling
 	// Step 1: Perform MX lookup
+	if hops := d.route(domain); len(hops) > 0 {
+		return d.deliverRoute(ctx, hops, from, recipients, data)
+	}
 	mxRecords, err := d.resolver.LookupMX(ctx, domain)
 	if err != nil {
 		d.logger.Warn("MX lookup failed, trying A record",
@@ -182,7 +185,20 @@ func (d *MailDelivery) deliverToDomain(ctx context.Context, domain, from string,
 	// Try each MX host in order of preference
 	var lastErr error
 	for _, mx := range mxRecords {
-		result, err := d.deliverToMX(ctx, mx.Host, from, recipients, data)
+		var result *DeliveryResult
+		var err error
+		enforce := false
+		if d.sts != nil {
+			enforce, err = d.sts.ShouldEnforceTLS(ctx, domain, mx.Host)
+		}
+		if err == nil {
+			if enforce {
+				result, err = d.deliverRoute(ctx, []NextHop{{Address: net.JoinHostPort(strings.TrimSuffix(mx.Host, "."), "25"), RequireTLS: true, reportType: "sts"}}, from, recipients, data)
+			} else {
+				result, err = d.deliverToMX(ctx, mx.Host, from, recipients, data)
+			}
+		}
+
 		if err == nil && result.Success {
 			return result, nil
 		}
@@ -212,109 +228,20 @@ func (d *MailDelivery) deliverToMX(ctx context.Context, mxHost, from string, rec
 	// Remove trailing dot from MX host
 	mxHost = strings.TrimSuffix(mxHost, ".")
 
-	// Get or create connection
-	client, err := d.getConnection(ctx, mxHost)
-	if err != nil {
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    421,
-			Message:     fmt.Sprintf("Connection failed: %v", err),
-			IsPermanent: false,
-			RemoteHost:  mxHost,
-		}, err
-	}
-	defer d.returnConnection(mxHost, client)
-
-	// RFC 5321 Section 3.3 - Mail Transaction
-	// MAIL FROM
-	if err := client.client.Mail(from); err != nil {
-		code, isPermanent := parseSMTPError(err)
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    code,
-			Message:     err.Error(),
-			IsPermanent: isPermanent,
-			RemoteHost:  mxHost,
-		}, err
-	}
-
-	// RCPT TO for each recipient
-	accepted := make([]string, 0, len(recipients))
-	outcomes := make([]RecipientResult, 0, len(recipients))
-	for _, rcpt := range recipients {
-		if err := client.client.Rcpt(rcpt); err != nil {
-			code, isPermanent := parseSMTPError(err)
-			d.logger.Warn("RCPT TO failed",
-				zap.String("recipient", rcpt),
-				zap.String("mx_host", mxHost),
-				zap.Error(err))
-
-			// Continue with other recipients even if one fails
-			if isPermanent {
-				outcomes = append(outcomes, RecipientResult{Recipient: rcpt, SMTPCode: code, IsPermanent: true, Message: err.Error()})
-				continue
+	client, err := d.dialSMTP(ctx, mxHost)
+	if d.reports != nil && len(recipients) > 0 {
+		domain := strings.Split(recipients[0], "@")
+		if len(domain) == 2 && (err == nil || strings.Contains(err.Error(), "TLS") || strings.Contains(err.Error(), "DANE")) {
+			if e := d.reports.Record(domain[1], mxHost, "no-policy-found", err == nil); e != nil {
+				d.logger.Error("TLS report persistence failed", zap.Error(e))
 			}
-			outcomes = append(outcomes, RecipientResult{Recipient: rcpt, SMTPCode: code, IsPermanent: false, Message: err.Error()})
-			return &DeliveryResult{
-				Success:     false,
-				SMTPCode:    code,
-				Message:     err.Error(),
-				IsPermanent: isPermanent,
-				RemoteHost:  mxHost,
-				Recipients:  outcomes,
-			}, err
 		}
-		accepted = append(accepted, rcpt)
-		outcomes = append(outcomes, RecipientResult{Recipient: rcpt, Success: true, SMTPCode: 250})
 	}
-	if len(accepted) == 0 {
-		return &DeliveryResult{Success: false, SMTPCode: 550, Message: "all recipients rejected", IsPermanent: true, RemoteHost: mxHost, Recipients: outcomes}, fmt.Errorf("all recipients rejected by %s", mxHost)
-	}
-
-	// DATA
-	w, err := client.client.Data()
 	if err != nil {
-		code, isPermanent := parseSMTPError(err)
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    code,
-			Message:     err.Error(),
-			IsPermanent: isPermanent,
-			RemoteHost:  mxHost,
-		}, err
+		return &DeliveryResult{SMTPCode: 451, Message: err.Error(), RemoteHost: mxHost}, err
 	}
-
-	if _, err := w.Write(data); err != nil {
-		w.Close()
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    451,
-			Message:     fmt.Sprintf("Data write failed: %v", err),
-			IsPermanent: false,
-			RemoteHost:  mxHost,
-		}, err
-	}
-
-	if err := w.Close(); err != nil {
-		code, isPermanent := parseSMTPError(err)
-		return &DeliveryResult{
-			Success:     false,
-			SMTPCode:    code,
-			Message:     err.Error(),
-			IsPermanent: isPermanent,
-			RemoteHost:  mxHost,
-		}, err
-	}
-
-	return &DeliveryResult{
-		Success:     true,
-		SMTPCode:    250,
-		Message:     "Message accepted",
-		IsPermanent: false,
-		RemoteHost:  mxHost,
-		DeliveredAt: time.Now(),
-		Recipients:  outcomes,
-	}, nil
+	defer client.client.Close()
+	return smtpTransaction(client.client, mxHost, from, recipients, data)
 }
 
 // getConnection retrieves or creates a connection to the MX host
@@ -384,6 +311,11 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 		return nil, fmt.Errorf("dial failed: %w", err)
 	}
 
+	deadline := time.Now().Add(d.dataTimeout)
+	if t, ok := ctx.Deadline(); ok && t.Before(deadline) {
+		deadline = t
+	}
+	conn.SetDeadline(deadline)
 	client, err := smtp.NewClient(conn, mxHost)
 	if err != nil {
 		conn.Close()
@@ -448,9 +380,11 @@ func (d *MailDelivery) dialSMTP(ctx context.Context, mxHost string) (*smtpConnec
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
 			// Opportunistic only: a failed handshake may fall back to cleartext.
-			d.logger.Warn("Opportunistic STARTTLS failed, continuing without TLS",
+			d.logger.Warn("Opportunistic STARTTLS failed",
 				zap.String("mx_host", mxHost),
 				zap.Error(err))
+			client.Close()
+			return nil, fmt.Errorf("STARTTLS failed: %w", err)
 		} else {
 			d.logger.Debug("Opportunistic STARTTLS successful", zap.String("mx_host", mxHost))
 		}
@@ -636,3 +570,7 @@ func (d *MailDelivery) VerifyConnection(ctx context.Context, domain string) erro
 	conn.client.Quit()
 	return nil
 }
+
+func (d *MailDelivery) SetMTASTS(m *security.MTASTSManager) { d.sts = m }
+
+func (d *MailDelivery) SetTLSReports(r *security.DurableTLSReports) { d.reports = r }

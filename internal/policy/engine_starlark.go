@@ -52,10 +52,6 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 		return nil, fmt.Errorf("invalid compiled script type")
 	}
 
-	// Reset global state
-	globalAction = nil
-	globalHeaders = nil
-
 	// Create built-ins
 	builtins := createStarlarkBuiltins(emailCtx)
 
@@ -63,10 +59,13 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 		Name: "policy",
 	}
 
+	thread.SetLocal("context", ctx)
 	if e.maxSteps > 0 {
 		thread.SetMaxExecutionSteps(uint64(e.maxSteps))
 	}
 
+	stop := context.AfterFunc(ctx, func() { thread.Cancel(ctx.Err().Error()) })
+	defer stop()
 	_, err := cs.prog.Init(thread, builtins)
 	if err != nil {
 		return nil, fmt.Errorf("script execution failed: %w", err)
@@ -78,14 +77,7 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 	default:
 	}
 
-	if globalAction == nil {
-		return &Action{
-			Type:    ActionKeep,
-			Headers: globalHeaders,
-		}, nil
-	}
-
-	return globalAction, nil
+	return ThreadAction(thread), nil
 }
 
 func (e *starlarkEngine) Validate(script string) error {

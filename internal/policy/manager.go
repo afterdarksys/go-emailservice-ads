@@ -2,9 +2,11 @@ package policy
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +101,9 @@ func (m *Manager) LoadPolicies(path string) error {
 	// Load script content from files
 	for i := range config.Policies {
 		policy := &config.Policies[i]
+		if !policy.Enabled {
+			continue
+		}
 
 		// Set defaults
 		if policy.MaxExecutionTime == 0 {
@@ -116,7 +121,7 @@ func (m *Manager) LoadPolicies(path string) error {
 					zap.String("policy", policy.Name),
 					zap.String("path", policy.ScriptPath),
 					zap.Error(err))
-				continue
+				return err
 			}
 			policy.Script = string(scriptData)
 		}
@@ -127,14 +132,14 @@ func (m *Manager) LoadPolicies(path string) error {
 			m.logger.Warn("Unknown policy engine type",
 				zap.String("policy", policy.Name),
 				zap.String("type", string(policy.Type)))
-			continue
+			return err
 		}
 
 		if err := engine.Validate(policy.Script); err != nil {
 			m.logger.Warn("Policy script validation failed",
 				zap.String("policy", policy.Name),
 				zap.Error(err))
-			continue
+			return err
 		}
 	}
 
@@ -180,6 +185,7 @@ func (m *Manager) Evaluate(ctx context.Context, emailCtx *EmailContext) (*Action
 	m.evaluations++
 	m.metricsMu.Unlock()
 
+	var headers []Header
 	for _, policy := range m.policies {
 		if !policy.Enabled {
 			continue
@@ -204,13 +210,19 @@ func (m *Manager) Evaluate(ctx context.Context, emailCtx *EmailContext) (*Action
 			m.errors++
 			m.metricsMu.Unlock()
 
-
-			return action, nil
+			return nil, err
+		}
+		if action != nil {
+			headers = append(headers, action.Headers...)
+			if action.Type != ActionKeep && action.Type != ActionAccept {
+				action.Headers = headers
+				return action, nil
+			}
 		}
 	}
 
 	// No policies matched - default to accept/keep
-	return &Action{Type: ActionKeep}, nil
+	return &Action{Type: ActionKeep, Headers: headers}, nil
 }
 
 // evaluatePolicy executes a single policy
@@ -229,7 +241,7 @@ func (m *Manager) evaluatePolicy(ctx context.Context, policy *PolicyConfig, emai
 	}()
 
 	// Try to use compiled version if available
-	cacheKey := policy.Name
+	cacheKey := fmt.Sprintf("%s:%x", policy.Type, sha256.Sum256([]byte(policy.Script)))
 	m.compiledCacheMu.RLock()
 	compiled, cached := m.compiledCache[cacheKey]
 	m.compiledCacheMu.RUnlock()
@@ -298,7 +310,16 @@ func (m *Manager) matchesScope(policy *PolicyConfig, emailCtx *EmailContext) boo
 			}
 		}
 		// Check recipient domains
-		// TODO: Extract domain from recipient and compare
+		for _, rcpt := range emailCtx.To {
+			parts := strings.SplitN(rcpt, "@", 2)
+			if len(parts) == 2 {
+				for _, domain := range scope.Domains {
+					if strings.EqualFold(domain, parts[1]) {
+						return true
+					}
+				}
+			}
+		}
 		return false
 
 	case "direction":
@@ -339,11 +360,12 @@ func (m *Manager) EvaluateSieve(ctx context.Context, script string, emailCtx *Em
 
 // GetStats returns policy manager statistics
 func (m *Manager) GetStats() map[string]interface{} {
-	m.metricsMu.Lock()
-	defer m.metricsMu.Unlock()
-
 	m.policiesMu.RLock()
 	defer m.policiesMu.RUnlock()
+	m.metricsMu.Lock()
+	defer m.metricsMu.Unlock()
+	m.compiledCacheMu.RLock()
+	defer m.compiledCacheMu.RUnlock()
 
 	return map[string]interface{}{
 		"policies":    len(m.policies),
@@ -365,6 +387,9 @@ func (m *Manager) ListPolicies() []*PolicyConfig {
 
 // AddPolicy adds a new policy
 func (m *Manager) AddPolicy(policy *PolicyConfig) error {
+	if policy.MaxExecutionTime <= 0 {
+		policy.MaxExecutionTime = 10 * time.Second
+	}
 	// Validate
 	engine, err := m.getEngine(policy.Type)
 	if err != nil {

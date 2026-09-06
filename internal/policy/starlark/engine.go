@@ -64,7 +64,7 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 	}
 
 	// Reset global action state (defined in parent package)
-	policy.ResetGlobalAction()
+	// State is held on the execution thread.
 
 	// Create built-in functions specific to this email context
 	builtins := policy.CreateStarlarkBuiltins(emailCtx)
@@ -74,6 +74,9 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 		Name: "policy",
 	}
 
+	thread.SetLocal("context", ctx)
+	stop := context.AfterFunc(ctx, func() { thread.Cancel(ctx.Err().Error()) })
+	defer stop()
 	// Set step limit to prevent infinite loops
 	if e.maxSteps > 0 {
 		thread.SetMaxExecutionSteps(uint64(e.maxSteps))
@@ -95,7 +98,7 @@ func (e *Engine) ExecuteCompiled(ctx context.Context, emailCtx *policy.EmailCont
 	_ = globals // Script may not define any globals, that's ok
 
 	// Return the action set by the script
-	action := policy.GetGlobalAction()
+	action := policy.ThreadAction(thread)
 	if action == nil {
 		// No explicit action - default to keep
 		return &policy.Action{

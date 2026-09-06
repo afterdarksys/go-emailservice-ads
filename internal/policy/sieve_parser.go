@@ -12,18 +12,18 @@ import (
 type svTokKind int
 
 const (
-	svTokIdent   svTokKind = iota
-	svTokString            // "..."
-	svTokNumber            // 123[KMG]
-	svTokTag               // :name
-	svTokLBrace            // {
-	svTokRBrace            // }
-	svTokLBracket          // [
-	svTokRBracket          // ]
-	svTokLParen            // (
-	svTokRParen            // )
-	svTokComma             // ,
-	svTokSemi              // ;
+	svTokIdent    svTokKind = iota
+	svTokString             // "..."
+	svTokNumber             // 123[KMG]
+	svTokTag                // :name
+	svTokLBrace             // {
+	svTokRBrace             // }
+	svTokLBracket           // [
+	svTokRBracket           // ]
+	svTokLParen             // (
+	svTokRParen             // )
+	svTokComma              // ,
+	svTokSemi               // ;
 	svTokEOF
 )
 
@@ -186,6 +186,7 @@ type svIfCmd struct {
 	branches []svBranch
 	elseCmds []svCmd
 }
+
 func (*svIfCmd) svCmd() {}
 
 type svBranch struct {
@@ -198,6 +199,7 @@ type svActionCmd struct {
 	tags map[string]string
 	args []string
 }
+
 func (*svActionCmd) svCmd() {}
 
 type svTest interface{ svTest() }
@@ -207,6 +209,7 @@ type svHeaderTest struct {
 	headers []string
 	keys    []string
 }
+
 func (*svHeaderTest) svTest() {}
 
 type svAddressTest struct {
@@ -214,6 +217,7 @@ type svAddressTest struct {
 	headers []string
 	keys    []string
 }
+
 func (*svAddressTest) svTest() {}
 
 type svEnvelopeTest struct {
@@ -221,36 +225,45 @@ type svEnvelopeTest struct {
 	parts []string
 	keys  []string
 }
+
 func (*svEnvelopeTest) svTest() {}
 
 type svBodyTest struct {
 	match string
 	keys  []string
 }
+
 func (*svBodyTest) svTest() {}
 
 type svSizeTest struct {
 	over  bool
 	limit int64
 }
+
 func (*svSizeTest) svTest() {}
 
 type svAllofTest struct{ tests []svTest }
+
 func (*svAllofTest) svTest() {}
 
 type svAnyofTest struct{ tests []svTest }
+
 func (*svAnyofTest) svTest() {}
 
 type svNotTest struct{ inner svTest }
+
 func (*svNotTest) svTest() {}
 
 type svTrueTest struct{}
+
 func (*svTrueTest) svTest() {}
 
 type svFalseTest struct{}
+
 func (*svFalseTest) svTest() {}
 
 type svHasflagTest struct{ flags []string }
+
 func (*svHasflagTest) svTest() {}
 
 // ---- Parser ----
