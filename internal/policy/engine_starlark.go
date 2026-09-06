@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"go.starlark.net/starlark"
-	"go.starlark.net/syntax"
 )
 
 // starlarkEngine implements the Starlark scripting engine for email policies
@@ -29,8 +28,13 @@ type compiledStarlarkScript struct {
 }
 
 func (e *starlarkEngine) Compile(script string) (interface{}, error) {
+	if len(script) > 1<<20 {
+		return nil, fmt.Errorf("Starlark script exceeds 1 MiB")
+	}
+	names := createStarlarkBuiltins(&EmailContext{})
 	_, prog, err := starlark.SourceProgram("policy.star", script, func(name string) bool {
-		return true
+		_, exists := names[name]
+		return exists
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile script: %w", err)
@@ -51,12 +55,19 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 	if !ok {
 		return nil, fmt.Errorf("invalid compiled script type")
 	}
+	if emailCtx == nil {
+		return nil, fmt.Errorf("email context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Create built-ins
 	builtins := createStarlarkBuiltins(emailCtx)
 
 	thread := &starlark.Thread{
-		Name: "policy",
+		Name:  "policy",
+		Print: appendTrace,
 	}
 
 	thread.SetLocal("context", ctx)
@@ -66,9 +77,27 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 
 	stop := context.AfterFunc(ctx, func() { thread.Cancel(ctx.Err().Error()) })
 	defer stop()
-	_, err := cs.prog.Init(thread, builtins)
+	globals, err := cs.prog.Init(thread, builtins)
 	if err != nil {
 		return nil, fmt.Errorf("script execution failed: %w", err)
+	}
+	if filter, exists := globals["filter"]; exists {
+		callable, ok := filter.(starlark.Callable)
+		if !ok {
+			return nil, fmt.Errorf("filter must be a function")
+		}
+		value, err := starlark.Call(thread, callable, starlark.Tuple{builtins["message"]}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("filter execution failed: %w", err)
+		}
+		if value != starlark.None {
+			return nil, fmt.Errorf("filter must return None; use action builtins")
+		}
+	}
+	// DNS helpers preserve legacy empty-result semantics for DNS failures, but
+	// exhausting the policy's budget must fail evaluation rather than accept mail.
+	if state(thread).DNSLookups > maxPolicyDNSLookups {
+		return nil, fmt.Errorf("policy DNS lookup budget exceeded")
 	}
 
 	select {
@@ -81,17 +110,13 @@ func (e *starlarkEngine) ExecuteCompiled(ctx context.Context, emailCtx *EmailCon
 }
 
 func (e *starlarkEngine) Validate(script string) error {
-	_, err := syntax.Parse("policy.star", script, 0)
-	if err != nil {
-		return fmt.Errorf("syntax error: %w", err)
-	}
-
-	_, err = e.Compile(script)
+	_, err := e.Compile(script)
 	return err
 }
 
 func (e *starlarkEngine) GetCapabilities() []string {
 	return []string{
+		"immutable_message", "filter_entrypoint", "cidr_matching", "bounded_trace",
 		"email_inspection",
 		"security_checks",
 		"reputation_lookups",

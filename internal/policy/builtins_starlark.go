@@ -17,8 +17,11 @@ func CreateStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 
 // executionState belongs to one Starlark thread, never another SMTP session.
 type executionState struct {
-	Action  *Action
-	Headers []Header
+	Action     *Action
+	Headers    []Header
+	DNSLookups int
+	Trace      []string
+	TraceBytes int
 }
 
 func state(thread *starlark.Thread) *executionState {
@@ -35,11 +38,14 @@ func ThreadAction(thread *starlark.Thread) *Action {
 		v.Action = &Action{Type: ActionKeep}
 	}
 	v.Action.Headers = v.Headers
+	v.Action.Trace = v.Trace
 	return v.Action
 }
 
 func createStarlarkBuiltins(emailCtx *EmailContext) starlark.StringDict {
 	return starlark.StringDict{
+		"message":       messageView(emailCtx),
+		"cidr_contains": starlark.NewBuiltin("cidr_contains", cidrContains),
 		// === Email Inspection ===
 		"has_header":      starlark.NewBuiltin("has_header", makeHasHeader(emailCtx)),
 		"get_header":      starlark.NewBuiltin("get_header", makeGetHeader(emailCtx)),
@@ -297,7 +303,7 @@ func makeCheckRBL(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 		query := fmt.Sprintf("%s.%s", reversed, server)
 
 		// Simple DNS lookup to check if listed
-		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
+		addrs, err := policyLookupHost(thread, query)
 		listed := err == nil && len(addrs) > 0
 
 		return starlark.Bool(listed), nil
@@ -458,7 +464,7 @@ func makeLookupDNS() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, [
 
 		// Simple implementation - only support A records for now
 		if recordType == "A" || recordType == "a" {
-			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
+			addrs, err := policyLookupHost(thread, domain)
 			if err != nil {
 				return starlark.NewList(nil), nil
 			}
@@ -509,7 +515,7 @@ func makeLog() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starl
 			return nil, err
 		}
 		// TODO: Integrate with actual logger
-		fmt.Printf("[POLICY-%s] %s\n", strings.ToUpper(level), message)
+		appendTrace(thread, "["+strings.ToUpper(level)+"] "+message)
 		return starlark.None, nil
 	}
 }
@@ -704,11 +710,13 @@ func makeGetRecipientDID(ctx *EmailContext) func(*starlark.Thread, *starlark.Bui
 
 func makeQuarantine() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
 	return func(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		if err := starlark.UnpackArgs("quarantine", args, kwargs); err != nil {
+		var reason string
+		if err := starlark.UnpackArgs("quarantine", args, kwargs, "reason?", &reason); err != nil {
 			return nil, err
 		}
 		state(thread).Action = &Action{
 			Type:    ActionQuarantine,
+			Reason:  reason,
 			Headers: state(thread).Headers,
 		}
 		return starlark.None, nil
@@ -924,7 +932,7 @@ func makeLogEntry() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 		if err := starlark.UnpackArgs("log_entry", args, kwargs, "message", &message); err != nil {
 			return nil, err
 		}
-		fmt.Printf("[MAILSCRIPT] %s\n", message)
+		appendTrace(thread, message)
 		return starlark.None, nil
 	}
 }
@@ -1016,7 +1024,7 @@ func makeDNSCheck() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 		if err := starlark.UnpackArgs("dns_check", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		_, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
+		_, err := policyLookupHost(thread, domain)
 		return starlark.Bool(err == nil), nil
 	}
 }
@@ -1027,7 +1035,7 @@ func makeDNSResolution() func(*starlark.Thread, *starlark.Builtin, starlark.Tupl
 		if err := starlark.UnpackArgs("dns_resolution", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
+		addrs, err := policyLookupHost(thread, domain)
 		if err != nil || len(addrs) == 0 {
 			return starlark.String(""), nil
 		}
@@ -1048,7 +1056,7 @@ func makeDomainResolution() func(*starlark.Thread, *starlark.Builtin, starlark.T
 			return starlark.Bool(false), nil
 		}
 		domain := parts[1]
-		_, err := net.DefaultResolver.LookupHost(threadContext(thread), domain)
+		_, err := policyLookupHost(thread, domain)
 		return starlark.Bool(err == nil), nil
 	}
 }
@@ -1070,7 +1078,7 @@ func makeRBLCheck(ctx *EmailContext) func(*starlark.Thread, *starlark.Builtin, s
 
 		reversed := reverseIP(parsedIP)
 		query := fmt.Sprintf("%s.%s", reversed, rblServer)
-		addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
+		addrs, err := policyLookupHost(thread, query)
 		return starlark.Bool(err == nil && len(addrs) > 0), nil
 	}
 }
@@ -1098,7 +1106,7 @@ func makeValidMX() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 		if err := starlark.UnpackArgs("valid_mx", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
+		mxRecords, err := policyLookupMX(thread, domain)
 		return starlark.Bool(err == nil && len(mxRecords) > 0), nil
 	}
 }
@@ -1109,7 +1117,7 @@ func makeGetMXRecords() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple
 		if err := starlark.UnpackArgs("get_mx_records", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
+		mxRecords, err := policyLookupMX(thread, domain)
 		if err != nil {
 			return starlark.NewList(nil), nil
 		}
@@ -1131,13 +1139,13 @@ func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 			rblServer = "zen.spamhaus.org"
 		}
 
-		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
+		mxRecords, err := policyLookupMX(thread, domain)
 		if err != nil {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
+			addrs, err := policyLookupHost(thread, mx.Host)
 			if err != nil {
 				continue
 			}
@@ -1148,7 +1156,7 @@ func makeMXInRBL() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []s
 				}
 				reversed := reverseIP(ip)
 				query := fmt.Sprintf("%s.%s", reversed, rblServer)
-				_, err := net.DefaultResolver.LookupHost(threadContext(thread), query)
+				_, err := policyLookupHost(thread, query)
 				if err == nil {
 					return starlark.Bool(true), nil
 				}
@@ -1164,13 +1172,13 @@ func makeIsMXIPv4() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 		if err := starlark.UnpackArgs("is_mx_ipv4", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
+		mxRecords, err := policyLookupMX(thread, domain)
 		if err != nil || len(mxRecords) == 0 {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
+			addrs, err := policyLookupHost(thread, mx.Host)
 			if err != nil {
 				continue
 			}
@@ -1191,13 +1199,13 @@ func makeIsMXIPv6() func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []
 		if err := starlark.UnpackArgs("is_mx_ipv6", args, kwargs, "domain", &domain); err != nil {
 			return nil, err
 		}
-		mxRecords, err := net.DefaultResolver.LookupMX(threadContext(thread), domain)
+		mxRecords, err := policyLookupMX(thread, domain)
 		if err != nil || len(mxRecords) == 0 {
 			return starlark.Bool(false), nil
 		}
 
 		for _, mx := range mxRecords {
-			addrs, err := net.DefaultResolver.LookupHost(threadContext(thread), mx.Host)
+			addrs, err := policyLookupHost(thread, mx.Host)
 			if err != nil {
 				continue
 			}

@@ -40,6 +40,7 @@ const (
 
 // Action represents the result of policy evaluation
 type Action struct {
+	Trace    []string   // Bounded diagnostics from Starlark print/log calls.
 	Type     ActionType // Action to take
 	Reason   string     // Human-readable reason (for reject/defer)
 	Target   string     // Target for redirect/fileinto/divert/screen

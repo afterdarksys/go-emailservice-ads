@@ -14,3 +14,12 @@
 12. Starlark filtering extension enhancements.
 
 Each feature receives focused tests and its own commit. Final release checks cover the complete tree. External production deployment is outside this implementation run.
+
+All twelve implementation units are complete. Release version: 2.5.0.
+Qualification entry point: `bash scripts/verify-release.sh`.
+
+Local qualification passed: module verification, full-tree vet/tests, selected
+mail-path race tests, all command builds, and executable/VERSION agreement.
+The final Starlark example and dependent API/SMTP race tests also passed.
+CI scanner Compose configuration validates. Hosted CI, container build and
+provider-specific production failover drills were not executed in this run.

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-09-06
+
+### Added
+- Offline verified backups, staged restore drills, and fenced standby activation tooling.
+- Durable policy CRUD and isolated policy testing.
+- Destination concurrency limits, adaptive backoff, and fair retries.
+- Live operational metrics, alert rules, authenticated synthetic mail probe.
+- Reloadable TLS/mTLS certificates and overlapping expiring API credentials.
+- Release CI for tests, race checks, containers and real scanner checks.
+- Starlark immutable message views, filter entry points, CIDR matching, bounded DNS and diagnostic traces.
+
+### Fixed
+- Bounded API lifecycle and startup failure propagation; removed nonfunctional gRPC listener.
+- DNS MX absence, Null MX, and temporary lookup failures now have distinct delivery outcomes.
+- TLS reports aggregate repeated failures and cannot generate reporting feedback.
+- Restore decoding rejects trailing payloads and unsafe paths, honors cancellation, and syncs restored directories.
+
 ## [2.4.0] - 2026-09-06
 
 ### Added
