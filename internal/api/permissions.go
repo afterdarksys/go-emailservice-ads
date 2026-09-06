@@ -14,6 +14,15 @@ type principalKey struct{}
 
 func requiredScope(r *http.Request) string {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
+	if strings.HasPrefix(path, "compliance/") {
+		parts := strings.Split(path, "/")
+		if len(parts) == 3 {
+			switch parts[2] {
+			case "export", "release", "delete", "legal-hold":
+				return "compliance:" + parts[2]
+			}
+		}
+	}
 	resource := strings.SplitN(path, "/", 2)[0]
 	switch resource {
 	case "compliance", "bounce":

@@ -25,7 +25,13 @@ func (s *Server) handleCompliance(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/compliance"), "/")
 	if r.Method == "GET" && path == "config" {
-		s.jsonResponse(w, 200, s.config.Platform.Compliance)
+		visible := []any{}
+		for _, rule := range s.config.Platform.Compliance.Rules {
+			if s.config.Platform.Compliance.Authorized(principal(r), rule.Domain, "read") {
+				visible = append(visible, rule)
+			}
+		}
+		s.jsonResponse(w, 200, visible)
 		return
 	}
 	if r.Method == "GET" && path == "" {
@@ -33,7 +39,13 @@ func (s *Server) handleCompliance(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Audit unavailable", 503)
 			return
 		}
-		s.jsonResponse(w, 200, s.store.ListCompliance(r.URL.Query().Get("domain")))
+		visible := []*storage.JournalEntry{}
+		for _, entry := range s.store.ListCompliance(r.URL.Query().Get("domain")) {
+			if s.config.Platform.Compliance.Authorized(principal(r), entry.Metadata["domain"], "read") {
+				visible = append(visible, entry)
+			}
+		}
+		s.jsonResponse(w, 200, visible)
 		return
 	}
 	parts := strings.Split(path, "/")
@@ -42,6 +54,11 @@ func (s *Server) handleCompliance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, action := parts[0], parts[1]
+	entry, err := s.store.Get(id)
+	if err != nil || entry.Metadata["compliance"] != "true" || !s.config.Platform.Compliance.Authorized(principal(r), entry.Metadata["domain"], action) {
+		http.NotFound(w, r)
+		return
+	}
 	if action == "export" && r.Method == "GET" {
 		e, err := s.store.Get(id)
 		if err != nil || e.Metadata["compliance"] != "true" {
@@ -76,7 +93,7 @@ func (s *Server) handleCompliance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", 400)
 		return
 	}
-	var err error
+	err = nil
 	switch action {
 	case "release":
 		err = s.qm.ReleaseCompliance(id, principal(r), request.Reason)

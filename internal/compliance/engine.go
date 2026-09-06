@@ -9,8 +9,46 @@ import (
 )
 
 type Config struct {
-	Rules []Rule `yaml:"rules" json:"rules"`
+	EnforceDomainAccess bool    `yaml:"enforce_domain_access" json:"enforce_domain_access"`
+	Access              []Grant `yaml:"access" json:"access"`
+	Rules               []Rule  `yaml:"rules" json:"rules"`
 }
+
+type Grant struct {
+	Principal string   `yaml:"principal" json:"principal"`
+	Domains   []string `yaml:"domains" json:"domains"`
+	Actions   []string `yaml:"actions" json:"actions"`
+}
+
+// Authorized requires permission for every domain in a combined evidence case.
+func (c Config) Authorized(principal, domains, action string) bool {
+	if !c.EnforceDomainAccess {
+		return true
+	}
+	for _, domain := range strings.Split(domains, ",") {
+		allowed := false
+		for _, grant := range c.Access {
+			if grant.Principal != principal {
+				continue
+			}
+			hasAction := false
+			for _, a := range grant.Actions {
+				hasAction = hasAction || a == action || a == "*"
+			}
+			if !hasAction {
+				continue
+			}
+			for _, d := range grant.Domains {
+				allowed = allowed || d == "*" || strings.EqualFold(d, domain)
+			}
+		}
+		if !allowed {
+			return false
+		}
+	}
+	return true
+}
+
 type Rule struct {
 	Name      string        `yaml:"name" json:"name"`
 	Domain    string        `yaml:"domain" json:"domain"`
