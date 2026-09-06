@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
@@ -45,6 +46,48 @@ func TestUpdateResponseForEveryRecipient(t *testing.T) {
 				}()
 			}
 			wg.Wait()
+		})
+	}
+}
+
+type departedConn struct {
+	Conn
+	ctx      Context
+	isSilent bool
+}
+
+func (c *departedConn) Context() *Context { return &c.ctx }
+func (c *departedConn) silent() *bool     { return &c.isSilent }
+
+func TestUpdateCompletesAfterRecipientLogout(t *testing.T) {
+	for _, stage := range []string{"before enqueue", "before write"} {
+		t.Run(stage, func(t *testing.T) {
+			responses := make(chan imap.WriterTo)
+			loggedOut := make(chan struct{})
+			c := &departedConn{ctx: Context{Responses: responses, LoggedOut: loggedOut}}
+			updates := make(chan backend.Update, 1)
+			s := &Server{conns: map[Conn]struct{}{c: {}}, Updates: updates}
+			update := &backend.ExpungeUpdate{Update: backend.NewUpdate("", ""), SeqNum: 1}
+			done := update.Done() // The backend initializes completion before publishing.
+			updates <- update
+			close(updates)
+			if stage == "before enqueue" {
+				close(loggedOut)
+			}
+			go s.listenUpdates()
+			if stage == "before write" {
+				select {
+				case <-responses:
+					close(loggedOut)
+				case <-time.After(time.Second):
+					t.Fatal("update not queued")
+				}
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("departed recipient blocked update completion")
+			}
 		})
 	}
 }

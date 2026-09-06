@@ -1,6 +1,8 @@
 """Live multi-session notification checks, imported by the release smoke test."""
 import contextlib
 import imaplib
+import concurrent.futures
+import threading
 
 
 def qualify(host, port, tls):
@@ -55,6 +57,50 @@ def qualify(host, port, tls):
         for index, client in enumerate(clients[1:], 1):
             ok(client.noop())
             assert client.response('EXPUNGE')[1] == [b'1'], ('EXPUNGE', index)
+        # Independent connections append and change flags at the same time.
+        barrier = threading.Barrier(2)
+        def append_many(client):
+            barrier.wait(timeout=10)
+            for _ in range(8):
+                ok(client.append('MultiSession', None, None, raw))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            jobs = [pool.submit(append_many, client) for client in clients[:2]]
+            for job in jobs:
+                job.result(timeout=30)
+        uids = ok(writer.uid('search', None, 'ALL'))[0].split()
+        assert len(uids) == len(set(uids)) == 16, ('concurrent APPEND', uids)
+        barrier = threading.Barrier(2)
+        def flag_many(client, flag):
+            barrier.wait(timeout=10)
+            ok(client.uid('store', '1:*', '+FLAGS', '(' + flag + ')'))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            jobs = [pool.submit(flag_many, clients[0], 'writerOne'),
+                    pool.submit(flag_many, clients[1], 'writerTwo')]
+            for job in jobs:
+                job.result(timeout=30)
+        assert len(ok(writer.uid('search', None, 'KEYWORD', 'writerOne', 'KEYWORD', 'writerTwo'))[0].split()) == 16, 'concurrent STORE lost flags'
+        # Abruptly drop an IDLE observer, mutate while offline, then reconcile
+        # from UIDVALIDITY + a full UID listing on a new connection.
+        observer = clients.pop()
+        ok(observer.select('MultiSession'))
+        validity = observer.response('UIDVALIDITY')[1]
+        tag = observer._new_tag()
+        observer.send(tag + b' IDLE\r\n')
+        assert observer._get_response() is None
+        observer.shutdown()
+        observer.state = 'LOGOUT'  # ExitStack must not send LOGOUT on the dead socket.
+        ok(writer.uid('store', uids[0], '+FLAGS', '(\\Deleted)'))
+        ok(writer.expunge())
+        ok(writer.append('MultiSession', None, None, raw))
+        reconnected = stack.enter_context(imaplib.IMAP4(host, port, timeout=10))
+        ok(reconnected.starttls(ssl_context=tls))
+        ok(reconnected.login('qa@mail.test', 'qa-new-password'))
+        assert ok(reconnected.select('MultiSession')) == [b'16']
+        assert reconnected.response('UIDVALIDITY')[1] == validity
+        after = ok(reconnected.uid('search', None, 'ALL'))[0].split()
+        assert uids[0] not in after and set(uids[1:]).issubset(after)
+        assert max(map(int, after)) > max(map(int, uids)), 'UID reused after reconnect'
+        ok(reconnected.close())
         ok(outsider.noop())
         for response in ('EXISTS', 'FETCH', 'EXPUNGE'):
             assert outsider.response(response)[1] == [None], ('account leak', response)

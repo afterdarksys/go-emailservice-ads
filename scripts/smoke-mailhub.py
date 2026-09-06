@@ -15,6 +15,7 @@ import tempfile
 import time
 import urllib.request
 import runpy
+import hashlib
 
 def port():
     with socket.socket() as sock:
@@ -176,5 +177,35 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--binary',required=True)
     parser.add_argument('--backup',required=True)
+    parser.add_argument('--report', help='Write live qualification evidence as JSON')
     args=parser.parse_args()
-    run(str(pathlib.Path(args.binary).resolve()),str(pathlib.Path(args.backup).resolve()))
+    report = None
+    if args.report:
+        report = {
+            'schema_version': 1,
+            'scope': 'isolated live SMTP/IMAP, REST and backup/restore qualification',
+            'status': 'running',
+            'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'binary_sha256': hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),
+            'backup_sha256': hashlib.sha256(pathlib.Path(args.backup).read_bytes()).hexdigest(),
+            'client': 'Python imaplib/' + __import__('platform').python_version(),
+            'desktop_mobile_uat': 'not performed',
+        }
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        report['revision'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
+        report['working_tree_dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=repo, text=True).strip())
+        pathlib.Path(args.report).write_text(json.dumps(report, indent=2) + '\n')
+    try:
+        run(str(pathlib.Path(args.binary).resolve()),str(pathlib.Path(args.backup).resolve()))
+    except BaseException as error:
+        if report is not None:
+            report['status'] = 'failed'
+            report['error_type'] = type(error).__name__
+        raise
+    else:
+        if report is not None:
+            report['status'] = 'passed'
+    finally:
+        if report is not None:
+            report['finished_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            pathlib.Path(args.report).write_text(json.dumps(report, indent=2) + '\n')

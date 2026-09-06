@@ -3,6 +3,8 @@
 Updated 2026-09-06. Run against an isolated, single-owner instance with synthetic
 accounts. Record the commit, configuration, client version and results for each
 acceptance run. Do not use a production data directory for automated tests.
+Use the [preliminary acceptance record](PRELIMINARY_UAT.md) to retain candidate
+evidence and record the named-client sign-off.
 
 ## Automated release gate
 
@@ -50,9 +52,11 @@ every desktop/mobile client.
 
 The automated multi-session check is `scripts/imap-multisession.py`, invoked by
 the release smoke test. It covers one writer and two observers, including IDLE,
-against the durable mailbox store. Concurrent writers, slow/disconnected clients,
-offline resynchronization and named desktop/mobile applications still require
-qualification. Do not treat this protocol regression as a passing client matrix.
+against the durable mailbox store. It also exercises two concurrent APPEND/STORE
+writers and a dropped IDLE observer followed by full UID resynchronization.
+Slow-client stress, concurrent body downloads with mutations and named
+desktop/mobile applications still require qualification. Do not treat this
+protocol regression as a passing client matrix.
 
 ## Sieve configuration and failure diagnosis
 

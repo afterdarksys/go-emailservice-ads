@@ -319,13 +319,21 @@ func (s *Server) listenUpdates() {
 			}
 			conn := conn // Copy conn to a local variable
 			go func() {
+				defer func() { sends <- struct{}{} }()
 				done := make(chan struct{})
-				conn.Context().Responses <- &response{
+				ctx := conn.Context()
+				select {
+				case ctx.Responses <- &response{
 					response: res,
 					done:     done,
+				}:
+				case <-ctx.LoggedOut:
+					return
 				}
-				<-done
-				sends <- struct{}{}
+				select {
+				case <-done:
+				case <-ctx.LoggedOut:
+				}
 			}()
 
 			wait++

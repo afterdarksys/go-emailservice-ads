@@ -12,4 +12,8 @@ go build -trimpath -o "$release_tmp/mailhub" ./cmd/goemailservices
 test "$("$release_tmp/mailhub" -version)" = "$(cat VERSION)"
 
 go build -trimpath -o "$release_tmp/backup" ./cmd/mailhub-backup
-python3 scripts/smoke-mailhub.py --binary "$release_tmp/mailhub" --backup "$release_tmp/backup"
+smoke_args=(--binary "$release_tmp/mailhub" --backup "$release_tmp/backup")
+if [[ -n "${MAILHUB_QUALIFICATION_REPORT:-}" ]]; then
+  smoke_args+=(--report "$MAILHUB_QUALIFICATION_REPORT")
+fi
+python3 scripts/smoke-mailhub.py "${smoke_args[@]}"
