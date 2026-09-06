@@ -3,33 +3,34 @@ package policy
 import (
 	"bytes"
 	"context"
-	"io"
-
 	"fmt"
-	_ "github.com/emersion/go-message/charset"
-	messagemail "github.com/emersion/go-message/mail"
+	"io"
 	"mime"
 	"net/mail"
 	"net/textproto"
-	"regexp"
 	"strings"
+
+	_ "github.com/emersion/go-message/charset"
+	messagemail "github.com/emersion/go-message/mail"
 )
 
 type svInterp struct {
-	execution context.Context
-	err       error
-	actions   int
-	ctx       *EmailContext
-	vars      map[string]string
-	flags     []string
+	execution             context.Context
+	err                   error
+	actions               int
+	ctx                   *EmailContext
+	vars                  map[string]string
+	flags                 []string
+	variablesEnabled      bool
+	deliveryFlagsCaptured bool
 }
 
 func svExec(execution context.Context, ctx *EmailContext, script *svScript) (*Action, error) {
-	interp := &svInterp{execution: execution, ctx: ctx, vars: make(map[string]string)}
+	interp := &svInterp{execution: execution, ctx: ctx, vars: make(map[string]string), variablesEnabled: script.variables}
 	result := &Action{Type: ActionKeep}
 	interp.runBlock(script.cmds, result)
-	if len(interp.flags) > 0 {
-		result.Tags = interp.flags
+	if !interp.deliveryFlagsCaptured {
+		result.Tags = svValidFlags(interp.flags)
 	}
 	return result, interp.err
 }
@@ -79,11 +80,13 @@ func (i *svInterp) runAction(c *svActionCmd, result *Action) bool {
 	}
 	switch c.name {
 	case "keep":
+		i.captureDeliveryFlags(c, result)
 		result.Type = ActionKeep
 		if result.Target == "" {
 			result.Target = "INBOX"
 		}
 	case "fileinto":
+		i.captureDeliveryFlags(c, result)
 		if len(c.args) > 0 {
 			result.Type = ActionFileinto
 			result.Target = i.expand(c.args[0])
@@ -101,24 +104,36 @@ func (i *svInterp) runAction(c *svActionCmd, result *Action) bool {
 		return true
 	case "stop":
 		return true
-	case "vacation":
-		// Delivery continues; vacation auto-reply is advisory
-		subject := c.tags["subject"]
-		if subject == "" && len(c.args) > 0 {
-			subject = i.expand(c.args[0])
-		}
-		result.Vacation = &Vacation{Subject: subject}
 	case "set":
 		// variables extension: set "name" "value"
 		if len(c.args) >= 2 {
 			i.vars[strings.ToLower(c.args[0])] = i.expand(c.args[1])
 		}
-	case "setflag":
-		i.flags = i.flagList(c.args)
-	case "addflag":
-		i.flags = svUnion(i.flags, i.flagList(c.args))
-	case "removeflag":
-		i.flags = svSubtract(i.flags, i.flagList(c.args))
+	case "setflag", "addflag", "removeflag":
+		flags := i.flags
+		key := strings.ToLower(c.variable)
+		if c.variable != "" {
+			flags = svValidFlags(strings.Fields(i.vars[key]))
+		}
+		operand := i.flagList(c.args)
+		switch c.name {
+		case "setflag":
+			flags = operand
+		case "addflag":
+			flags = svUnion(flags, operand)
+		case "removeflag":
+			flags = svSubtract(flags, operand)
+		}
+		if c.variable != "" {
+			value := strings.Join(flags, " ")
+			if len(value) > 1<<20 {
+				i.err = fmt.Errorf("Sieve flag variable exceeds 1 MiB")
+				return true
+			}
+			i.vars[key] = value
+		} else {
+			i.flags = flags
+		}
 	case "require":
 		// no-op at execution time
 	}
@@ -171,9 +186,22 @@ func (i *svInterp) evalTest(t svTest) bool {
 		}
 		return i.ctx.Size < v.limit
 	case *svHasflagTest:
-		for _, f := range i.flagList(v.flags) {
-			if svContains(i.flags, f) {
-				return true
+		flags := i.flags
+		if v.variables != nil {
+			flags = nil
+			for _, name := range v.variables {
+				flags = append(flags, svValidFlags(strings.Fields(i.vars[strings.ToLower(name)]))...)
+			}
+		}
+		var keys []string
+		for _, value := range v.flags {
+			keys = append(keys, strings.Fields(i.expand(value))...)
+		}
+		for _, flag := range flags {
+			for _, key := range keys {
+				if i.compare(v.match, v.comparator, flag, key) {
+					return true
+				}
 			}
 		}
 		return false
@@ -247,54 +275,7 @@ func (i *svInterp) evalEnvelope(v *svEnvelopeTest) bool {
 }
 
 func (i *svInterp) match(matchType, haystack, needle string) bool {
-	hay := strings.ToLower(haystack)
-	ndl := strings.ToLower(i.expand(needle))
-	switch matchType {
-	case "is":
-		return hay == ndl
-	case "contains":
-		return strings.Contains(hay, ndl)
-	case "matches":
-		pattern := regexp.QuoteMeta(ndl)
-		pattern = strings.ReplaceAll(pattern, `\*`, ".*")
-		pattern = strings.ReplaceAll(pattern, `\?`, ".")
-		ok, _ := regexp.MatchString("(?s)^"+pattern+"$", hay)
-		return ok
-	}
-	return false
-}
-
-func (i *svInterp) expand(s string) string {
-	if !strings.Contains(s, "${") {
-		return s
-	}
-	var b strings.Builder
-	rest := s
-	for {
-		if b.Len()+len(rest) > 1<<20 {
-			i.err = fmt.Errorf("Sieve expansion exceeds 1 MiB")
-			return ""
-		}
-		start := strings.Index(rest, "${")
-		if start < 0 {
-			b.WriteString(rest)
-			break
-		}
-		b.WriteString(rest[:start])
-		end := strings.Index(rest[start:], "}")
-		if end < 0 {
-			b.WriteString(rest[start:])
-			break
-		}
-		name := strings.ToLower(rest[start+2 : start+end])
-		b.WriteString(i.vars[name])
-		rest = rest[start+end+1:]
-	}
-	if b.Len() > 1<<20 {
-		i.err = fmt.Errorf("Sieve expansion exceeds 1 MiB")
-		return ""
-	}
-	return b.String()
+	return i.compare(matchType, "i;ascii-casemap", haystack, i.expand(needle))
 }
 
 // Flag arguments may each contain a space-separated list. Expand variables
@@ -304,7 +285,7 @@ func (i *svInterp) flagList(args []string) []string {
 	for _, arg := range args {
 		flags = append(flags, strings.Fields(i.expand(arg))...)
 	}
-	return svUnion(nil, flags)
+	return svValidFlags(flags)
 }
 
 func svUnion(a, b []string) []string {
@@ -371,5 +352,5 @@ func sieveBody(raw []byte) (string, error) {
 		body.Write(data)
 		body.WriteByte('\n')
 	}
-	return strings.ToLower(body.String()), nil
+	return body.String(), nil
 }

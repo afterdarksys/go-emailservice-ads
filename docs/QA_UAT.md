@@ -66,7 +66,8 @@ if body :contains "project" {
 ```
 
 Supported declared extensions are fileinto, reject, envelope, body, variables and
-imap4flags. Unsupported capabilities/tags/actions are rejected. Vacation, redirect
+imap4flags. See [Sieve flags](SIEVE_FLAGS.md) for `:flags`, named flag sets,
+comparators, captures and required declarations. Unsupported capabilities/tags/actions are rejected. Vacation, redirect
 and multiple delivery actions are not implemented. A rejection after SMTP
 acceptance generates a DSN subject to normal DSN preferences and loop protection;
 `discard` intentionally consumes the message. Body tests inspect decoded MIME
