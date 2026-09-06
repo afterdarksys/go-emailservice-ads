@@ -1,0 +1,3014 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Mailhub management API",
+    "version": "2.7.0",
+    "description": "Active single-owner management REST API. Bearer credentials can be static API keys or configured OAuth access tokens. x-required-permission records the exact scope; compliance also enforces configured domain/action grants. Errors are generally plain text. Legacy handlers may accept undocumented method aliases; use only the documented methods. JMAP is a separate contract."
+  },
+  "servers": [
+    {
+      "url": "https://{host}",
+      "variables": {
+        "host": {
+          "default": "localhost:8080",
+          "description": "Configured api.rest_addr behind the deployment TLS endpoint."
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "get_health",
+        "summary": "Process liveness",
+        "responses": {
+          "200": {
+            "description": "Process liveness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      },
+      "head": {
+        "operationId": "head_health",
+        "summary": "Process liveness (headers only)",
+        "responses": {
+          "200": {
+            "description": "Process liveness"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "get_api_v1_health",
+        "summary": "Process liveness",
+        "responses": {
+          "200": {
+            "description": "Process liveness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      },
+      "head": {
+        "operationId": "head_api_v1_health",
+        "summary": "Process liveness (headers only)",
+        "responses": {
+          "200": {
+            "description": "Process liveness"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "get_ready",
+        "summary": "Dependency readiness",
+        "responses": {
+          "200": {
+            "description": "Dependency readiness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      },
+      "head": {
+        "operationId": "head_ready",
+        "summary": "Dependency readiness (headers only)",
+        "responses": {
+          "200": {
+            "description": "Dependency readiness"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "get_api_v1_version",
+        "summary": "Running service version",
+        "responses": {
+          "200": {
+            "description": "Running service version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "get_metrics",
+        "summary": "Prometheus metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "public",
+        "security": []
+      }
+    },
+    "/api/v1/queue/stats": {
+      "get": {
+        "operationId": "get_api_v1_queue_stats",
+        "summary": "Queue and storage counters",
+        "responses": {
+          "200": {
+            "description": "Queue and storage counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read"
+      },
+      "head": {
+        "operationId": "head_api_v1_queue_stats",
+        "summary": "Queue and storage counters (headers only)",
+        "responses": {
+          "200": {
+            "description": "Queue and storage counters"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read"
+      }
+    },
+    "/api/v1/queue/pending": {
+      "get": {
+        "operationId": "get_api_v1_queue_pending",
+        "summary": "Pending messages",
+        "responses": {
+          "200": {
+            "description": "Pending messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JournalEntry"
+                  },
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read",
+        "parameters": [
+          {
+            "name": "tier",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Omit for all tiers."
+          }
+        ]
+      },
+      "head": {
+        "operationId": "head_api_v1_queue_pending",
+        "summary": "Pending messages (headers only)",
+        "responses": {
+          "200": {
+            "description": "Pending messages"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read",
+        "parameters": [
+          {
+            "name": "tier",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Omit for all tiers."
+          }
+        ]
+      }
+    },
+    "/api/v1/dlq/list": {
+      "get": {
+        "operationId": "get_api_v1_dlq_list",
+        "summary": "Failed messages",
+        "responses": {
+          "200": {
+            "description": "Failed messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JournalEntry"
+                  },
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read"
+      },
+      "head": {
+        "operationId": "head_api_v1_dlq_list",
+        "summary": "Failed messages (headers only)",
+        "responses": {
+          "200": {
+            "description": "Failed messages"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read"
+      }
+    },
+    "/api/v1/dlq/retry/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_dlq_retry_id",
+        "summary": "Retry a failed message",
+        "responses": {
+          "200": {
+            "description": "Retry a failed message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:write"
+      }
+    },
+    "/api/v1/message/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "get": {
+        "operationId": "get_api_v1_message_id",
+        "summary": "Read queued message",
+        "responses": {
+          "200": {
+            "description": "Read queued message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:read"
+      },
+      "delete": {
+        "operationId": "delete_api_v1_message_id",
+        "summary": "Delete queued message",
+        "responses": {
+          "200": {
+            "description": "Delete queued message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "queue:write",
+        "description": "Compliance payloads return 403. Stored mailbox payloads return 409; use IMAP EXPUNGE."
+      }
+    },
+    "/api/v1/mailboxes": {
+      "get": {
+        "operationId": "get_api_v1_mailboxes",
+        "summary": "List mail accounts",
+        "responses": {
+          "200": {
+            "description": "List mail accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Mailbox"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailboxes:read"
+      },
+      "post": {
+        "operationId": "post_api_v1_mailboxes",
+        "summary": "Create mail account",
+        "responses": {
+          "201": {
+            "description": "Create mail account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailbox"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailboxes:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailboxCreate"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 65536
+      }
+    },
+    "/api/v1/mailboxes/{username}": {
+      "parameters": [
+        {
+          "name": "username",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "get": {
+        "operationId": "get_api_v1_mailboxes_username",
+        "summary": "Read mail account",
+        "responses": {
+          "200": {
+            "description": "Read mail account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailbox"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailboxes:read"
+      },
+      "put": {
+        "operationId": "put_api_v1_mailboxes_username",
+        "summary": "Update mail account",
+        "responses": {
+          "200": {
+            "description": "Update mail account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailbox"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailboxes:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailboxUpdate"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 65536
+      },
+      "delete": {
+        "operationId": "delete_api_v1_mailboxes_username",
+        "summary": "Delete mail identity",
+        "responses": {
+          "200": {
+            "description": "Delete mail identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedMailbox"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailboxes:write"
+      }
+    },
+    "/api/v1/recipients/{address}": {
+      "parameters": [
+        {
+          "name": "address",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "get": {
+        "operationId": "get_api_v1_recipients_address",
+        "summary": "Resolve enabled recipient or alias",
+        "responses": {
+          "200": {
+            "description": "Resolve enabled recipient or alias",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipients"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "recipients:read"
+      }
+    },
+    "/api/v1/policies": {
+      "get": {
+        "operationId": "get_api_v1_policies",
+        "summary": "List policies",
+        "responses": {
+          "200": {
+            "description": "List policies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:read"
+      },
+      "post": {
+        "operationId": "post_api_v1_policies",
+        "summary": "Create policy",
+        "responses": {
+          "201": {
+            "description": "Create policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Policy"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 2097152
+      }
+    },
+    "/api/v1/policies/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "get": {
+        "operationId": "get_api_v1_policies_name",
+        "summary": "Read policy",
+        "responses": {
+          "200": {
+            "description": "Read policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Policy"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:read"
+      },
+      "put": {
+        "operationId": "put_api_v1_policies_name",
+        "summary": "Replace policy",
+        "responses": {
+          "200": {
+            "description": "Replace policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Policy"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 2097152
+      },
+      "delete": {
+        "operationId": "delete_api_v1_policies_name",
+        "summary": "Delete policy",
+        "responses": {
+          "204": {
+            "description": "Delete policy"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:write"
+      }
+    },
+    "/api/v1/policies/{name}/test": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_policies_name_test",
+        "summary": "Evaluate policy without queuing mail",
+        "responses": {
+          "200": {
+            "description": "Evaluate policy without queuing mail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyTest"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 2097152
+      }
+    },
+    "/api/v1/policies/stats": {
+      "get": {
+        "operationId": "get_api_v1_policies_stats",
+        "summary": "Policy engine counters",
+        "responses": {
+          "200": {
+            "description": "Policy engine counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:read"
+      }
+    },
+    "/api/v1/policies/reload": {
+      "post": {
+        "operationId": "post_api_v1_policies_reload",
+        "summary": "Reload managed policies",
+        "responses": {
+          "200": {
+            "description": "Reload managed policies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyReloaded"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "policies:write"
+      }
+    },
+    "/api/v1/mailstorm": {
+      "get": {
+        "operationId": "get_api_v1_mailstorm",
+        "summary": "Mailstorm guard status",
+        "responses": {
+          "200": {
+            "description": "Mailstorm guard status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailstorm"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailstorm:read"
+      }
+    },
+    "/api/v1/mailstorm/pause": {
+      "post": {
+        "operationId": "post_api_v1_mailstorm_pause",
+        "summary": "Pause mail admission",
+        "responses": {
+          "200": {
+            "description": "Pause mail admission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailstorm"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailstorm:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Pause"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/api/v1/mailstorm/resume": {
+      "post": {
+        "operationId": "post_api_v1_mailstorm_resume",
+        "summary": "Resume mail admission",
+        "responses": {
+          "200": {
+            "description": "Resume mail admission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mailstorm"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "mailstorm:write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resume"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/api/v1/quarantine": {
+      "get": {
+        "operationId": "get_api_v1_quarantine",
+        "summary": "List held message metadata",
+        "responses": {
+          "200": {
+            "description": "List held message metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Quarantined"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "quarantine:read"
+      }
+    },
+    "/api/v1/quarantine/{id}/release": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_quarantine_id_release",
+        "summary": "Release held message",
+        "responses": {
+          "200": {
+            "description": "Release held message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "quarantine:write"
+      }
+    },
+    "/api/v1/quarantine/{id}/delete": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_quarantine_id_delete",
+        "summary": "Delete held message",
+        "responses": {
+          "200": {
+            "description": "Delete held message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "quarantine:write"
+      }
+    },
+    "/api/v1/bounce/config": {
+      "get": {
+        "operationId": "get_api_v1_bounce_config",
+        "summary": "Effective bounce configuration",
+        "responses": {
+          "200": {
+            "description": "Effective bounce configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BounceConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "bounce:read"
+      }
+    },
+    "/api/v1/bounce/reports": {
+      "get": {
+        "operationId": "get_api_v1_bounce_reports",
+        "summary": "Tracked incoming DSNs",
+        "responses": {
+          "200": {
+            "description": "Tracked incoming DSNs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JournalEntry"
+                  },
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "bounce:read"
+      }
+    },
+    "/api/v1/compliance/config": {
+      "get": {
+        "operationId": "get_api_v1_compliance_config",
+        "summary": "Visible compliance rules",
+        "responses": {
+          "200": {
+            "description": "Visible compliance rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComplianceRule"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:read"
+      }
+    },
+    "/api/v1/compliance": {
+      "get": {
+        "operationId": "get_api_v1_compliance",
+        "summary": "Visible evidence metadata",
+        "responses": {
+          "200": {
+            "description": "Visible evidence metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JournalEntry"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:read",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/compliance/{id}/export": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "get": {
+        "operationId": "get_api_v1_compliance_id_export",
+        "summary": "Export preserved message",
+        "responses": {
+          "200": {
+            "description": "Export preserved message",
+            "content": {
+              "message/rfc822": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:export"
+      }
+    },
+    "/api/v1/compliance/{id}/legal-hold": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_compliance_id_legal_hold",
+        "summary": "Legal-Hold evidence action",
+        "responses": {
+          "200": {
+            "description": "Legal-Hold evidence action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:legal-hold",
+        "description": "Requires configured domain/action access in addition to scope. Legal-hold uses hold; release/delete use reason. Retention and active holds may prevent mutation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplianceMutation"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/api/v1/compliance/{id}/release": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_compliance_id_release",
+        "summary": "Release evidence action",
+        "responses": {
+          "200": {
+            "description": "Release evidence action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:release",
+        "description": "Requires configured domain/action access in addition to scope. Legal-hold uses hold; release/delete use reason. Retention and active holds may prevent mutation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplianceMutation"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/api/v1/compliance/{id}/delete": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Opaque value; percent-encode as a single path segment."
+        }
+      ],
+      "post": {
+        "operationId": "post_api_v1_compliance_id_delete",
+        "summary": "Delete evidence action",
+        "responses": {
+          "200": {
+            "description": "Delete evidence action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "compliance:delete",
+        "description": "Requires configured domain/action access in addition to scope. Legal-hold uses hold; release/delete use reason. Retention and active holds may prevent mutation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplianceMutation"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/api/v1/replication/status": {
+      "get": {
+        "operationId": "get_api_v1_replication_status",
+        "summary": "Replication unavailable in standard executable",
+        "responses": {
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "replication:read"
+      },
+      "head": {
+        "operationId": "head_api_v1_replication_status",
+        "summary": "Replication unavailable in standard executable (headers only)",
+        "responses": {
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "replication:read"
+      }
+    },
+    "/api/v1/replication/promote": {
+      "post": {
+        "operationId": "post_api_v1_replication_promote",
+        "summary": "Replication unavailable in standard executable",
+        "responses": {
+          "501": {
+            "$ref": "#/components/responses/Error"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-required-permission": "replication:write"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Static API key or configured OAuth access token. Mailbox passwords/Basic Auth are not management credentials."
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "uptime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "uptime"
+        ]
+      },
+      "Readiness": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ]
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "storage": {
+                "type": "boolean"
+              },
+              "queue": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "storage",
+              "queue"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ]
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "enum": [
+              "go-emailservice-ads"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "version"
+        ]
+      },
+      "Mailbox": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "email",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "MailboxCreate": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Nonempty, at most 255 UTF-8 bytes; no whitespace/control characters.",
+            "minLength": 1,
+            "x-maxBytes": 255
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "writeOnly": true,
+            "description": "12\u201372 UTF-8 bytes. OpenAPI string lengths count characters; the server validates encoded bytes.",
+            "x-minBytes": 12,
+            "x-maxBytes": 72
+          },
+          "email": {
+            "type": "string",
+            "description": "Defaults to username; must contain @ and satisfy identifier rules."
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "MailboxUpdate": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "format": "password",
+            "writeOnly": true,
+            "description": "12\u201372 UTF-8 bytes. OpenAPI string lengths count characters; the server validates encoded bytes. Empty string means unchanged.",
+            "x-minBytes": 12,
+            "x-maxBytes": 72
+          },
+          "email": {
+            "type": "string",
+            "description": "Empty string means unchanged; otherwise must contain @ and satisfy identifier rules."
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Supply at least one change: a nonempty password/email or enabled. Empty strings do not change stored values."
+      },
+      "DeletedMailbox": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "deleted"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "username"
+        ]
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "RetryResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "message_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message_id"
+        ]
+      },
+      "JournalEntry": {
+        "type": "object",
+        "properties": {
+          "transaction": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JournalEntry"
+            },
+            "nullable": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "data": {
+            "type": "string",
+            "format": "byte",
+            "nullable": true,
+            "description": "Base64 message bytes; null in redacted compliance lists."
+          },
+          "tier": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_attempt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "message_id",
+          "from",
+          "to",
+          "data",
+          "tier",
+          "attempts",
+          "created_at",
+          "status"
+        ]
+      },
+      "QueueStats": {
+        "type": "object",
+        "properties": {
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "enqueued": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "processed": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "failed": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "duplicates": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "last_update": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "enqueued",
+              "processed",
+              "failed",
+              "duplicates",
+              "last_update"
+            ]
+          },
+          "storage": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Storage counters from the running backend."
+          }
+        },
+        "required": [
+          "metrics",
+          "storage"
+        ]
+      },
+      "Recipients": {
+        "type": "object",
+        "properties": {
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "recipients"
+        ]
+      },
+      "PolicyScope": {
+        "type": "object",
+        "properties": {
+          "Type": {
+            "type": "string"
+          },
+          "Users": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Direction": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Policy": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "starlark",
+              "sieve"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PolicyScope"
+          },
+          "script_path": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string"
+          },
+          "max_execution_time": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Nanoseconds, not a duration string."
+          },
+          "max_memory": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "description": "Inline script required for saves. Starlark is the supported managed filter engine. PUT replaces the definition; URL supplies name. Nested scope keys serialize with Go field capitalization; decoder also accepts case-insensitive names.",
+        "additionalProperties": false
+      },
+      "PolicyList": {
+        "type": "object",
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Policy"
+            },
+            "nullable": true
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "policies",
+          "count"
+        ]
+      },
+      "PolicySaved": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "saved"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "name"
+        ]
+      },
+      "PolicyTest": {
+        "type": "object",
+        "properties": {
+          "From": {
+            "type": "string"
+          },
+          "To": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Subject": {
+            "type": "string"
+          },
+          "Body": {
+            "type": "string"
+          },
+          "Headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PolicyAction": {
+        "type": "object",
+        "properties": {
+          "Type": {
+            "type": "string"
+          },
+          "Reason": {
+            "type": "string"
+          },
+          "Target": {
+            "type": "string"
+          },
+          "Tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Priority": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "Trace": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "Headers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "Name": {
+                  "type": "string"
+                },
+                "Value": {
+                  "type": "string"
+                },
+                "Action": {
+                  "type": "string"
+                }
+              }
+            },
+            "nullable": true
+          },
+          "RetryAfter": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "Vacation": {
+            "type": "object",
+            "nullable": true
+          },
+          "Notify": {
+            "type": "object",
+            "nullable": true
+          },
+          "SMTPCode": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "SMTPDSN": {
+            "type": "string"
+          },
+          "AutoReplyText": {
+            "type": "string"
+          },
+          "CheckToSkip": {
+            "type": "string"
+          },
+          "DLPMode": {
+            "type": "string"
+          },
+          "DLPTarget": {
+            "type": "string"
+          },
+          "ForceSecondServer": {
+            "type": "string"
+          }
+        }
+      },
+      "PolicyTestResult": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/PolicyAction"
+          }
+        },
+        "required": [
+          "policy",
+          "action"
+        ]
+      },
+      "PolicyStats": {
+        "type": "object",
+        "properties": {
+          "policies": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "evaluations": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PolicyReloaded": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "reloaded"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ]
+      },
+      "Mailstorm": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "accepted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deferred": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tracked_identities": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "circuits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "until": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "trips": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "actor": {
+                  "type": "string"
+                }
+              }
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "enabled",
+          "accepted",
+          "deferred",
+          "tracked_identities",
+          "circuits"
+        ]
+      },
+      "Pause": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "string",
+            "example": "30m"
+          }
+        },
+        "required": [
+          "key",
+          "duration"
+        ]
+      },
+      "Resume": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "Quarantined": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "from",
+          "to",
+          "created_at",
+          "bytes"
+        ]
+      },
+      "QuarantineResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "release",
+              "delete"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ]
+      },
+      "BounceConfig": {
+        "type": "object",
+        "properties": {
+          "track_incoming": {
+            "type": "boolean"
+          },
+          "enable_dsn": {
+            "type": "boolean"
+          },
+          "delay_warning_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "full_return_max_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "suppressed_recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "suppress": {
+            "type": "boolean"
+          },
+          "postmaster": {
+            "type": "string"
+          },
+          "include_original_headers": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "max_header_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_attempts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_delay": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_delay": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ComplianceRule": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "bcc": {
+            "type": "string"
+          },
+          "retention": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Nanoseconds."
+          },
+          "legal_hold": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ComplianceMutation": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "hold": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ComplianceResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "release",
+              "delete",
+              "legal-hold"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "action"
+        ]
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Plain-text failure. Inspect HTTP status before decoding. Authorization failures may be 401 or 403 depending on credential mode.",
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
