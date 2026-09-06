@@ -212,6 +212,9 @@ func main() {
 		// Continue without policies
 		policyMgr = nil
 	} else {
+		if err := policyMgr.UsePersistentFile(filepath.Join(cfg.Platform.DataDir, "policies.yaml")); err != nil {
+			logger.Fatal("Persistent policy management failed", zap.Error(err))
+		}
 		logger.Info("Policy manager initialized")
 		queueManager.SetPolicyManager(policyMgr)
 	}

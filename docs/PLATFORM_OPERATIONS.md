@@ -134,9 +134,12 @@ platform:
 
 Required policy initialization fails startup; runtime evaluation errors defer
 mail. Policy reload validates all enabled scripts before replacing the active set.
-An empty policy list is valid and supplies no custom rules. Manage policy files
-and use the reload endpoint; legacy policy-edit/test API placeholders are not a
-supported configuration workflow.
+An empty policy list is valid and supplies no custom rules. The bootstrap policy file seeds `data_dir/policies.yaml` once; this writable file
+then becomes authoritative. GET/POST `/api/v1/policies`, GET/PUT/DELETE
+`/api/v1/policies/{name}`, and POST `/api/v1/policies/{name}/test` manage and test
+policies. Changes persist atomically before activation; inline scripts are
+required for API edits. POST `/api/v1/policies/reload` reloads the managed file.
+Use policies:read/write API scopes; test evaluation never queues mail.
 
 The direct ClamAV INSTREAM check requires an explicit clean result. Malware gets
 550; required scanner outages, incomplete scans, and size-limit errors get 451.

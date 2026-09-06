@@ -174,15 +174,15 @@ const (
 
 // PolicyConfig represents a single policy configuration
 type PolicyConfig struct {
-	Name             string        `yaml:"name"`
-	Type             PolicyType    `yaml:"type"`
-	Enabled          bool          `yaml:"enabled"`
-	Priority         int           `yaml:"priority"`
-	Scope            PolicyScope   `yaml:"scope"`
-	ScriptPath       string        `yaml:"script_path"`
-	Script           string        `yaml:"script"`
-	MaxExecutionTime time.Duration `yaml:"max_execution_time"`
-	MaxMemory        int64         `yaml:"max_memory"`
+	Name             string        `yaml:"name" json:"name"`
+	Type             PolicyType    `yaml:"type" json:"type"`
+	Enabled          bool          `yaml:"enabled" json:"enabled"`
+	Priority         int           `yaml:"priority" json:"priority"`
+	Scope            PolicyScope   `yaml:"scope" json:"scope"`
+	ScriptPath       string        `yaml:"script_path" json:"script_path"`
+	Script           string        `yaml:"script" json:"script"`
+	MaxExecutionTime time.Duration `yaml:"max_execution_time" json:"max_execution_time"`
+	MaxMemory        int64         `yaml:"max_memory" json:"max_memory"`
 }
 
 // PolicyResult represents the evaluation result from a policy

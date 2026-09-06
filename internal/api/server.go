@@ -115,7 +115,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/v1/queue/pending", s.authMiddleware(s.handleQueuePending))
 
 	// Policy management (requires auth)
-	mux.HandleFunc("/api/v1/policies", s.authMiddleware(s.handlePolicyList))
+	mux.HandleFunc("/api/v1/policies", s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			s.handlePolicyCreate(w, r)
+		} else {
+			s.handlePolicyList(w, r)
+		}
+	}))
 	mux.HandleFunc("/api/v1/policies/", s.authMiddleware(s.handlePolicyRouter))
 	mux.HandleFunc("/api/v1/policies/stats", s.authMiddleware(s.handlePolicyStats))
 	mux.HandleFunc("/api/v1/policies/reload", s.authMiddleware(s.handlePolicyReload))

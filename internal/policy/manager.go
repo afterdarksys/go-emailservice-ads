@@ -16,7 +16,8 @@ import (
 
 // Manager manages policy loading, evaluation, and caching
 type Manager struct {
-	logger *zap.Logger
+	managementMu sync.Mutex
+	logger       *zap.Logger
 
 	// Policy storage
 	policies   []*PolicyConfig
@@ -88,6 +89,8 @@ type PoliciesConfig struct {
 
 // LoadPolicies loads policy configurations from a YAML file
 func (m *Manager) LoadPolicies(path string) error {
+	m.managementMu.Lock()
+	defer m.managementMu.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read policies config: %w", err)
@@ -381,7 +384,10 @@ func (m *Manager) ListPolicies() []*PolicyConfig {
 	defer m.policiesMu.RUnlock()
 
 	result := make([]*PolicyConfig, len(m.policies))
-	copy(result, m.policies)
+	for i, p := range m.policies {
+		clone := *p
+		result[i] = &clone
+	}
 	return result
 }
 

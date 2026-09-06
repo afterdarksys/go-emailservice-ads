@@ -36,141 +36,120 @@ func (s *Server) handlePolicyList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePolicyGet returns details of a specific policy
+func (s *Server) policyAvailable(w http.ResponseWriter) bool {
+	if s.policyMgr == nil {
+		http.Error(w, "Policy manager unavailable", 503)
+		return false
+	}
+	return true
+}
 func (s *Server) handlePolicyGet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !s.policyAvailable(w) {
 		return
 	}
-
-	// Extract policy name from URL path
 	name := strings.TrimPrefix(r.URL.Path, "/api/v1/policies/")
-
-	// TODO: Get policy by name from policy manager
-	// policy, err := s.policyManager.GetPolicy(name)
-
-	_ = name // Use the name variable
-
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"name":    name,
-		"message": "Policy details not yet implemented",
-	})
+	p, err := s.policyMgr.GetPolicy(name)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.jsonResponse(w, 200, p)
 }
-
-// handlePolicyCreate creates a new policy
 func (s *Server) handlePolicyCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var policyConfig policy.PolicyConfig
-	if err := json.NewDecoder(r.Body).Decode(&policyConfig); err != nil {
-		s.logger.Warn("Invalid policy request", zap.Error(err))
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// TODO: Add policy to policy manager
-	// err := s.policyManager.AddPolicy(&policyConfig)
-	// if err != nil {
-	//     http.Error(w, err.Error(), http.StatusBadRequest)
-	//     return
-	// }
-
-	s.logger.Info("Policy created", zap.String("name", policyConfig.Name))
-	s.jsonResponse(w, http.StatusCreated, map[string]interface{}{
-		"status":  "created",
-		"policy":  policyConfig.Name,
-		"message": "Policy creation not yet fully implemented",
-	})
+	s.savePolicy(w, r, false)
 }
-
-// handlePolicyUpdate updates an existing policy
-func (s *Server) handlePolicyUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (s *Server) handlePolicyUpdate(w http.ResponseWriter, r *http.Request) { s.savePolicy(w, r, true) }
+func (s *Server) savePolicy(w http.ResponseWriter, r *http.Request, replace bool) {
+	if !s.policyAvailable(w) {
 		return
 	}
-
-	name := strings.TrimPrefix(r.URL.Path, "/api/v1/policies/")
-
-	var policyConfig policy.PolicyConfig
-	if err := json.NewDecoder(r.Body).Decode(&policyConfig); err != nil {
-		s.logger.Warn("Invalid policy update request", zap.Error(err))
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	var p policy.PolicyConfig
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&p); err != nil {
+		http.Error(w, "Invalid policy", 400)
 		return
 	}
-
-	// Ensure name matches URL
-	policyConfig.Name = name
-
-	// TODO: Update policy in policy manager
-	// err := s.policyManager.UpdatePolicy(&policyConfig)
-
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":  "updated",
-		"policy":  name,
-		"message": "Policy update not yet fully implemented",
-	})
+	if replace {
+		p.Name = strings.TrimPrefix(r.URL.Path, "/api/v1/policies/")
+	}
+	if s.store != nil {
+		if err := s.store.Audit(principal(r), "policy_save_requested", p.Name); err != nil {
+			http.Error(w, "Audit unavailable", 503)
+			return
+		}
+	}
+	if err := s.policyMgr.SavePolicy(p, replace); err != nil {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	status := 201
+	if replace {
+		status = 200
+	}
+	s.jsonResponse(w, status, map[string]string{"status": "saved", "name": p.Name})
 }
-
-// handlePolicyDelete deletes a policy
 func (s *Server) handlePolicyDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !s.policyAvailable(w) {
 		return
 	}
-
 	name := strings.TrimPrefix(r.URL.Path, "/api/v1/policies/")
-
-	// TODO: Delete policy from policy manager
-	// err := s.policyManager.RemovePolicy(name)
-
-	s.logger.Info("Policy deleted", zap.String("name", name))
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":  "deleted",
-		"policy":  name,
-		"message": "Policy deletion not yet fully implemented",
-	})
+	if s.store != nil {
+		if err := s.store.Audit(principal(r), "policy_delete_requested", name); err != nil {
+			http.Error(w, "Audit unavailable", 503)
+			return
+		}
+	}
+	if err := s.policyMgr.DeletePolicy(name); err != nil {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	w.WriteHeader(204)
 }
-
-// handlePolicyTest tests a policy against a sample email
 func (s *Server) handlePolicyTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "POST required", 405)
 		return
 	}
-
-	name := strings.TrimPrefix(r.URL.Path, "/api/v1/policies/")
-	name = strings.TrimSuffix(name, "/test")
-
-	type TestRequest struct {
-		From    string            `json:"from"`
-		To      []string          `json:"to"`
-		Subject string            `json:"subject"`
-		Body    string            `json:"body"`
-		Headers map[string]string `json:"headers"`
-	}
-
-	var testReq TestRequest
-	if err := json.NewDecoder(r.Body).Decode(&testReq); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !s.policyAvailable(w) {
 		return
 	}
-
-	// TODO: Test policy against sample email
-	// result, err := s.policyManager.TestPolicy(name, emailContext)
-
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"policy": name,
-		"result": "Policy testing not yet fully implemented",
-		"input": map[string]interface{}{
-			"from":    testReq.From,
-			"to":      testReq.To,
-			"subject": testReq.Subject,
-		},
-	})
+	var req struct {
+		From    string
+		To      []string
+		Subject string
+		Body    string
+		Headers map[string]string
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid test input", 400)
+		return
+	}
+	if strings.ContainsAny(req.Subject, "\r\n") {
+		http.Error(w, "Invalid subject", 400)
+		return
+	}
+	raw := "Subject: " + req.Subject + "\r\n"
+	for k, v := range req.Headers {
+		if k == "" || strings.ContainsAny(k, ": \t\r\n") || strings.ContainsAny(v, "\r\n") {
+			http.Error(w, "Invalid headers", 400)
+			return
+		}
+		raw += k + ": " + v + "\r\n"
+	}
+	raw += "\r\n" + req.Body
+	email, err := policy.NewEmailContext(req.From, req.To, "192.0.2.1", "test.invalid", []byte(raw))
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/policies/"), "/test")
+	action, err := s.policyMgr.TestPolicy(r.Context(), name, email)
+	if err != nil {
+		http.Error(w, err.Error(), 422)
+		return
+	}
+	s.jsonResponse(w, 200, map[string]interface{}{"policy": name, "action": action})
 }
 
 // handlePolicyReload reloads all policies from configuration
