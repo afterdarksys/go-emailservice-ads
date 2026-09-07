@@ -255,12 +255,35 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 	entries := []entry{}
 	threadIDs := map[string]string{}
 	for mid, meta := range owned {
-		raw, err := j.store.FetchMessage(ctx, mid)
-		if err != nil {
-			return methodError("serverFail", id)
+		var raw []byte
+		var msg *mail.Message
+		needsBody := false
+		for key := range filter {
+			if key == "subject" || key == "from" || key == "to" || key == "text" {
+				needsBody = true
+			}
 		}
-		threadIDs[mid] = mailstate.ThreadID(mid, raw)
-		msg, _ := mail.ReadMessage(bytes.NewReader(raw))
+		// Filter metadata before fetching body, even for expensive text queries.
+		if box, ok := filter["inMailbox"].(string); ok && messageMailboxID(meta) != box {
+			continue
+		}
+		if key, ok := filter["hasKeyword"].(string); ok && !keywords(meta.Flags)[key] {
+			continue
+		}
+		if key, ok := filter["notKeyword"].(string); ok && keywords(meta.Flags)[key] {
+			continue
+		}
+		threadIDs[mid] = meta.ThreadID
+		if needsBody || (args["collapseThreads"] == true && meta.ThreadID == "") {
+			raw, err = j.store.FetchMessage(ctx, mid)
+			if err != nil {
+				return methodError("serverFail", id)
+			}
+			msg, _ = mail.ReadMessage(bytes.NewReader(raw))
+			if meta.ThreadID == "" {
+				threadIDs[mid] = mailstate.ThreadID(mid, raw)
+			}
+		}
 		match := true
 		for key, v := range filter {
 			want := v.(string)

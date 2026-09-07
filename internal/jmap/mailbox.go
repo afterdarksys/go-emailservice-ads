@@ -58,12 +58,15 @@ func (j *JMAPServer) durableMailboxGet(ctx context.Context, user string, args ma
 	}
 	totals, unread := map[string]map[string]bool{}, map[string]map[string]bool{}
 	for mid, meta := range owned {
-		raw, err := j.store.FetchMessage(ctx, mid)
-		if err != nil {
-			return methodError("serverFail", id)
-		}
 		box := messageMailboxID(meta)
-		tid := mailstate.ThreadID(mid, raw)
+		tid := meta.ThreadID
+		if tid == "" {
+			raw, err := j.store.FetchMessage(ctx, mid)
+			if err != nil {
+				return methodError("serverFail", id)
+			}
+			tid = mailstate.ThreadID(mid, raw)
+		}
 		if totals[box] == nil {
 			totals[box] = map[string]bool{}
 			unread[box] = map[string]bool{}

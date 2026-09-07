@@ -13,6 +13,7 @@ var ErrStateMismatch = errors.New("stateMismatch")
 var ErrCannotCalculate = errors.New("cannotCalculateChanges")
 
 type Message struct {
+	ThreadID string
 	imap.MessageSummary
 	Folder    string
 	MailboxID string

@@ -17,12 +17,15 @@ func (j *JMAPServer) threadSnapshot(ctx context.Context, user string) (map[strin
 		return nil, "", err
 	}
 	threads := map[string][]string{}
-	for id := range owned {
-		raw, err := j.store.FetchMessage(ctx, id)
-		if err != nil {
-			return nil, "", err
+	for id, meta := range owned {
+		tid := meta.ThreadID
+		if tid == "" {
+			raw, err := j.store.FetchMessage(ctx, id)
+			if err != nil {
+				return nil, "", err
+			}
+			tid = mailstate.ThreadID(id, raw)
 		}
-		tid := mailstate.ThreadID(id, raw)
 		threads[tid] = append(threads[tid], id)
 	}
 	for _, ids := range threads {

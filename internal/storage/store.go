@@ -15,6 +15,7 @@ import (
 
 // MessageStore provides persistent storage for delivery transactions and mailbox blobs.
 type MessageStore struct {
+	threadIDs map[string]string
 	audit     *auditlog.Log
 	lockFile  *os.File
 	limits    Limits
