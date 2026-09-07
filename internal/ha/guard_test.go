@@ -44,3 +44,17 @@ func TestGuardRuntimeOwnershipLoss(t *testing.T) {
 		t.Fatal("path escape accepted")
 	}
 }
+
+func TestReplicatedPathsRejectSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if e := os.Symlink(outside, filepath.Join(root, "escape")); e != nil {
+		t.Fatal(e)
+	}
+	if e := ValidatePaths(root, filepath.Join(root, "new", "users.db")); e != nil {
+		t.Fatal(e)
+	}
+	if e := ValidatePaths(root, filepath.Join(root, "escape", "users.db")); e == nil {
+		t.Fatal("unreplicated database accepted")
+	}
+}

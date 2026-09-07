@@ -87,6 +87,14 @@ func runMain() {
 	var haGuard *ha.Guard
 	var ownershipLost <-chan error
 	if cfg.Platform.HA.Enabled {
+		paths := []string{cfg.Platform.DataDir, cfg.Auth.UserDatabaseURL, cfg.Platform.PolicyPath, cfg.Platform.FencingLeaseFile}
+		if cfg.AfterSMTP.Enabled {
+			paths = append(paths, cfg.AfterSMTP.FallbackDB)
+		}
+		if err = ha.ValidatePaths(cfg.Platform.HA.Volume, paths...); err != nil {
+			logger.Fatal("HA state path invalid", zap.Error(err))
+		}
+
 		haGuard, err = ha.New(cfg.Platform.HA)
 		if err != nil {
 			logger.Fatal("HA configuration failed", zap.Error(err))
@@ -254,13 +262,8 @@ func runMain() {
 
 	// Initialize replication (optional, configured in config)
 	var replicator *replication.Replicator
-	// TODO: Add replication config to config.yaml
-	// For now, initialize as standalone (no replication)
-	// replicator, err = replication.NewReplicator(store, replication.ModePrimary, ":9090", []string{}, logger)
-	// if err != nil {
-	// 	logger.Fatal("Failed to initialize replicator", zap.Error(err))
-	// }
-	// defer replicator.Shutdown()
+	// Message-only legacy replication is deliberately disabled. Whole-volume
+	// HA ownership is verified by haGuard before stores or listeners start.
 
 	// Initialize policy manager (shared between SMTP and API servers)
 	var policyMgr *policy.Manager
@@ -346,7 +349,7 @@ func runMain() {
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
 	apiServer.SetHAGuard(haGuard)
 	apiServer.SetConfigReload(func() error {
-		if err := validateReloadConfig(*configPath); err != nil {
+		if err := validateReloadConfig(*configPath, cfg); err != nil {
 			return err
 		}
 		select {
@@ -446,7 +449,7 @@ waitForStop:
 			}
 		case <-reloadRequests:
 		}
-		if err := validateReloadConfig(*configPath); err != nil {
+		if err := validateReloadConfig(*configPath, cfg); err != nil {
 			logger.Error("Configuration reload rejected; current configuration remains active", zap.Error(err))
 			continue
 		}
@@ -487,7 +490,7 @@ waitForStop:
 
 func createDefaultConfig(path string) error {
 	content := []byte(`server:
-  addr: ":2525"
+  addr: ":587"
   domain: "localhost.local"
   max_message_bytes: 10485760
   max_recipients: 50
@@ -508,10 +511,7 @@ api:
   rest_addr: ":8080"
   grpc_addr: ":50051"
 auth:
-  default_users:
-    - username: "testuser"
-      password: "REPLACE_ME_USE_A_STRONG_PASSWORD"
-      email: "testuser@localhost.local"
+  default_users: [] # Provision real accounts; no shared default password.
 aftersmtp:
   enabled: false
   ledger_url: "ws://127.0.0.1:9944"
@@ -521,7 +521,7 @@ aftersmtp:
 logging:
   level: "debug"
 `)
-	return os.WriteFile(path, content, 0644)
+	return os.WriteFile(path, content, 0600)
 }
 
 // validateConfigFile deliberately stops before defaults are written, ownership

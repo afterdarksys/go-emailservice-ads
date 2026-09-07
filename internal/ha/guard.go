@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -141,4 +142,39 @@ func (g *Guard) Monitor(ctx context.Context) <-chan error {
 		}
 	}()
 	return out
+}
+
+// ValidatePaths resolves existing ancestors so a symlink cannot silently place
+// a database outside the replicated mount. Missing descendants may be created.
+func ValidatePaths(root string, paths ...string) error {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		probe := absolute
+		var suffix []string
+		for {
+			resolved, e := filepath.EvalSymlinks(probe)
+			if e == nil {
+				for i := len(suffix) - 1; i >= 0; i-- {
+					resolved = filepath.Join(resolved, suffix[i])
+				}
+				if !Inside(resolvedRoot, resolved) {
+					return fmt.Errorf("HA state path escapes replicated volume: %s", path)
+				}
+				break
+			}
+			if !os.IsNotExist(e) || probe == filepath.Dir(probe) {
+				return e
+			}
+			suffix = append(suffix, filepath.Base(probe))
+			probe = filepath.Dir(probe)
+		}
+	}
+	return nil
 }

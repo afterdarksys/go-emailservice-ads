@@ -41,7 +41,7 @@ func (s *Server) startExtensions() error {
 }
 func (s *Server) recordMutation(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.outbox == nil || (r.Method == "GET" || r.Method == "HEAD") && !strings.HasSuffix(requiredScope(r), ":write") {
+		if r.URL.Path == "/api/v1/extensions/webhooks/retry" || s.outbox == nil || (r.Method == "GET" || r.Method == "HEAD") && !strings.HasSuffix(requiredScope(r), ":write") {
 			next(w, r)
 			return
 		}

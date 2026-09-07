@@ -339,7 +339,7 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	cfg.Platform.ValidateRecipients = true
 	// Set defaults
-	cfg.Server.Addr = ":2525"
+	cfg.Server.Addr = ":587"
 	cfg.Server.Domain = "localhost"
 	cfg.Server.Banner = "ESMTP Service Ready"
 	cfg.Server.MaxMessageBytes = 10 * 1024 * 1024 // 10MB default
@@ -398,6 +398,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.IMAP.Addr = ":1143"
 	cfg.IMAP.RequireTLS = true // SECURITY: Require TLS before authentication
 	cfg.IMAP.TLSMode = "starttls"
+	cfg.API.RESTAddr = "127.0.0.1:8080"
 	cfg.JMAP.Enabled = false
 	cfg.JMAP.Addr = ":8443"
 
@@ -473,6 +474,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("server.ip_filter: %w", err)
 	}
 	if err := cfg.validatePlatform(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateSafety(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Auth.LDAP.Validate(); err != nil {

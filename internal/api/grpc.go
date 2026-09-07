@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"google.golang.org/grpc"
@@ -88,7 +89,12 @@ func (w *rpcResponse) Write(b []byte) (int, error) {
 	return w.body.Write(b)
 }
 func (s *Server) Call(ctx context.Context, in *structpb.Struct) (*structpb.Struct, error) {
-	for key := range in.GetFields() {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for key, value := range in.GetFields() {
+		if _, ok := value.GetKind().(*structpb.Value_StringValue); !ok {
+			return nil, status.Error(codes.InvalidArgument, "request fields must be strings")
+		}
 		if key != "method" && key != "path" && key != "body" {
 			return nil, status.Error(codes.InvalidArgument, "unknown field")
 		}

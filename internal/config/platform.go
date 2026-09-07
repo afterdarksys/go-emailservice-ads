@@ -144,6 +144,9 @@ func (c *Config) validatePlatform() error {
 		p.PolicyPath = "policies.yaml"
 	}
 	if p.HA.Enabled {
+		if c.AfterSMTP.Enabled && !ha.Inside(p.HA.Volume, c.AfterSMTP.FallbackDB) {
+			return fmt.Errorf("HA fallback ledger must reside on replicated volume")
+		}
 		for _, path := range []string{p.DataDir, c.Auth.UserDatabaseURL, p.PolicyPath, p.FencingLeaseFile} {
 			if path == "" || !ha.Inside(p.HA.Volume, path) {
 				return fmt.Errorf("HA data, identity, policy and lease paths must be on the replicated volume")

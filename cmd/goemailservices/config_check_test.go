@@ -57,3 +57,24 @@ func TestConfigCheckProcess(t *testing.T) {
 		})
 	}
 }
+
+func TestGeneratedConfigurationHasNoSharedRelayCredentials(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if e := createDefaultConfig(p); e != nil {
+		t.Fatal(e)
+	}
+	b, e := os.ReadFile(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.Contains(string(b), "REPLACE_ME") || strings.Contains(string(b), "testuser") {
+		t.Fatal("shared bootstrap account")
+	}
+	if !strings.Contains(string(b), `addr: ":587"`) {
+		t.Fatal("missing submission default")
+	}
+	info, _ := os.Stat(p)
+	if info.Mode().Perm() != 0600 {
+		t.Fatal("configuration permissions", info.Mode())
+	}
+}

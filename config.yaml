@@ -1,5 +1,5 @@
 server:
-  addr: ":2525"
+  addr: ":587"
   domain: "apps.afterdarksys.com"
   banner: "apps.afterdarksys.com ESMTP AfterDark Mail Service" # SMTP 220 banner (legacy server only; main server uses domain)
   max_message_bytes: 10485760 # 10MB
@@ -7,6 +7,9 @@ server:
   allow_insecure_auth: false # SECURITY: Disable auth over non-TLS (set to true for testing only)
   require_auth: true # SECURITY: Require authentication for sending mail
   require_tls: true # SECURITY: Require STARTTLS before allowing AUTH
+  auth_mechanisms: [PLAIN] # SASL PLAIN is offered only over TLS
+  relay:
+    allowed_networks: [] # No unauthenticated relay grants
   mode: "test"
 
   # SMTP peer IP filtering; see docs/IP_FILTERING.md. Denylist wins.
@@ -82,11 +85,7 @@ api:
 auth:
   # NOTE: passwords are read literally (no ${ENV} expansion — see
   # internal/smtpd/server.go). Set real values in your deployed config only.
-  default_users:
-  - username: "admin"
-    password: "REPLACE_ME_USE_A_STRONG_PASSWORD" # WARNING: Change in production!
-    email: "admin@localhost.local"
-
+  default_users: [] # Provision accounts with unique credentials.
 # SSO Configuration for After Dark Systems
 sso:
   enabled: false # DISABLED - Set to true only when directory service is ready
