@@ -39,14 +39,20 @@ def qualify(jmap_port, imap_port, tls):
         assert method == 'Email/set' and foreign['notUpdated'][mid]['type'] == 'notFound', foreign
         client.close()
     return {'id': mid, 'state': written['newState'], 'mailbox': qualify_mailboxes(jmap_port, imap_port, tls),
-            'mutations': mutation_checks()['qualify'](request, jmap_port, imap_port, tls)}
+            'mutations': mutation_checks()['qualify'](request, jmap_port, imap_port, tls),
+            'imports': import_checks()['qualify'](request, jmap_port, imap_port, tls)}
 
 
 def mutation_checks():
     return runpy.run_path(str(pathlib.Path(__file__).with_name("jmap-email-mutations.py")))
 
 
+def import_checks():
+    return runpy.run_path(str(pathlib.Path(__file__).with_name("jmap-import.py")))
+
+
 def restored(jmap_port, checkpoint):
+    import_checks()["restored"](request, jmap_port, checkpoint["imports"])
     mutation_checks()["restored"](request, jmap_port, checkpoint["mutations"])
     box = checkpoint['mailbox']
     method, changes = request(jmap_port, 'Mailbox/changes', {'sinceState': box['state']})

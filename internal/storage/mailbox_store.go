@@ -82,7 +82,11 @@ func (s *MailboxStore) DeliveryUpdates() <-chan [2]string {
 // initSchema creates the required tables if they do not exist.
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`
-	CREATE TABLE IF NOT EXISTS mailbox_users (username TEXT PRIMARY KEY);
+	CREATE TABLE IF NOT EXISTS jmap_uploads(id TEXT PRIMARY KEY,username TEXT NOT NULL,media_type TEXT NOT NULL,data BLOB NOT NULL,expires INTEGER NOT NULL);
+ CREATE INDEX IF NOT EXISTS jmap_upload_owner ON jmap_uploads(username);
+ CREATE INDEX IF NOT EXISTS jmap_upload_expiry ON jmap_uploads(expires);
+ DELETE FROM jmap_uploads WHERE expires<=unixepoch();
+ CREATE TABLE IF NOT EXISTS mailbox_users (username TEXT PRIMARY KEY);
  CREATE TABLE IF NOT EXISTS mailbox_catalog (username TEXT NOT NULL, mailbox TEXT NOT NULL, subscribed INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(username,mailbox));
  CREATE TABLE IF NOT EXISTS mailbox_state (
 		username    TEXT NOT NULL,

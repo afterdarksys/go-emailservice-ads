@@ -220,6 +220,8 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 	session := Session{
 		Capabilities: map[string]interface{}{
 			"urn:ietf:params:jmap:core": CoreCapability{
+				MaxSizeUpload:         mailstate.MaxUploadBytes,
+				MaxConcurrentUpload:   maxJMAPConcurrent,
 				MaxSizeRequest:        10 * 1024 * 1024, // 10MB
 				MaxConcurrentRequests: maxJMAPConcurrent,
 				MaxCallsInRequest:     16,
@@ -251,7 +253,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		},
 		Username:       authUserFromContext(r.Context()),
 		APIUrl:         fmt.Sprintf("https://%s/jmap/api/", r.Host),
-		DownloadUrl:    fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?accept={type}", r.Host),
+		DownloadUrl:    fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?type={type}", r.Host),
 		UploadUrl:      fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
 		EventSourceUrl: "",
 	}
@@ -355,6 +357,8 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return j.mailboxSet(ctx, authUser, args, callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
+	case "Email/import":
+		return j.emailImport(ctx, authUser, args, callID)
 	case "Email/set":
 		return j.emailSet(ctx, authUser, args, callID)
 	case "Email/query":
@@ -490,11 +494,6 @@ func toStringSlice(v interface{}) []string {
 		out = append(out, s)
 	}
 	return out
-}
-
-func (j *JMAPServer) handleUpload(w http.ResponseWriter, r *http.Request) {
-	// RFC 8621 Section 6 - Binary Data
-	http.Error(w, "Not implemented", http.StatusNotImplemented)
 }
 
 // bearerSubject validates a JWT Bearer token from an Authorization header and,
