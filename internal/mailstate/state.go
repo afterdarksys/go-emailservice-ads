@@ -13,7 +13,31 @@ var ErrCannotCalculate = errors.New("cannotCalculateChanges")
 
 type Message struct {
 	imap.MessageSummary
-	Folder string
+	Folder    string
+	MailboxID string
+}
+
+type Mailbox struct {
+	ID, Path, Role           string
+	Subscribed               bool
+	SortOrder, Total, Unread int
+}
+type MailboxPatch struct {
+	Name       *string
+	Parent     *string // Empty means top-level; nil means unchanged.
+	Subscribed *bool
+	SortOrder  *int
+}
+type MailboxSetResult struct {
+	OldState, NewState                   string
+	Created                              map[string]string
+	Updated, Destroyed                   []string
+	NotCreated, NotUpdated, NotDestroyed map[string]string
+}
+type MailboxStore interface {
+	MailboxSnapshot(context.Context, string) ([]Mailbox, string, error)
+	SetMailboxes(context.Context, string, string, map[string]MailboxPatch, map[string]MailboxPatch, []string) (MailboxSetResult, error)
+	MailboxChanges(context.Context, string, string, int) (Changes, error)
 }
 type Patch struct {
 	Replace     *[]string

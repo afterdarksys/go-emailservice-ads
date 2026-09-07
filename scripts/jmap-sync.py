@@ -36,11 +36,59 @@ def qualify(jmap_port, imap_port, tls):
         method, foreign = request(jmap_port, 'Email/set', {'update': {mid: {'keywords/$seen': None}}}, 'probe@mail.test', 'isolated-test-password')
         assert method == 'Email/set' and foreign['notUpdated'][mid]['type'] == 'notFound', foreign
         client.close()
-    return {'id': mid, 'state': written['newState']}
+    return {'id': mid, 'state': written['newState'], 'mailbox': qualify_mailboxes(jmap_port, imap_port, tls)}
 
 
 def restored(jmap_port, checkpoint):
+    box = checkpoint['mailbox']
+    method, changes = request(jmap_port, 'Mailbox/changes', {'sinceState': box['state']})
+    assert method == 'Mailbox/changes' and box['id'] in changes['updated'], changes
+    method, result = request(jmap_port, 'Mailbox/get', {'ids': [box['id']]})
+    assert method == 'Mailbox/get' and result['list'][0]['name'] == 'JMAPRestored', result
+    assert result['list'][0]['isSubscribed'] and result['list'][0]['totalEmails'] == 1, result
     method, changes = request(jmap_port, 'Email/changes', {'sinceState': checkpoint['state']})
     assert method == 'Email/changes' and checkpoint['id'] in changes['updated'], changes
     method, result = request(jmap_port, 'Email/get', {'ids': [checkpoint['id']]})
     assert method == 'Email/get' and result['list'][0]['keywords'].get('$seen') and result['list'][0]['keywords'].get('$flagged'), result
+
+
+def qualify_mailboxes(port, imap_port, tls):
+    _, initial = request(port, 'Mailbox/get', {})
+    inbox = next(b['id'] for b in initial['list'] if b['role'] == 'inbox')
+    method, result = request(port, 'Mailbox/set', {'ifInState': initial['state'], 'create': {
+        'parent': {'name': 'JMAPFolders'},
+        'child': {'name': 'Child', 'parentId': '#parent', 'isSubscribed': True}}})
+    assert method == 'Mailbox/set' and len(result['created']) == 2, result
+    parent, child = (result['created'][k]['id'] for k in ('parent', 'child'))
+    method, renamed = request(port, 'Mailbox/set', {'update': {parent: {'name': 'JMAPRenamed'}}})
+    assert method == 'Mailbox/set' and parent in renamed['updated'], renamed
+    with imaplib.IMAP4('localhost', imap_port, timeout=10) as client:
+        client.starttls(ssl_context=tls); client.login('qa@mail.test', 'qa-new-password')
+        assert b'JMAPRenamed/Child' in repr(client.lsub()).encode()
+        assert client.append('JMAPRenamed/Child', None, None, b'Subject: mailbox-sync\r\n\r\nbody\r\n')[0] == 'OK'
+    method, blocked = request(port, 'Mailbox/set', {'destroy': [parent, child, inbox]})
+    assert method == 'Mailbox/set', blocked
+    assert blocked['notDestroyed'][parent]['type'] == 'mailboxHasChild', blocked
+    assert blocked['notDestroyed'][child]['type'] == 'mailboxHasEmail', blocked
+    assert blocked['notDestroyed'][inbox]['type'] == 'forbidden', blocked
+    method, stale = request(port, 'Mailbox/set', {'ifInState': initial['state'], 'update': {child: {'isSubscribed': False}}})
+    assert method == 'error' and stale['type'] == 'stateMismatch', stale
+    method, moved = request(port, 'Mailbox/set', {'update': {child: {'parentId': None, 'name': 'JMAPChild'}}})
+    assert method == 'Mailbox/set' and child in moved['updated'], moved
+    method, deleted = request(port, 'Mailbox/set', {'destroy': [parent]})
+    assert method == 'Mailbox/set' and deleted['destroyed'] == [parent], deleted
+    method, foreign = request(port, 'Mailbox/set', {'destroy': [child]}, 'probe@mail.test', 'isolated-test-password')
+    assert method == 'Mailbox/set' and foreign['notDestroyed'][child]['type'] == 'notFound', foreign
+    method, changes = request(port, 'Mailbox/changes', {'sinceState': initial['state'], 'maxChanges': 1})
+    seen = set(changes['created'])
+    while changes['hasMoreChanges']:
+        method, changes = request(port, 'Mailbox/changes', {'sinceState': changes['newState'], 'maxChanges': 1})
+        assert method == 'Mailbox/changes', changes
+        seen.update(changes['created'])
+    assert child in seen, changes
+    method, boxes = request(port, 'Mailbox/get', {'ids': [child]})
+    assert method == 'Mailbox/get' and boxes['list'][0]['totalEmails'] == 1, boxes
+    with imaplib.IMAP4('localhost', imap_port, timeout=10) as client:
+        client.starttls(ssl_context=tls); client.login('qa@mail.test', 'qa-new-password')
+        assert client.rename('JMAPChild', 'JMAPRestored')[0] == 'OK'
+    return {'id': child, 'state': boxes['state']}

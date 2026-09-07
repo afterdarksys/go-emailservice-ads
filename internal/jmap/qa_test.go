@@ -40,7 +40,11 @@ func TestJMAPReflectsDurableFoldersFlagsAndExpunge(t *testing.T) {
 	if len(list[0]["bodyValues"].(map[string]interface{})) == 0 {
 		t.Fatal("message body missing")
 	}
-	query := j.emailQuery(ctx, "alice", map[string]interface{}{"filter": map[string]interface{}{"inMailbox": folderID("Projects")}}, "q")
+	var projectID string
+	for fid := range list[0]["mailboxIds"].(map[string]bool) {
+		projectID = fid
+	}
+	query := j.emailQuery(ctx, "alice", map[string]interface{}{"filter": map[string]interface{}{"inMailbox": projectID}}, "q")
 	if ids := query.Arguments["ids"].([]string); len(ids) != 1 || ids[0] != mid {
 		t.Fatalf("query: %+v", query)
 	}
@@ -72,7 +76,7 @@ func TestJMAPReflectsDurableFoldersFlagsAndExpunge(t *testing.T) {
 	if len(response.Arguments["notFound"].([]string)) != 1 {
 		t.Fatal("deleted mail still visible")
 	}
-	for _, method := range []string{"Mailbox/set", "Email/changes"} {
+	for _, method := range []string{"Email/changes"} {
 		response = j.processMethodCall(ctx, "alice", MethodCall{Name: method, ID: "a", Arguments: map[string]interface{}{"accountId": "primary"}})
 		if response.Name != "error" {
 			t.Fatal("fabricated success", method, response)
@@ -101,9 +105,15 @@ func TestMailboxStateIndependentOfSelection(t *testing.T) {
 		}
 		return r
 	}
-	inbox := map[string]interface{}{"ids": []interface{}{"inbox"}}
+	var inboxID string
+	for _, box := range get(nil).Arguments["list"].([]map[string]interface{}) {
+		if box["role"] == "inbox" {
+			inboxID = box["id"].(string)
+		}
+	}
+	inbox := map[string]interface{}{"ids": []interface{}{inboxID}}
 	original := get(nil).Arguments["state"]
-	for _, args := range []map[string]interface{}{inbox, {"ids": []interface{}{}}, {"ids": []interface{}{"missing"}}, {"ids": []interface{}{"sent", "inbox"}}} {
+	for _, args := range []map[string]interface{}{inbox, {"ids": []interface{}{}}, {"ids": []interface{}{"missing"}}, {"ids": []interface{}{"sent", inboxID}}} {
 		if got := get(args).Arguments["state"]; got != original {
 			t.Fatalf("selection changed state: %v", args)
 		}
@@ -119,7 +129,7 @@ func TestMailboxStateIndependentOfSelection(t *testing.T) {
 		t.Fatal("subset and account state diverged")
 	}
 	list := changed.Arguments["list"].([]map[string]interface{})
-	if len(list) != 1 || list[0]["id"] != "inbox" {
+	if len(list) != 1 || list[0]["id"] != inboxID {
 		t.Fatalf("projection lost: %v", list)
 	}
 	state := changed.Arguments["state"]
@@ -136,7 +146,7 @@ func TestMailboxStateIndependentOfSelection(t *testing.T) {
 	if get(inbox).Arguments["state"] != state {
 		t.Fatal("another account changed state")
 	}
-	missing := get(map[string]interface{}{"ids": []interface{}{"missing", "inbox"}})
+	missing := get(map[string]interface{}{"ids": []interface{}{"missing", inboxID}})
 	if nf := missing.Arguments["notFound"].([]string); len(nf) != 1 || nf[0] != "missing" {
 		t.Fatalf("wrong notFound: %v", nf)
 	}

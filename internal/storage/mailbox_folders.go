@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 	goimap "github.com/emersion/go-imap"
@@ -157,6 +158,9 @@ func (s *MailboxStore) SubscribeFolder(ctx context.Context, user, name string, s
 func (s *MailboxStore) DeleteFolder(ctx context.Context, user, name string) error {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
+	return s.deleteFolder(ctx, user, name, true)
+}
+func (s *MailboxStore) deleteFolder(ctx context.Context, user, name string, cleanup bool) error {
 	var err error
 	name, err = imap.NormalizeMailbox(name)
 	if err != nil {
@@ -172,7 +176,7 @@ func (s *MailboxStore) DeleteFolder(ctx context.Context, user, name string) erro
 		return err
 	}
 	var children int
-	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM mailbox_catalog WHERE username=? AND substr(mailbox,1,?)=?`, user, len(name)+1, name+"/").Scan(&children); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM mailbox_catalog WHERE username=? AND substr(mailbox,1,?)=?`, user, utf8.RuneCountInString(name)+1, name+"/").Scan(&children); err != nil {
 		return err
 	}
 	if children > 0 {
@@ -193,11 +197,17 @@ func (s *MailboxStore) DeleteFolder(ctx context.Context, user, name string) erro
 		return err
 	}
 	s.publish(&backend.StatusUpdate{Update: backend.NewUpdate(user, name), StatusResp: &goimap.StatusResp{Type: goimap.StatusRespBye, Info: "Mailbox deleted; reconnect"}})
-	return s.cleanupExpunged(ctx)
+	if cleanup {
+		return s.cleanupExpunged(ctx)
+	}
+	return nil
 }
 func (s *MailboxStore) RenameFolder(ctx context.Context, user, old, name string) error {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
+	return s.renameFolder(ctx, user, old, name, nil)
+}
+func (s *MailboxStore) renameFolder(ctx context.Context, user, old, name string, after func(*sql.Tx) error) error {
 	var err error
 	old, err = imap.NormalizeMailbox(old)
 	if err != nil {
@@ -235,7 +245,7 @@ func (s *MailboxStore) RenameFolder(ctx context.Context, user, old, name string)
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT mailbox FROM mailbox_catalog WHERE username=? AND (mailbox=? OR (?!='INBOX' AND substr(mailbox,1,?)=?)) ORDER BY mailbox`, user, old, old, len(old)+1, old+"/")
+	rows, err := tx.QueryContext(ctx, `SELECT mailbox FROM mailbox_catalog WHERE username=? AND (mailbox=? OR (?!='INBOX' AND substr(mailbox,1,?)=?)) ORDER BY mailbox`, user, old, old, utf8.RuneCountInString(old)+1, old+"/")
 	if err != nil {
 		return err
 	}
@@ -262,8 +272,14 @@ func (s *MailboxStore) RenameFolder(ctx context.Context, user, old, name string)
 		if count > 0 {
 			return fmt.Errorf("destination hierarchy conflict")
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_catalog(username,mailbox,subscribed) SELECT username,?,subscribed FROM mailbox_catalog WHERE username=? AND mailbox=?`, to, user, from); err != nil {
-			return err
+		if old == "INBOX" {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_catalog(username,mailbox,subscribed) SELECT username,?,subscribed FROM mailbox_catalog WHERE username=? AND mailbox=?`, to, user, from); err != nil {
+				return err
+			}
+		} else {
+			if _, err = tx.ExecContext(ctx, `UPDATE mailbox_catalog SET mailbox=? WHERE username=? AND mailbox=?`, to, user, from); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO mailbox_state(username,mailbox,uidvalidity,uidnext) VALUES(?,?,?,1)`, user, from, time.Now().Unix()); err != nil {
 			return err
@@ -274,10 +290,11 @@ func (s *MailboxStore) RenameFolder(ctx context.Context, user, old, name string)
 		if _, err = tx.ExecContext(ctx, `UPDATE message_flags SET mailbox=? WHERE username=? AND mailbox=? AND expunged=0`, to, user, from); err != nil {
 			return err
 		}
-		if old != "INBOX" {
-			if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_catalog WHERE username=? AND mailbox=?`, user, from); err != nil {
-				return err
-			}
+
+	}
+	if after != nil {
+		if err = after(tx); err != nil {
+			return err
 		}
 	}
 	if err = tx.Commit(); err != nil {

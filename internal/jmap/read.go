@@ -71,7 +71,16 @@ func emailState(owned map[string]MessageOwnedSummary) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
+func messageMailboxID(meta MessageOwnedSummary) string {
+	if meta.MailboxID != "" {
+		return meta.MailboxID
+	}
+	return folderID(meta.Folder)
+}
 func (j *JMAPServer) mailboxGet(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
+	if j.mailboxWrites() {
+		return j.durableMailboxGet(ctx, user, args, id)
+	}
 	folders, err := j.folders(ctx, user)
 	if err != nil || j.store == nil {
 		return methodError("serverFail", id)
@@ -180,7 +189,7 @@ func keywords(flags []string) map[string]bool {
 	return out
 }
 func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]interface{} {
-	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": id, "mailboxIds": map[string]bool{folderID(meta.Folder): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}}
+	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": id, "mailboxIds": map[string]bool{messageMailboxID(meta): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}}
 	reader, err := messagemail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
 		return obj
@@ -295,7 +304,7 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 			want := v.(string)
 			switch key {
 			case "inMailbox":
-				match = match && folderID(meta.Folder) == want
+				match = match && messageMailboxID(meta) == want
 			case "hasKeyword":
 				match = match && keywords(meta.Flags)[want]
 			case "notKeyword":
