@@ -234,6 +234,37 @@ Submission troubleshooting:
 - Receipt exists but no mail arrives: inspect queue, quarantine, compliance hold,
   policy discard, routing and recipient Sieve. A receipt is not delivery status.
 
+## Query pagination and troubleshooting
+
+Email/query and EmailSubmission/query accept `anchor` and signed `anchorOffset`
+as well as signed `position`. The anchor must occur in the authenticated account's
+filtered, sorted results. An offset of -1 starts one item before it; a negative
+resulting index is clamped to zero. With no anchor, a negative position counts
+backward from the end. An anchor overrides position, and anchorOffset is ignored
+without an anchor. These rules follow [RFC 8620 section 5.5](https://www.rfc-editor.org/rfc/rfc8620.html#section-5.5).
+
+```json
+["Email/query", {
+  "accountId": "primary",
+  "filter": {"inMailbox": "MAILBOX_ID"},
+  "anchor": "EMAIL_ID",
+  "anchorOffset": -10,
+  "limit": 21
+}, "around-email"]
+```
+
+`position` in the response is the resolved index. Positions past the end return
+an empty `ids` list while retaining that index. Limit zero can locate an anchor
+without returning IDs; pages remain capped at 500 objects. Pagination does not
+change queryState or restrict the full snapshot used by queryChanges.
+
+- `anchorNotFound`: the anchor was deleted, belongs to another account, or does
+  not match the filter. Refresh the query without an anchor to locate a new one.
+- `invalidArguments`: check anchor type, integer position/offset, and nonnegative
+  limit. Fractional and out-of-range integers are rejected.
+- Paging results change between calls: compare queryState, then use queryChanges
+  or refresh. Anchors locate current results; they do not freeze a result set.
+
 ## Mailbox management
 
 Mailbox IDs are opaque and survive renames, reparenting, restart and backup

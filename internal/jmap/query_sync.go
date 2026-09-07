@@ -233,7 +233,7 @@ func (j *JMAPServer) submissionQuery(ctx context.Context, user string, args map[
 	}
 	for key := range args {
 		switch key {
-		case "accountId", "filter", "sort", "position", "limit", "calculateTotal":
+		case "accountId", "filter", "sort", "position", "anchor", "anchorOffset", "limit", "calculateTotal":
 		default:
 			return methodError("invalidArguments", id)
 		}
@@ -316,17 +316,6 @@ func (j *JMAPServer) submissionQuery(ctx context.Context, user string, args map[
 			return methodError("unsupportedFilter", id)
 		}
 	}
-	position, ok := numericLimit(args, "position", 0)
-	if !ok {
-		return methodError("invalidArguments", id)
-	}
-	limit, ok := numericLimit(args, "limit", maxJMAPObjects)
-	if !ok {
-		return methodError("invalidArguments", id)
-	}
-	if limit > maxJMAPObjects {
-		limit = maxJMAPObjects
-	}
 	j.submissionMu.Lock()
 	defer j.submissionMu.Unlock()
 	list, err := j.submitter.Submissions(ctx, user)
@@ -388,12 +377,9 @@ func (j *JMAPServer) submissionQuery(ctx context.Context, user string, args map[
 		return methodError("serverFail", id)
 	}
 	total := len(ids)
-	if position > total {
-		position = total
+	position, start, end, kind := queryPage(args, ids)
+	if kind != "" {
+		return methodError(kind, id)
 	}
-	end := position + limit
-	if end > total {
-		end = total
-	}
-	return MethodResponse{Name: "EmailSubmission/query", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": can, "position": position, "ids": ids[position:end], "total": total}}
+	return MethodResponse{Name: "EmailSubmission/query", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": can, "position": position, "ids": ids[start:end], "total": total}}
 }

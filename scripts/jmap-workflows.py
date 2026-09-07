@@ -19,6 +19,18 @@ def qualify(request, port):
     _, receipt_query = request(port, 'EmailSubmission/query', {'filter': {'emailIds': [mid]}})
     assert email_query['ids'] == [mid] and receipt_query['ids'] == [receipt], (email_query, receipt_query)
     assert email_query['canCalculateChanges'] and receipt_query['canCalculateChanges']
+    for kind, anchor, filters, original in [
+        ('Email', mid, {'subject': 'JMAP lifecycle'}, email_query),
+        ('EmailSubmission', receipt, {'emailIds': [mid]}, receipt_query)]:
+        method, page = request(port, kind + '/query', {
+            'filter': filters, 'anchor': anchor, 'anchorOffset': -1, 'limit': 1})
+        assert method == kind + '/query' and page['ids'] == [anchor] and page['position'] == 0, page
+        assert page['queryState'] == original['queryState'], page
+        _, page = request(port, kind + '/query', {'filter': filters, 'position': -1})
+        assert page['ids'] == [anchor], page
+        method, error = request(port, kind + '/query', {'anchor': anchor},
+                                'probe@mail.test', 'isolated-test-password')
+        assert method == 'error' and error['type'] == 'anchorNotFound', error
     response = batch(port, [['EmailSubmission/set', {'destroy': [receipt],
         'onSuccessDestroyEmail': [receipt]}, 'destroy']])
     assert response['methodResponses'][0][1]['destroyed'] == [receipt], response
@@ -48,3 +60,5 @@ def restored(request, port, checkpoint):
         ('EmailSubmission', checkpoint['receipt_query'], {'emailIds': [checkpoint['id']]}, checkpoint['receipt'])]:
         method, changes = request(port, kind + '/queryChanges', {'sinceQueryState': token, 'filter': filters})
         assert method == kind + '/queryChanges' and changes['removed'] == [removed] and not changes['added'], changes
+        method, error = request(port, kind + '/query', {'anchor': removed, 'filter': filters})
+        assert method == 'error' and error['type'] == 'anchorNotFound', error
