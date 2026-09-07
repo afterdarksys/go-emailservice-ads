@@ -28,6 +28,7 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Account management | Create and enable/disable work; oversized passwords return 400 without changing the old credential. |
 | Policy management | Create, test and delete return the documented results. |
 | IMAP folders | CREATE, subscriptions, metadata APPEND, COPY, hierarchical RENAME and DELETE persist. |
+| IMAP MOVE | MOVE/UID MOVE transfer only selected messages, preserve flags/dates, notify both folders, reject EXAMINE mutations and survive restore. Moving within the same folder assigns new UIDs. |
 | IMAP protocol responses | SELECT supplies counts/UIDVALIDITY; STORE supplies changed FLAGS; EXPUNGE supplies the removed sequence number. |
 | Multiple IMAP sessions | Three sessions receive append counts, both IDLE observers receive flag changes, silent STORE suppresses the writer's echo, and both observers receive EXPUNGE. A second account with the same folder name receives no notifications or messages. |
 | Bulk message reading | A single FETCH of 260 unread messages completes and marks every message Seen without overflowing notification delivery. |

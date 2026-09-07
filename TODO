@@ -37,6 +37,7 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Complete Sieve flag compatibility: delivery :flags, named flag sets, hasflag match types/comparators, snapshot semantics and stored-delivery regressions. See docs/SIEVE_FLAGS.md.
 - [x] Fix shared IMAP notification responses; qualify three simultaneous sessions, IDLE flag delivery, silent STORE, expunge fan-out and account isolation over TLS.
 - [x] Cancel notification waits after logout; add concurrent APPEND/STORE and abrupt-IDLE reconnect regressions, live evidence reports and a preliminary UAT sign-off template.
+- [x] Implement transactional IMAP MOVE/UID MOVE, preserve metadata without extra quota usage, reject read-only moves, notify source/destination sessions and verify restored moved mail.
 - [ ] Execute the named desktop/mobile client acceptance rows in docs/PRELIMINARY_UAT.md and record candidate evidence and operator sign-off.
 - [ ] Qualify named desktop/mobile clients; implement writable JMAP, incremental synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.

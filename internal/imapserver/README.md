@@ -11,6 +11,8 @@ one recipient receives the update. `updateResponse` constructs a fresh response
 for every recipient. The update reader also exits when its channel closes.
 Notification delivery cancels enqueue/write waits when a recipient logs out,
 so a departed session cannot hold the storage publisher indefinitely.
+The MOVE handler rejects read-only selections and returns TRYCREATE for a missing
+destination. Actual atomic movement is implemented by the platform mailbox store.
 Test imports point here, and the TLS fixture generates an ephemeral certificate
 instead of importing upstream's internal certificate helper. Two legacy status
 error literals use named fields to satisfy the repository-wide vet check.

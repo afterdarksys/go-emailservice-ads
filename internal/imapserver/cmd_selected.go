@@ -304,9 +304,16 @@ func (h *Move) handle(uid bool, conn Conn) error {
 	if mailbox == nil {
 		return ErrNoMailboxSelected
 	}
+	if conn.Context().MailboxReadOnly {
+		return ErrMailboxReadOnly
+	}
 
 	if m, ok := mailbox.(backend.MoveMailbox); ok {
-		return m.MoveMessages(uid, h.SeqSet, h.Mailbox)
+		err := m.MoveMessages(uid, h.SeqSet, h.Mailbox)
+		if errors.Is(err, backend.ErrNoSuchMailbox) {
+			return &imap.ErrStatusResp{Resp: &imap.StatusResp{Type: imap.StatusRespNo, Code: imap.CodeTryCreate, Info: "Destination mailbox does not exist"}}
+		}
+		return err
 	}
 	return errors.New("MOVE extension not supported")
 }

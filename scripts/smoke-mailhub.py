@@ -133,6 +133,7 @@ def run(binary, backup):
                     assert len(ok(client.search(None,'SEEN'))[0].split()) == 260, 'bulk FETCH lost flags'
                     ok(client.close());ok(client.delete('Bulk'))
                 runpy.run_path(str(pathlib.Path(__file__).with_name('imap-multisession.py')))['qualify']('localhost', imap_port, tls)
+                runpy.run_path(str(pathlib.Path(__file__).with_name('imap-move.py')))['qualify']('localhost', imap_port, tls)
 
             finally:
                 process.terminate()
@@ -165,6 +166,9 @@ def run(binary, backup):
                     status,result=client.uid('fetch','*','(FLAGS INTERNALDATE BODY.PEEK[])')
                     assert status=='OK' and b'2020' in repr(result).encode() and b'Searchable body' in repr(result).encode(),result
                     assert not any(b'Review/Archive' in row for row in client.list()[1]),'deleted folder resurrected'
+                    assert client.select('MoveArchive')[0] == 'OK'
+                    status, moved = client.uid('fetch', '5', '(FLAGS INTERNALDATE BODY.PEEK[])')
+                    assert status == 'OK' and b'customer' in repr(moved).encode() and b'2020' in repr(moved).encode() and b'move payload' in repr(moved).encode(), moved
             finally:
                 process.terminate()
                 try:process.wait(timeout=15)

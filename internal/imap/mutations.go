@@ -21,6 +21,23 @@ type MutableStore interface {
 	CopyMessageIDs(context.Context, string, string, string, []string) error
 }
 
+// MoveStore transfers membership without copying payloads or expunging unrelated mail.
+type MoveStore interface {
+	MoveMessageIDs(context.Context, string, string, string, []string) error
+}
+
+func (m *Mailbox) MoveMessages(uid bool, set *goimap.SeqSet, destination string) error {
+	store, ok := m.store.(MoveStore)
+	if !ok {
+		return errMailboxMutationUnsupported
+	}
+	messages, err := m.store.GetMessages(context.Background(), m.username, m.name)
+	if err != nil {
+		return err
+	}
+	return store.MoveMessageIDs(context.Background(), m.username, m.name, destination, selectedIDs(messages, uid, set))
+}
+
 func NormalizeMailbox(name string) (string, error) {
 	if strings.EqualFold(name, "INBOX") {
 		return "INBOX", nil
