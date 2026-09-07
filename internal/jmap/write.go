@@ -190,6 +190,9 @@ func (j *JMAPServer) emailSet(ctx context.Context, user string, args map[string]
 	if len(create)+len(update)+len(destroy) > maxJMAPObjects {
 		return methodError("tooManyObjectsInSet", id)
 	}
+	if j.emailMutations() {
+		return j.mutateEmails(ctx, user, since, update, create, destroy, id)
+	}
 	patches := map[string]mailstate.Patch{}
 	notUpdated, notCreated, notDestroyed := map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}
 	for mid, value := range update {

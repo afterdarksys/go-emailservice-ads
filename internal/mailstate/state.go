@@ -58,3 +58,19 @@ type Store interface {
 	SetEmailKeywords(context.Context, string, string, map[string]Patch) (SetResult, error)
 	EmailChanges(context.Context, string, string, int) (Changes, error)
 }
+
+// EmailPatch describes keyword and mailbox membership changes to one email.
+// A nil Mailboxes leaves membership unchanged; otherwise it replaces the set.
+type EmailPatch struct {
+	Keywords                      Patch
+	Mailboxes                     *[]string
+	AddMailboxes, RemoveMailboxes []string
+}
+type EmailSetResult struct {
+	OldState, NewState       string
+	Updated, Destroyed       []string
+	NotUpdated, NotDestroyed map[string]string
+}
+type EmailMutator interface {
+	SetEmails(context.Context, string, string, map[string]EmailPatch, []string) (EmailSetResult, error)
+}
