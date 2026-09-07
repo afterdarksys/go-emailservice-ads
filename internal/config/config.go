@@ -100,7 +100,8 @@ type Config struct {
 		Enabled          bool   `yaml:"enabled"`             // Start the JMAP HTTP service
 		Addr             string `yaml:"addr"`                // JMAP HTTP listen address
 		JWTPublicKeyPath string `yaml:"jwt_public_key_path"` // PEM RSA/ECDSA public key for Bearer token validation
-		JWTIssuer        string `yaml:"jwt_issuer"`          // Expected iss claim (empty = skip check)
+		JWTAudience      string `yaml:"jwt_audience"`
+		JWTIssuer        string `yaml:"jwt_issuer"` // Expected iss claim (empty = skip check)
 	} `yaml:"jmap"`
 
 	API struct {

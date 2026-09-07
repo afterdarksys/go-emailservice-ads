@@ -43,3 +43,52 @@ Unit tests verify local disablement and fail-closed behavior; they do not certif
 a particular AD forest or LDAP deployment.
 
 Reference: [go-ldap authentication and TLS API](https://pkg.go.dev/github.com/go-ldap/ldap/v3).
+
+## SAML requirements and supported integration boundary
+
+SAML browser login terminates at an identity broker (for example Keycloak),
+which issues an application access token. Mailhub is the token-consuming resource
+server; it does not expose a SAML assertion-consumer endpoint or interpret SAML
+as an SMTP/IMAP password. This reconciles the historical SAML milestone with the
+platform's API-only interface. A native browser UI/SAML service provider is a
+separate product feature, not an implied capability of this integration.
+
+Configure the broker's SAML identity provider with trusted IdP metadata and
+signature validation enabled. Require the intended issuer/entity ID, destination,
+audience, response correlation, assertion expiry and replay protection. Use
+SHA-256 or stronger signatures, rotate certificates through broker metadata,
+and restrict browser redirect URLs to the intended client. Do not accept arbitrary
+email attributes as proof of account ownership. Map an administrator-approved,
+stable subject to the provisioned Mailhub username; account linking must require
+proof of control. Configure MFA and session lifetime at the IdP/broker.
+
+For JMAP, configure:
+
+```yaml
+jmap:
+  enabled: true
+  jwt_public_key_path: /etc/mailhub/broker-public.pem
+  jwt_issuer: https://identity.example.net/realms/mail
+  jwt_audience: mailhub-jmap
+```
+
+The broker must issue RSA/ECDSA-signed access tokens with exact `iss`, an `aud`
+containing `mailhub-jmap`, nonempty `sub` equal to the provisioned username, and
+future `exp`. Configure an explicit audience: tokens for another application must
+not be accepted. Mailhub rejects disabled/missing accounts independently of token
+validity. Existing JWT deployments may omit audience for compatibility; new
+federated deployments must set both issuer and audience. Public-key replacement
+requires restart. Short access-token lifetimes limit logout latency; IdP logout
+alone does not instantly revoke a self-contained JWT.
+
+For administrative REST use `api.oauth` introspection with a distinct audience
+and least-privilege scopes; never grant mailbox users administrative scopes by
+default. SMTP/IMAP use local or LDAP credentials over TLS, not browser SAML tokens.
+
+Acceptance evidence must include signed success, tampered/unsigned assertions,
+wrong destination/audience/issuer, replay, expired assertions/tokens, logout,
+certificate rollover, local disablement and token subject mapping. Broker/IdP
+assertion tests require that actual deployment; local tests cover Mailhub's JWT
+issuer/audience/expiry boundary. Do not claim native SAML endpoint support.
+
+Broker reference: [Keycloak SAML identity-provider configuration](https://github.com/keycloak/keycloak/blob/main/docs/documentation/server_admin/topics/identity-broker/saml.adoc).

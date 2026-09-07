@@ -591,6 +591,9 @@ func (j *JMAPServer) bearerSubject(authHeader string) (string, bool) {
 	}
 
 	opts := []jwt.ParserOption{jwt.WithExpirationRequired()}
+	if j.config.JMAP.JWTAudience != "" {
+		opts = append(opts, jwt.WithAudience(j.config.JMAP.JWTAudience))
+	}
 	if j.config.JMAP.JWTIssuer != "" {
 		opts = append(opts, jwt.WithIssuer(j.config.JMAP.JWTIssuer))
 	}
