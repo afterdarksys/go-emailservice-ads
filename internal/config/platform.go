@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/extensions"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
 	"net"
 	"os"
@@ -16,6 +17,8 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
+	AdmissionPlugins           []extensions.Plugin     `yaml:"admission_plugins"`
+	Webhooks                   []extensions.Webhook    `yaml:"webhooks"`
 	DMARCReporting             bool                    `yaml:"dmarc_reporting"`
 	Compliance                 compliance.Config       `yaml:"compliance"`
 	Bounce                     bounce.Config           `yaml:"bounce"`
@@ -65,6 +68,12 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if err := extensions.ValidatePlugins(p.AdmissionPlugins); err != nil {
+		return err
+	}
+	if err := extensions.ValidateWebhooks(p.Webhooks); err != nil {
+		return err
+	}
 	if c.API.AdminEnabled && c.API.TLS == nil {
 		return fmt.Errorf("administration console requires API TLS")
 	}

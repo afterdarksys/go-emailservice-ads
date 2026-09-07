@@ -2545,6 +2545,54 @@
           }
         }
       }
+    },
+    "/api/v1/extensions": {
+      "get": {
+        "operationId": "extensionStatus",
+        "summary": "extensionStatus",
+        "x-required-permission": "extensions:read",
+        "responses": {
+          "200": {
+            "description": "Status"
+          },
+          "204": {
+            "description": "Completed"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Disabled"
+          }
+        }
+      }
+    },
+    "/api/v1/extensions/webhooks/retry": {
+      "post": {
+        "operationId": "retryWebhooks",
+        "summary": "retryWebhooks",
+        "x-required-permission": "extensions:write",
+        "responses": {
+          "200": {
+            "description": "Status"
+          },
+          "204": {
+            "description": "Completed"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Disabled"
+          }
+        }
+      }
     }
   },
   "components": {

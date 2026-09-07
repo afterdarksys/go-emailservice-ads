@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/extensions"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"io"
 	"net"
@@ -873,6 +874,24 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	if len(s.config.Platform.AdmissionPlugins) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		decision, err := extensions.RunPlugins(ctx, s.config.Platform.AdmissionPlugins, extensions.Admission{From: s.msg.From, To: s.msg.To, ClientIP: s.ip, Username: s.username, Authenticated: s.authenticated, Data: b})
+		cancel()
+		if err != nil {
+			s.logger.Error("Admission plugin failed", zap.Error(err))
+			return &smtp.SMTPError{Code: 451, Message: "Required admission plugin unavailable"}
+		}
+		switch decision.Action {
+		case "reject":
+			return &smtp.SMTPError{Code: 550, Message: "Admission policy rejected message: " + decision.Reason}
+		case "defer":
+			return &smtp.SMTPError{Code: 451, Message: "Admission policy deferred message: " + decision.Reason}
+		case "quarantine":
+			s.msg.Quarantine = true
+			s.msg.QuarantineFolder = "Junk"
+		}
+	}
 	if s.config.Platform.PolicyRequired && s.policyManager == nil {
 		return &smtp.SMTPError{Code: 451, Message: "Required policy unavailable"}
 	}
