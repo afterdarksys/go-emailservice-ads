@@ -1,4 +1,4 @@
-# Mail hub operations — 2.7.0
+# Mail hub operations — 2.8.0
 
 For daily tasks see [administration](ADMINISTRATION.md), [configuration](CONFIGURATION.md),
 [troubleshooting](TROUBLESHOOTING.md) and [API reference](API_REFERENCE.md).

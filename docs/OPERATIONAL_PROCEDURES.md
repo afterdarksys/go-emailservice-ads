@@ -1,4 +1,4 @@
-# Operational procedures — 2.7.0
+# Operational procedures — 2.8.0
 
 The maintained runbooks are:
 

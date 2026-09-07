@@ -1,4 +1,4 @@
-# Troubleshooting — 2.7.0
+# Troubleshooting — 2.8.0
 
 Start by recording binary version, deployment/config revision, timestamp,
 listener role, queue `message_id`, affected envelope recipient, exact SMTP/HTTP

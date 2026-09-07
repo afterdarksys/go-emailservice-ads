@@ -1,4 +1,4 @@
-# API authentication — 2.7.0
+# API authentication — 2.8.0
 
 The active management REST server accepts `Authorization: Bearer <token>`.
 Use a configured scoped API key or a configured OAuth access token over TLS.

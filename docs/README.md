@@ -1,4 +1,4 @@
-# Mailhub documentation — 2.7.0
+# Mailhub documentation — 2.8.0
 
 Start here for the supported single-owner mail platform. These guides describe
 the active `cmd/goemailservices` executable as reviewed on 2026-09-07.

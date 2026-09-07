@@ -1,4 +1,4 @@
-# Configuration — 2.7.0
+# Configuration — 2.8.0
 
 Configuration is loaded from the file passed to `goemailservices --config`.
 Omitted fields receive defaults from `internal/config/config.go` and subsystem
