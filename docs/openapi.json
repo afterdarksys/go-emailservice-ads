@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mailhub management API",
-    "version": "2.7.0",
+    "version": "2.8.0",
     "description": "Active single-owner management REST API. Bearer credentials can be static API keys or configured OAuth access tokens. x-required-permission records the exact scope; compliance also enforces configured domain/action grants. Errors are generally plain text. Legacy handlers may accept undocumented method aliases; use only the documented methods. JMAP is a separate contract."
   },
   "servers": [

@@ -1,4 +1,4 @@
-# Management REST API — 2.7.0
+# Management REST API — 2.8.0
 
 This reference describes the `api.NewServer` mounted by `cmd/goemailservices`,
 verified against `internal/api/server.go`, its handlers and permissions middleware

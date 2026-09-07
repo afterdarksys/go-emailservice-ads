@@ -1,4 +1,4 @@
-# Administration — 2.7.0
+# Administration — 2.8.0
 
 The supported deployment has one writer per spool, optionally with a separate
 perimeter forwarding to an internal hub. Use a persistent data volume and a

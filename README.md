@@ -2,7 +2,7 @@
 
 **Mailhub with persistent SMTP delivery, IMAP mailboxes, scoped REST administration, filtering and recovery tooling.**
 
-Current release: **2.7.0**. Start with the [documentation index](docs/README.md),
+Current release: **2.8.0**. Start with the [documentation index](docs/README.md),
 [administration](docs/ADMINISTRATION.md), [CLI tools](docs/CLI_ADMINISTRATION.md), [configuration](docs/CONFIGURATION.md),
 [troubleshooting](docs/TROUBLESHOOTING.md) and [REST API reference](docs/API_REFERENCE.md).
 The supported topology uses one owner per spool, with an optional perimeter.
