@@ -3,397 +3,179 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"text/tabwriter"
-	"time"
-
 	"github.com/spf13/cobra"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 )
 
 func queueCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "queue",
-		Short: "Queue management and visibility",
-		Long:  "Manage mail queues, view pending messages, retry failed deliveries",
+	cmd := &cobra.Command{Use: "queue", Short: "Inspect pending mail and retry failed deliveries"}
+	cmd.AddCommand(endpointCommand("stats", "GET", "/api/v1/queue/stats"))
+	var tier string
+	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, a []string) error {
+		return printResponse(cmd, "GET", "/api/v1/queue/pending?tier="+url.QueryEscape(tier), nil)
+	}}
+	list.Flags().StringVar(&tier, "tier", "", "Queue tier filter")
+	cmd.AddCommand(list)
+	for _, op := range []string{"inspect", "delete"} {
+		op := op
+		method := "GET"
+		if op == "delete" {
+			method = "DELETE"
+		}
+		cmd.AddCommand(&cobra.Command{Use: op + " ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, a []string) error {
+			if err := validID(a[0]); err != nil {
+				return err
+			}
+			return printResponse(cmd, method, "/api/v1/message/"+url.PathEscape(a[0]), nil)
+		}})
 	}
-
-	cmd.AddCommand(queueStatsCmd())
-	cmd.AddCommand(queueListCmd())
-	cmd.AddCommand(queueRetryCmd())
-	cmd.AddCommand(queuePurgeCmd())
-	cmd.AddCommand(queueInspectCmd())
-	cmd.AddCommand(queueDLQCmd())
-
-	return cmd
-}
-
-func queueStatsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stats",
-		Short: "Show queue statistics",
-		Long:  "Display current queue statistics including pending, processing, and failed messages",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := apiRequest("GET", "/api/v1/queue/stats", nil)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return err
-			}
-
-			if jsonOutput {
-				fmt.Println(string(body))
-				return nil
-			}
-
-			var stats map[string]interface{}
-			if err := json.Unmarshal(body, &stats); err != nil {
-				return err
-			}
-
-			fmt.Println("Queue Statistics")
-			fmt.Println("================")
-			fmt.Printf("Pending:     %v\n", getIntOrZero(stats, "pending"))
-			fmt.Printf("Processing:  %v\n", getIntOrZero(stats, "processing"))
-			fmt.Printf("Completed:   %v\n", getIntOrZero(stats, "completed"))
-			fmt.Printf("Failed:      %v\n", getIntOrZero(stats, "failed"))
-			fmt.Printf("DLQ:         %v\n", getIntOrZero(stats, "dlq"))
-			fmt.Printf("Total:       %v\n", getIntOrZero(stats, "total"))
-
-			return nil
-		},
-	}
-}
-
-func queueListCmd() *cobra.Command {
-	var limit int
-	var status string
-
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List messages in queue",
-		Long:  "List pending, processing, or failed messages in the queue",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			url := fmt.Sprintf("/api/v1/queue/pending?limit=%d", limit)
-			if status != "" {
-				url += "&status=" + status
-			}
-
-			resp, err := apiRequest("GET", url, nil)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return err
-			}
-
-			if jsonOutput {
-				fmt.Println(string(body))
-				return nil
-			}
-
-			var result map[string]interface{}
-			if err := json.Unmarshal(body, &result); err != nil {
-				return err
-			}
-
-			messages, ok := result["messages"].([]interface{})
-			if !ok || len(messages) == 0 {
-				fmt.Println("No messages in queue")
-				return nil
-			}
-
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tFROM\tTO\tSTATUS\tRETRIES\tAGE")
-			fmt.Fprintln(w, "--\t----\t--\t------\t-------\t---")
-
-			for _, m := range messages {
-				msg := m.(map[string]interface{})
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%v\t%s\n",
-					getString(msg, "id"),
-					getString(msg, "from"),
-					getString(msg, "to"),
-					getString(msg, "status"),
-					getIntOrZero(msg, "retries"),
-					getString(msg, "age"),
-				)
-			}
-
-			w.Flush()
-			return nil
-		},
-	}
-
-	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Maximum number of messages to show")
-	cmd.Flags().StringVarP(&status, "status", "s", "", "Filter by status (pending, processing, failed)")
-
-	return cmd
-}
-
-func queueRetryCmd() *cobra.Command {
+	dlq := &cobra.Command{Use: "dlq"}
+	dlq.AddCommand(endpointCommand("list", "GET", "/api/v1/dlq/list"))
+	cmd.AddCommand(dlq)
 	var all bool
-
-	cmd := &cobra.Command{
-		Use:   "retry [message-id]",
-		Short: "Retry failed message delivery",
-		Long:  "Retry delivery of a specific message or all failed messages",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var url string
-			if all {
-				url = "/api/v1/dlq/retry/all"
-			} else if len(args) > 0 {
-				url = "/api/v1/dlq/retry/" + args[0]
-			} else {
-				return fmt.Errorf("specify message-id or use --all flag")
-			}
-
-			resp, err := apiRequest("POST", url, nil)
-			if err != nil {
-				return err
+	retry := &cobra.Command{Use: "retry [ID]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, a []string) error {
+		if all && len(a) > 0 || !all && len(a) == 0 {
+			return fmt.Errorf("specify ID or --all exclusively")
+		}
+		ids := a
+		if all {
+			resp, e := apiRequest("GET", "/api/v1/dlq/list", nil)
+			if e != nil {
+				return e
 			}
 			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				if all {
-					fmt.Println("✓ Retrying all failed messages")
-				} else {
-					fmt.Printf("✓ Retrying message %s\n", args[0])
-				}
+			var entries []struct {
+				ID string `json:"id"`
 			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&all, "all", false, "Retry all failed messages")
-
+			if e = json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&entries); e != nil {
+				return e
+			}
+			for _, entry := range entries {
+				ids = append(ids, entry.ID)
+			}
+		}
+		for _, id := range ids {
+			if e := validID(id); e != nil {
+				return e
+			}
+			if e := printResponse(cmd, "POST", "/api/v1/dlq/retry/"+url.PathEscape(id), nil); e != nil {
+				return fmt.Errorf("retry %s failed (earlier retries may have succeeded): %w", id, e)
+			}
+		}
+		cmd.Printf("Retry accepted for %d messages\n", len(ids))
+		return nil
+	}}
+	retry.Flags().BoolVar(&all, "all", false, "Enumerate and retry current DLQ entries; stops on first failure")
+	cmd.AddCommand(retry)
 	return cmd
 }
-
-func queuePurgeCmd() *cobra.Command {
-	var force bool
-	var older string
-
-	cmd := &cobra.Command{
-		Use:   "purge",
-		Short: "Purge messages from queue",
-		Long:  "Remove messages from the queue (use with caution)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !force {
-				fmt.Print("WARNING: This will permanently delete messages. Are you sure? (yes/no): ")
-				var confirm string
-				fmt.Scanln(&confirm)
-				if confirm != "yes" {
-					fmt.Println("Aborted")
-					return nil
-				}
-			}
-
-			url := "/api/v1/queue/purge"
-			if older != "" {
-				url += "?older=" + older
-			}
-
-			resp, err := apiRequest("POST", url, nil)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			fmt.Println("✓ Queue purged")
-			return nil
-		},
+func validID(id string) error {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\?#\r\n") {
+		return fmt.Errorf("invalid message ID")
 	}
-
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&older, "older", "", "Purge messages older than duration (e.g., 24h, 7d)")
-
+	return nil
+}
+func endpointCommand(use, method, path string) *cobra.Command {
+	return &cobra.Command{Use: use, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, a []string) error { return printResponse(cmd, method, path, nil) }}
+}
+func printResponse(cmd *cobra.Command, method, path string, body io.Reader) error {
+	resp, e := apiRequest(method, path, body)
+	if e != nil {
+		return e
+	}
+	defer resp.Body.Close()
+	b, e := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
+	if e != nil {
+		return e
+	}
+	if len(b) > 32<<20 {
+		return fmt.Errorf("response exceeds 32 MiB")
+	}
+	cmd.Println(string(b))
+	return nil
+}
+func genericAPICmd() *cobra.Command {
+	var bodyFile string
+	cmd := &cobra.Command{Use: "api METHOD /api/v1/PATH", Short: "Call an existing management endpoint with normal server authorization", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
+		if !strings.HasPrefix(a[1], "/api/v1/") {
+			return fmt.Errorf("management /api/v1/ path required")
+		}
+		switch a[0] {
+		case "GET", "POST", "PUT", "PATCH", "DELETE":
+		default:
+			return fmt.Errorf("unsupported method")
+		}
+		var body io.Reader
+		if bodyFile != "" {
+			f, e := os.Open(bodyFile)
+			if e != nil {
+				return e
+			}
+			defer f.Close()
+			body = io.LimitReader(f, 8<<20)
+		}
+		return printResponse(cmd, a[0], a[1], body)
+	}}
+	cmd.Flags().StringVar(&bodyFile, "body-file", "", "JSON request file")
 	return cmd
 }
-
-func queueInspectCmd() *cobra.Command {
-	var showHeaders bool
-	var showBody bool
-
-	cmd := &cobra.Command{
-		Use:   "inspect <message-id>",
-		Short: "Inspect a specific message",
-		Long:  "View detailed information about a message in the queue",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			url := fmt.Sprintf("/api/v1/message/%s", args[0])
-
-			resp, err := apiRequest("GET", url, nil)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return err
-			}
-
-			if jsonOutput {
-				fmt.Println(string(body))
-				return nil
-			}
-
-			var msg map[string]interface{}
-			if err := json.Unmarshal(body, &msg); err != nil {
-				return err
-			}
-
-			fmt.Printf("Message ID:   %s\n", getString(msg, "id"))
-			fmt.Printf("From:         %s\n", getString(msg, "from"))
-			fmt.Printf("To:           %s\n", getString(msg, "to"))
-			fmt.Printf("Subject:      %s\n", getString(msg, "subject"))
-			fmt.Printf("Status:       %s\n", getString(msg, "status"))
-			fmt.Printf("Retries:      %v\n", getIntOrZero(msg, "retries"))
-			fmt.Printf("Created:      %s\n", getString(msg, "created_at"))
-			fmt.Printf("Last Attempt: %s\n", getString(msg, "last_attempt"))
-			fmt.Printf("Size:         %v bytes\n", getIntOrZero(msg, "size"))
-
-			if showHeaders {
-				fmt.Println("\nHeaders:")
-				if headers, ok := msg["headers"].(map[string]interface{}); ok {
-					for k, v := range headers {
-						fmt.Printf("  %s: %v\n", k, v)
-					}
-				}
-			}
-
-			if showBody {
-				fmt.Println("\nBody:")
-				fmt.Println(getString(msg, "body"))
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&showHeaders, "headers", false, "Show message headers")
-	cmd.Flags().BoolVar(&showBody, "body", false, "Show message body")
-
-	return cmd
-}
-
-func queueDLQCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "dlq",
-		Short: "Dead letter queue management",
-		Long:  "Manage messages in the dead letter queue",
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List messages in DLQ",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := apiRequest("GET", "/api/v1/dlq/list", nil)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return err
-			}
-
-			if jsonOutput {
-				fmt.Println(string(body))
-				return nil
-			}
-
-			var result map[string]interface{}
-			if err := json.Unmarshal(body, &result); err != nil {
-				return err
-			}
-
-			messages, ok := result["messages"].([]interface{})
-			if !ok || len(messages) == 0 {
-				fmt.Println("No messages in DLQ")
-				return nil
-			}
-
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tFROM\tTO\tERROR\tRETRIES\tAGE")
-			fmt.Fprintln(w, "--\t----\t--\t-----\t-------\t---")
-
-			for _, m := range messages {
-				msg := m.(map[string]interface{})
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%v\t%s\n",
-					getString(msg, "id"),
-					getString(msg, "from"),
-					getString(msg, "to"),
-					truncate(getString(msg, "error"), 40),
-					getIntOrZero(msg, "retries"),
-					getString(msg, "age"),
-				)
-			}
-
-			w.Flush()
-			return nil
-		},
-	})
-
-	return cmd
-}
-
-// Helper functions
-
 func apiRequest(method, path string, body io.Reader) (*http.Response, error) {
-	url := apiEndpoint + path
-
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, err
+	base, e := url.Parse(apiEndpoint)
+	if e != nil {
+		return nil, e
 	}
-
+	if base.User != nil || base.RawQuery != "" || base.Fragment != "" || base.Path != "" && base.Path != "/" {
+		return nil, fmt.Errorf("API endpoint must be an origin without credentials, query or path")
+	}
+	host := base.Hostname()
+	ip := net.ParseIP(host)
+	loopback := host == "localhost" || ip != nil && ip.IsLoopback()
+	if base.Scheme != "https" && !(base.Scheme == "http" && loopback) {
+		return nil, fmt.Errorf("remote API access requires HTTPS")
+	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return nil, fmt.Errorf("absolute API path required")
+	}
+	req, e := http.NewRequest(method, strings.TrimRight(apiEndpoint, "/")+path, body)
+	if e != nil {
+		return nil, e
+	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
-	} else {
+	} else if apiUser != "" || apiPassword != "" {
 		req.SetBasicAuth(apiUser, apiPassword)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	return client.Do(req)
-}
-
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, e := client.Do(req)
+	if e != nil {
+		return nil, e
 	}
-	return ""
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, fmt.Errorf("API %s %s: HTTP %d", method, path, resp.StatusCode)
+	}
+	return resp, nil
 }
-
+func getString(m map[string]interface{}, key string) string { v, _ := m[key].(string); return v }
 func getIntOrZero(m map[string]interface{}, key string) int {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return int(val)
-		case int:
-			return val
-		}
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
 	}
 	return 0
 }
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+func truncate(s string, max int) string {
+	if len(s) <= max {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return s[:max-3] + "..."
 }
