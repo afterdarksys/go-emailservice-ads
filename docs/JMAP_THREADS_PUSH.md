@@ -21,3 +21,22 @@ totals count threads with at least one unread message in that folder.
 
 Protocol references: [JMAP Mail](https://www.rfc-editor.org/rfc/rfc8621.html),
 [JMAP Core](https://www.rfc-editor.org/rfc/rfc8620.html).
+
+## Push operations
+
+Discovery now advertises `/jmap/events/?types={types}&closeafter={closeafter}&ping={ping}`.
+Use authenticated GET over the same TLS reverse proxy as JMAP. Disable proxy
+buffering. Types are `Email`, `EmailDelivery`, `Thread`, `Mailbox`,
+`EmailSubmission`, or `*`. `closeafter=state` supports buffering clients;
+`closeafter=no` holds the connection. Nonzero ping intervals are clamped to
+30–300 seconds. A zero interval disables ping events.
+
+State is checked every two seconds. Notifications contain state tokens, never
+message bodies. Reconnect with `Last-Event-ID`; changed or unknown IDs receive
+current state immediately. Clients then use the relevant changes methods, falling
+back to a full fetch when historical state has expired. EmailDelivery tracks
+message membership (including deletion), not flag changes. Limits are four
+streams per account and 64 per server; excess connections receive 429 and
+Retry-After. Disabled accounts and expired Bearer tokens close on the next check.
+Slow writes time out after ten seconds; shutdown closes streams. This is direct
+SSE push, not third-party PushSubscription delivery.
