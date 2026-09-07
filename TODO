@@ -29,7 +29,8 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Align mailbox API password validation with bcrypt’s 72-byte limit; oversized create/update requests fail before persistence.
 - [x] Reject unknown YAML fields and extra documents; provide `--check-config` without startup side effects.
 
-- [ ] Implement and qualify replicated durable state / active-active ownership if required. The main executable leaves replication unconfigured; cold-standby tooling exists.
+- [x] Integrate replicated-volume active/passive ownership checks, DRBD quorum/mount verification and failover deployment templates. See docs/HIGH_AVAILABILITY.md; real cluster/fencing qualification remains operational.
+- [ ] Implement active-active mailbox/shard ownership if required; current HA uses a single owner per replicated volume.
 - [x] Implement persistent IMAP folder mutations, metadata APPEND/COPY, flags, decoded search, protocol notifications and restored-service acceptance checks.
 - [x] Correct active Sieve validation, failure handling, MIME body matching and persistent routing/flags; reject unsupported programs explicitly.
 - [x] Fix post-merge review defects: Sieve any-flag matching, space-separated flag operations, strict condition separators, and account-wide JMAP mailbox state; add regressions including local delivery.
@@ -60,7 +61,8 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Add validated SIGHUP/API configuration reload through graceful process replacement, with read-only preflight and explicit reconnect/runtime-dependency boundaries. See docs/CONFIGURATION_RELOAD.md.
 - [x] Measure and optimize storage header reads, metadata-only listings and bounded/coalesced DNS negative caching. Compression and speculative prefetch were evaluated as deferred alternatives, not silently enabled. See docs/PERFORMANCE_MEASUREMENTS.md.
 - [x] Add offline personal-data inventory/export and staged local deletion, with shared/evidence protection, database cleanup, and explicit external log/backup/disposition obligations. Final request closure requires those obligations to be verified. See docs/PERSONAL_DATA.md.
-- [ ] Scope optional gRPC management API, webhooks, plugin interfaces, web admin UI and advanced routing extensions before implementation. The old placeholder management gRPC listener was removed.
+- [x] Add TLS gRPC management, a scoped web console, durable signed management webhooks, bounded external admission plugins and sender/suffix transport routing. See docs/EXTENSIONS_ADMINISTRATION.md for supported contracts.
+- [x] Harden submission defaults, reject unsafe relay/listener settings and prevent storage/HA changes through reload. See docs/CONFIGURATION_SAFETY.md.
 - [x] Audit historical feature claims and inactive prototypes; archive the unfinished OAuth web-session prototype and document all remaining scope in docs/PROJECT_COMPLETION_AUDIT.md.
 
 ## Implemented and reconciled from older lists

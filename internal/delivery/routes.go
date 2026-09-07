@@ -15,8 +15,10 @@ import (
 )
 
 type Route struct {
-	Domain   string    `yaml:"domain"`
-	NextHops []NextHop `yaml:"next_hops"`
+	SenderDomain string    `yaml:"sender_domain"`
+	Priority     int       `yaml:"priority"`
+	Domain       string    `yaml:"domain"`
+	NextHops     []NextHop `yaml:"next_hops"`
 }
 type NextHop struct {
 	ClientCert  string `yaml:"client_cert"`
@@ -34,10 +36,16 @@ func ValidateRoutes(routes []Route) error {
 	seen := map[string]bool{}
 	for _, r := range routes {
 		d := strings.ToLower(r.Domain)
-		if d == "" || strings.ContainsAny(d, " /\r\n@") || seen[d] || len(r.NextHops) == 0 {
+		if d == "" || d == "*." || strings.ContainsAny(d, " /\r\n@") || seen[d+"|"+strings.ToLower(r.SenderDomain)] || len(r.NextHops) == 0 {
 			return fmt.Errorf("invalid or duplicate transport domain %q", r.Domain)
 		}
-		seen[d] = true
+		if strings.Contains(d, "*") && d != "*" && (!strings.HasPrefix(d, "*.") || strings.Contains(d[2:], "*")) {
+			return fmt.Errorf("invalid wildcard transport %q", d)
+		}
+		if r.Priority < 0 || strings.ContainsAny(r.SenderDomain, " /\r\n@*") {
+			return fmt.Errorf("invalid sender transport selector")
+		}
+		seen[d+"|"+strings.ToLower(r.SenderDomain)] = true
 		for _, h := range r.NextHops {
 			host, port, e := net.SplitHostPort(h.Address)
 			n, portErr := strconv.Atoi(port)
@@ -54,19 +62,49 @@ func ValidateRoutes(routes []Route) error {
 	}
 	return nil
 }
-func (d *MailDelivery) SetRoutes(routes []Route)    { d.routes = routes }
-func (d *MailDelivery) HasRoute(domain string) bool { return len(d.route(domain)) > 0 }
-func (d *MailDelivery) route(domain string) []NextHop {
-	var fallback []NextHop
+func (d *MailDelivery) SetRoutes(routes []Route)      { d.routes = routes }
+func (d *MailDelivery) HasRoute(domain string) bool   { return len(d.route(domain)) > 0 }
+func (d *MailDelivery) route(domain string) []NextHop { return d.selectRoute(domain, "") }
+
+// Exact domains outrank suffixes, longest suffix wins, sender-specific rules
+// outrank general ones at equal specificity, then lowest priority wins.
+func (d *MailDelivery) selectRoute(domain, from string) []NextHop {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	sender := ""
+	if i := strings.LastIndex(from, "@"); i >= 0 {
+		sender = strings.ToLower(from[i+1:])
+	}
+	bestScore := -1
+	bestPriority := 0
+	var best []NextHop
 	for _, r := range d.routes {
-		if strings.EqualFold(r.Domain, domain) {
-			return r.NextHops
+		pattern := strings.ToLower(r.Domain)
+		score := -1
+		switch {
+		case pattern == domain:
+			score = 100000 + len(pattern)
+		case strings.HasPrefix(pattern, "*.") && strings.HasSuffix(domain, pattern[1:]):
+			score = len(pattern)
+		case pattern == "*":
+			score = 0
 		}
-		if r.Domain == "*" {
-			fallback = r.NextHops
+		if score < 0 {
+			continue
+		}
+		score *= 2
+		if r.SenderDomain != "" {
+			if sender == "" || !strings.EqualFold(r.SenderDomain, sender) {
+				continue
+			}
+			score++
+		}
+		if score > bestScore || score == bestScore && r.Priority < bestPriority {
+			bestScore = score
+			bestPriority = r.Priority
+			best = r.NextHops
 		}
 	}
-	return fallback
+	return best
 }
 func (d *MailDelivery) deliverRoute(ctx context.Context, hops []NextHop, from string, to []string, data []byte) (*DeliveryResult, error) {
 	var last error
@@ -238,7 +276,7 @@ func smtpTransaction(c *smtp.Client, host, from string, recipients []string, dat
 
 func (d *MailDelivery) HasExplicitRoute(domain string) bool {
 	for _, r := range d.routes {
-		if r.Domain != "*" && strings.EqualFold(r.Domain, domain) {
+		if r.Domain != "*" && r.SenderDomain == "" && (strings.EqualFold(r.Domain, domain) || strings.HasPrefix(r.Domain, "*.") && strings.HasSuffix(strings.ToLower(domain), strings.ToLower(r.Domain[1:]))) {
 			return true
 		}
 	}

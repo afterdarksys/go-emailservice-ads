@@ -20,7 +20,8 @@ func TestConfigCheckProcess(t *testing.T) {
 		name, content string
 		success       bool
 	}{
-		{"valid", "platform:\n  data_dir: ./must-not-create\n", true},
+		{"valid", "platform:\n  data_dir: ./must-not-create\nserver:\n  tls: {cert: /missing/cert, key: /missing/key}\nimap:\n  tls: {cert: /missing/cert, key: /missing/key}\n", true},
+		{"missing-tls-settings", "server: {}\n", false},
 		{"unknown", "platfrom: {}\n", false},
 		{"bad-log-level", "logging:\n  level: invalid\n", false},
 		{"missing", "", false},
@@ -55,5 +56,26 @@ func TestConfigCheckProcess(t *testing.T) {
 				t.Fatalf("check-config created files: %v", entries)
 			}
 		})
+	}
+}
+
+func TestGeneratedConfigurationHasNoSharedRelayCredentials(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if e := createDefaultConfig(p); e != nil {
+		t.Fatal(e)
+	}
+	b, e := os.ReadFile(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.Contains(string(b), "REPLACE_ME") || strings.Contains(string(b), "testuser") {
+		t.Fatal("shared bootstrap account")
+	}
+	if !strings.Contains(string(b), `addr: ":587"`) {
+		t.Fatal("missing submission default")
+	}
+	info, _ := os.Stat(p)
+	if info.Mode().Perm() != 0600 {
+		t.Fatal("configuration permissions", info.Mode())
 	}
 }

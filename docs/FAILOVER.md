@@ -1,5 +1,7 @@
 # Fenced active/passive recovery
 
+For the replicated-volume integration, see [HIGH_AVAILABILITY.md](HIGH_AVAILABILITY.md).
+
 This is cold-standby activation from verified storage, not active-active
 replication. Stage a verified backup using mailhub-backup before activation.
 Keep standby SMTP listeners and outbound delivery stopped during staging.

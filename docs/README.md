@@ -32,3 +32,7 @@ Enterprise and operational additions: [identity](ENTERPRISE_IDENTITY.md),
 [statistics](OPERATIONS_STATISTICS.md), [reload](CONFIGURATION_RELOAD.md),
 [measured performance](PERFORMANCE_MEASUREMENTS.md), [personal data](PERSONAL_DATA.md),
 and [completion audit](PROJECT_COMPLETION_AUDIT.md).
+
+- [Extensions and administration](EXTENSIONS_ADMINISTRATION.md)
+- [Replicated-volume high availability](HIGH_AVAILABILITY.md)
+- [Configuration and relay safety](CONFIGURATION_SAFETY.md)

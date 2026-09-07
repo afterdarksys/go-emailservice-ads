@@ -12,13 +12,18 @@ import (
 
 // Preflight is read-only. Runtime availability (ports/providers/disks) is still
 // checked by startup after old resources are released.
-func validateReloadConfig(path string) error {
+func validateReloadConfig(path string, current ...*config.Config) error {
 	if err := validateConfigFile(path); err != nil {
 		return err
 	}
 	c, err := config.LoadConfig(path)
 	if err != nil {
 		return err
+	}
+	if len(current) > 0 {
+		if err := c.ValidateReloadFrom(current[0]); err != nil {
+			return err
+		}
 	}
 	configs := []*config.TLSConfig{c.Server.TLS, c.IMAP.TLS, c.API.TLS}
 	for _, l := range c.Platform.Listeners {

@@ -60,7 +60,7 @@ case "$COMMAND" in
     # Run test container
     docker run -d \
       --name mail-test \
-      -p 2525:2525 \
+      -p 587:587 \
       -p 8080:8080 \
       -v $(pwd)/config.yaml:/opt/goemailservices/config.yaml:ro \
       ${FULL_IMAGE}

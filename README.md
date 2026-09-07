@@ -112,7 +112,7 @@ This release adds **Elasticsearch integration** for comprehensive mail event log
 
 ### Services ✅
 
-- **SMTP Server** - Port 2525, STARTTLS, SASL authentication, access control, policy engine, SSO
+- **SMTP Server** - Default submission port 587, STARTTLS, SASL authentication, access control, policy engine, SSO
 - **IMAP Server** - Port 1143, full IMAP4rev1 implementation, SSO support
 - **REST API** - Port 8080, queue management, policy operations, metrics, DLQ operations
 - **gRPC API** - Port 50051 (placeholder)
@@ -268,7 +268,7 @@ python3 tests/test_smtp.py
 ./bin/adsemailadm policy list
 
 # Legacy CLI still works
-./bin/mailctl --username admin --password changeme queue stats
+./bin/mailctl --username YOUR_ACCOUNT --password YOUR_PASSWORD queue stats
 
 # View metrics
 curl http://localhost:8080/metrics
@@ -282,7 +282,7 @@ curl http://localhost:8080/metrics
 
 # Or manually:
 docker build -t afterdarksys/go-emailservice-ads:latest .
-docker run -p 2525:2525 -p 8080:8080 afterdarksys/go-emailservice-ads:latest
+docker run -p 587:587 -p 8080:8080 afterdarksys/go-emailservice-ads:latest
 ```
 
 ---
@@ -519,13 +519,14 @@ require (
 ### 2. Docker
 ```bash
 docker build -t afterdarksys/go-emailservice-ads:latest .
-docker run -p 2525:2525 -p 8080:8080 afterdarksys/go-emailservice-ads:latest
+docker run -p 587:587 -p 8080:8080 afterdarksys/go-emailservice-ads:latest
 ```
 
-### 3. Docker Compose (HA)
+### 3. Docker Compose (standalone)
 ```bash
 ./deploy.sh up
-# Starts: primary, secondary, prometheus, grafana
+# Starts standalone mail and monitoring; this is not replicated HA.
+# For fenced replicated-volume HA, see docs/HIGH_AVAILABILITY.md.
 ```
 
 ### 4. Kubernetes - Perimeter MTA (Internet-facing)
@@ -781,3 +782,12 @@ Do not use the old release-era feature checklists to assess current completion.
 Current release information is in [CHANGELOG.md](CHANGELOG.md). Follow the
 [documentation index](docs/README.md) for operation and integration, and
 [deployment qualification](docs/DEPLOYMENT_QUALIFICATION.md) for remaining gates.
+
+
+Current defaults use authenticated TLS submission on port 587, no shared
+bootstrap account and no unauthenticated relay grants. Provision certificates,
+API credentials and real accounts before starting the example configurations.
+See [configuration safety](docs/CONFIGURATION_SAFETY.md),
+[extensions and administration](docs/EXTENSIONS_ADMINISTRATION.md), and
+[replicated-volume HA](docs/HIGH_AVAILABILITY.md). Historical internal-port
+examples above apply only when explicitly configured.

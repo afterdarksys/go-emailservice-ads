@@ -23,6 +23,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-backup ./cmd/mailhub-backup
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-privacy ./cmd/mailhub-privacy
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-failover ./cmd/mailhub-failover
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-ha-check ./cmd/mailhub-ha-check
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-log ./cmd/mailhub-log
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-preserve ./cmd/mailhub-preserve
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-authcheck ./cmd/mailhub-authcheck
@@ -47,6 +48,7 @@ COPY --from=builder /build/bin/mailflow-probe /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-backup /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-privacy /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-failover /usr/local/bin/
+COPY --from=builder /build/bin/mailhub-ha-check /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-log /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-preserve /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-authcheck /usr/local/bin/
@@ -64,18 +66,14 @@ RUN mkdir -p /data /var/lib/mail-storage /var/log/mail && \
 USER mailservice
 
 # Expose ports
-EXPOSE 2525 8080 50051 9090
+EXPOSE 587 1143 8080 50051
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Environment variables
-ENV MAILHUB_DATA_DIR=/data \
-    LOG_LEVEL=info \
-    SMTP_ADDR=:2525 \
-    API_REST_ADDR=:8080 \
-    API_GRPC_ADDR=:50051
+ENV MAILHUB_DATA_DIR=/data
 
 # Default command
 ENTRYPOINT ["/usr/local/bin/goemailservices"]

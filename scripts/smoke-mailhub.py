@@ -29,6 +29,7 @@ def run(binary, backup):
         subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         smtp_port, imap_port, api_port = port(), port(), port()
         jmap_port = port()
+        perimeter_port = port()
         jmap_checks = runpy.run_path(str(pathlib.Path(__file__).with_name('jmap-sync.py')))
         policies = root/'policies.yaml'
         policies.write_text('policies: []\n')
@@ -36,8 +37,8 @@ def run(binary, backup):
             'server': {'addr':f'127.0.0.1:{smtp_port}', 'domain':'mail.test', 'local_domains':['mail.test'], 'require_auth':True, 'require_tls':True, 'tls':{'cert':str(cert),'key':str(key)}, 'spf':{'enabled':False}, 'dmarc':{'enabled':False}, 'dane':{'enabled':False}},
             'imap': {'addr':f'127.0.0.1:{imap_port}', 'tls_mode':'starttls','tls':{'cert':str(cert),'key':str(key)}},
             'jmap': {'enabled': True, 'addr': f'127.0.0.1:{jmap_port}'},
-            'api': {'rest_addr':f'127.0.0.1:{api_port}', 'tls':{'cert':str(cert),'key':str(key)}, 'api_keys':[{'name':'qa-admin','key':'qa-isolated-admin','permissions':['mailboxes:read','mailboxes:write','queue:read','policies:read','policies:write','config:write']},{'name':'qa-reader','key':'qa-isolated-reader','permissions':['queue:read']}]},
-            'platform': {'data_dir':str(root/'data'),'policy_path':str(policies)},
+            'api': {'admin_enabled':True, 'rest_addr':f'127.0.0.1:{api_port}', 'tls':{'cert':str(cert),'key':str(key)}, 'api_keys':[{'name':'qa-admin','key':'qa-isolated-admin','permissions':['mailboxes:read','mailboxes:write','queue:read','policies:read','policies:write','config:write']},{'name':'qa-reader','key':'qa-isolated-reader','permissions':['queue:read']}]},
+            'platform': {'data_dir':str(root/'data'),'policy_path':str(policies), 'listeners':[{'addr':f'127.0.0.1:{smtp_port}','role':'submission','tls':{'cert':str(cert),'key':str(key)}},{'addr':f'127.0.0.1:{perimeter_port}','role':'perimeter','tls':{'cert':str(cert),'key':str(key)}}]},
             'auth': {'default_users':[{'username':'probe@mail.test','email':'probe@mail.test','password':'isolated-test-password'}]},
             'logging': {'level':'warn','format':'json'},
         }
@@ -57,6 +58,28 @@ def run(binary, backup):
                     except OSError: time.sleep(.2)
                 else: raise RuntimeError('service readiness timed out')
                 tls=ssl.create_default_context(cafile=str(cert))
+                # Real wire checks: neither submission nor the MX listener is an open relay.
+                with smtplib.SMTP('localhost',smtp_port,timeout=10) as client:
+                    client.ehlo(); assert 'auth' not in client.esmtp_features
+                    client.starttls(context=tls); client.ehlo()
+                    assert client.mail('outsider@external.test')[0] == 530
+                    try: client.login('probe@mail.test','incorrect-password')
+                    except smtplib.SMTPAuthenticationError: pass
+                    else: raise AssertionError('invalid SMTP credentials accepted')
+                    client.login('probe@mail.test','isolated-test-password')
+                    assert client.mail('probe@mail.test')[0] == 250
+                    assert client.rcpt('recipient@external.test')[0] == 250
+                    client.rset() # Do not send external mail during qualification.
+                with smtplib.SMTP('localhost',perimeter_port,timeout=10) as client:
+                    client.ehlo(); assert 'auth' not in client.esmtp_features
+                    assert client.mail('outsider@external.test')[0] == 250
+                    reply=client.rcpt('recipient@external.test')
+                    assert reply[0] == 554 and b'Relay access denied' in reply[1], reply
+                    assert client.rcpt('probe@mail.test')[0] == 250
+                    client.rset()
+                with urllib.request.urlopen(f'https://localhost:{api_port}/admin/',context=tls,timeout=5) as response:
+                    assert response.status == 200 and b'Mailhub administration' in response.read()
+                    assert "frame-ancestors 'none'" in response.headers['Content-Security-Policy']
                 with smtplib.SMTP('localhost',smtp_port,timeout=10) as client:
                     client.starttls(context=tls)
                     client.login('probe@mail.test','isolated-test-password')
@@ -201,7 +224,7 @@ def run(binary, backup):
                 except subprocess.TimeoutExpired:
                     process.kill();process.wait();raise RuntimeError('restored service shutdown timed out')
             assert process.returncode==0,process.returncode
-        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
+        print('PASS: TLS/SASL submission and closed-relay checks, admin assets, SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
@@ -213,7 +236,7 @@ if __name__=='__main__':
     if args.report:
         report = {
             'schema_version': 1,
-            'scope': 'isolated live SMTP/IMAP, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
+            'scope': 'isolated live TLS/SASL submission, closed-relay checks, admin assets, SMTP/IMAP, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
             'status': 'running',
             'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'binary_sha256': hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),

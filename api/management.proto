@@ -1,0 +1,10 @@
+syntax = "proto3";
+package mailhub.management.v1;
+import "google/protobuf/struct.proto";
+// Call accepts string fields method, path and optional body (JSON text).
+// Supply authorization metadata exactly as for REST. Responses contain numeric
+// HTTP status, body text, content_type and location. Application errors retain
+// HTTP status; malformed RPC envelopes use gRPC status codes.
+service Management {
+  rpc Call(google.protobuf.Struct) returns (google.protobuf.Struct);
+}

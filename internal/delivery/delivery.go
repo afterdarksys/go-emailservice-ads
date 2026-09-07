@@ -158,7 +158,7 @@ func (d *MailDelivery) Deliver(ctx context.Context, from string, to []string, da
 func (d *MailDelivery) deliverToDomain(ctx context.Context, domain, from string, recipients []string, data []byte) (*DeliveryResult, error) {
 	// RFC 5321 Section 5 - Address Resolution and Mail Handling
 	// Step 1: Perform MX lookup
-	if hops := d.route(domain); len(hops) > 0 {
+	if hops := d.selectRoute(domain, from); len(hops) > 0 {
 		return d.deliverRoute(ctx, hops, from, recipients, data)
 	}
 	mxRecords, err := d.resolver.LookupMailMX(ctx, domain)

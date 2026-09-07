@@ -32,3 +32,7 @@ Existing narrower live mechanisms remain useful: policy reload, TLS file refresh
 API key files, and LDAP bind-secret file rotation avoid replacing the process.
 The release smoke test verifies that invalid reload leaves service available and
 that a valid reload activates a new API key while preserving existing accounts.
+
+Storage directory, identity database, fencing lease and HA topology changes now
+require an explicit stopped-service migration; reload rejects them. See
+[configuration safety](CONFIGURATION_SAFETY.md).

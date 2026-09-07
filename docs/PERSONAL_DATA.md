@@ -52,7 +52,7 @@ against the original export/case record.
 Completion requires disposition of **every** remaining obligation: external
 LDAP/SCIM/SSO identities, shared mail and retained evidence, external logs/search
 and scanner records, backups/replicas/object locks, aliases/policies, ancillary
-local state (including mailstorm circuits), audit chains,
+local state (including mailstorm circuits and management webhook outboxes), audit chains,
 exports and the case itself. Assign owner, disposition/expiry, and evidence for
 each. Local erasure is not proof that remote systems or backup media were erased.
 Filesystem snapshots, SSD remnants and recovery keys require storage-layer

@@ -6,9 +6,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/extensions"
+	"github.com/afterdarksys/go-emailservice-ads/internal/ha"
 	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
+	"google.golang.org/grpc"
 	"net"
 	"net/http"
 	"strings"
@@ -28,22 +31,25 @@ import (
 
 // Server encapsulates the API servers
 type Server struct {
-	configReload func() error
-	config       *config.Config
-	logger       *zap.Logger
-	store        *storage.MessageStore
-	qm           *smtpd.QueueManager
-	replicator   *replication.Replicator
-	metrics      *metrics.Metrics
-	policyMgr    *policy.Manager
-	userStore    *auth.UserStore
+	haGuard          *ha.Guard
+	outbox           *extensions.Outbox
+	extensionsCancel context.CancelFunc
+	configReload     func() error
+	config           *config.Config
+	logger           *zap.Logger
+	store            *storage.MessageStore
+	qm               *smtpd.QueueManager
+	replicator       *replication.Replicator
+	metrics          *metrics.Metrics
+	policyMgr        *policy.Manager
+	userStore        *auth.UserStore
 
 	lifecycleMu sync.Mutex
 	listener    net.Listener
 	stopped     bool
 	httpServer  *http.Server
 	startTime   time.Time
-	// grpcServer *grpc.Server
+	grpcServer  *grpc.Server
 
 	wg sync.WaitGroup
 }
@@ -64,7 +70,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageSto
 }
 
 // Start binds synchronously, so startup errors are reported before readiness.
-// gRPC remains unimplemented and intentionally has no listener.
+// Optional gRPC shares the REST authorization and handler contract.
 func (s *Server) Start() error {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -83,6 +89,19 @@ func (s *Server) Start() error {
 		}
 		listener = tls.NewListener(listener, tlsConfig)
 	}
+	if err := s.startExtensions(); err != nil {
+		listener.Close()
+		return err
+	}
+	if err := s.startGRPC(); err != nil {
+		listener.Close()
+		if s.extensionsCancel != nil {
+			s.extensionsCancel()
+			s.wg.Wait()
+			s.outbox.Close()
+		}
+		return err
+	}
 	s.listener = listener
 	s.httpServer = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, Handler: s.buildMux()}
 	s.wg.Add(1)
@@ -99,6 +118,10 @@ func (s *Server) Start() error {
 // tests can exercise the real routes and middleware without binding a port.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/ha/status", s.authMiddleware(s.handleHAStatus))
+	mux.HandleFunc("/admin/", s.handleAdmin)
+	mux.HandleFunc("/api/v1/extensions", s.authMiddleware(s.handleExtensions))
+	mux.HandleFunc("/api/v1/extensions/webhooks/retry", s.authMiddleware(s.handleExtensions))
 
 	// Health and readiness endpoints (public)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -178,6 +201,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 // authMiddleware provides authentication via API key (Bearer token) or Basic Auth
 // with optional IP whitelist enforcement
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	next = s.recordMutation(next)
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Check IP whitelist first if enabled
 		if s.config.API.RequireIPAuth {
@@ -314,6 +338,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	// Check if critical components are ready
 	ready := true
 	checks := make(map[string]bool)
+	if s.haGuard != nil {
+		checks["ha_ownership"] = s.haGuard.Status().Safe
+		ready = checks["ha_ownership"]
+	}
 
 	// Check storage
 	if s.store != nil {
@@ -496,7 +524,13 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data interface{
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	s.stopped = true
+	if s.extensionsCancel != nil {
+		s.extensionsCancel()
+	}
 	server := s.httpServer
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+	}
 	s.lifecycleMu.Unlock()
 	if server == nil {
 		return nil
@@ -509,6 +543,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	go func() { s.wg.Wait(); close(done) }()
 	select {
 	case <-done:
+		if s.outbox != nil {
+			s.outbox.Close()
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()

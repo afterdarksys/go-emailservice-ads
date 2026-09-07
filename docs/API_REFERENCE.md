@@ -233,3 +233,12 @@ See [statistics](OPERATIONS_STATISTICS.md), [DMARC](DMARC_REPORTING.md),
 [reload](CONFIGURATION_RELOAD.md), and [enterprise identity](ENTERPRISE_IDENTITY.md)
 for validation/errors and supported subsets. Personal-data operations use the
 [offline privacy tool](PERSONAL_DATA.md), not an unaudited HTTP delete-all endpoint.
+
+## Optional administration and HA
+
+`GET /api/v1/extensions` requires `extensions:read`;
+`POST /api/v1/extensions/webhooks/retry` requires `extensions:write`;
+`GET /api/v1/ha/status` requires `ha:read`. The optional `/admin/` assets are
+public, but all console data operations require existing API permissions.
+The TLS gRPC management transport uses `api/management.proto` and the same scopes.
+See [extensions](EXTENSIONS_ADMINISTRATION.md) and [HA](HIGH_AVAILABILITY.md).

@@ -2519,6 +2519,98 @@
           }
         }
       }
+    },
+    "/admin/{asset}": {
+      "get": {
+        "operationId": "adminAsset",
+        "summary": "Opt-in administration console assets",
+        "x-required-permission": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Static administration asset"
+          },
+          "404": {
+            "description": "Disabled or unknown asset"
+          }
+        }
+      }
+    },
+    "/api/v1/extensions": {
+      "get": {
+        "operationId": "extensionStatus",
+        "summary": "extensionStatus",
+        "x-required-permission": "extensions:read",
+        "responses": {
+          "200": {
+            "description": "Status"
+          },
+          "204": {
+            "description": "Completed"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Disabled"
+          }
+        }
+      }
+    },
+    "/api/v1/extensions/webhooks/retry": {
+      "post": {
+        "operationId": "retryWebhooks",
+        "summary": "retryWebhooks",
+        "x-required-permission": "extensions:write",
+        "responses": {
+          "200": {
+            "description": "Status"
+          },
+          "204": {
+            "description": "Completed"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Disabled"
+          }
+        }
+      }
+    },
+    "/api/v1/ha/status": {
+      "get": {
+        "operationId": "haStatus",
+        "summary": "Replicated-volume ownership status",
+        "x-required-permission": "ha:read",
+        "responses": {
+          "200": {
+            "description": "Ownership state"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        }
+      }
     }
   },
   "components": {
