@@ -104,6 +104,7 @@ func (s *Server) Start() error {
 // tests can exercise the real routes and middleware without binding a port.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/admin/", s.handleAdmin)
 
 	// Health and readiness endpoints (public)
 	mux.HandleFunc("/health", s.handleHealth)

@@ -65,6 +65,9 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if c.API.AdminEnabled && c.API.TLS == nil {
+		return fmt.Errorf("administration console requires API TLS")
+	}
 	if c.API.GRPCEnabled {
 		if c.API.TLS == nil {
 			return fmt.Errorf("management gRPC requires API TLS")

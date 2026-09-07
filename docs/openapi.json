@@ -2519,6 +2519,32 @@
           }
         }
       }
+    },
+    "/admin/{asset}": {
+      "get": {
+        "operationId": "adminAsset",
+        "summary": "Opt-in administration console assets",
+        "x-required-permission": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Static administration asset"
+          },
+          "404": {
+            "description": "Disabled or unknown asset"
+          }
+        }
+      }
     }
   },
   "components": {

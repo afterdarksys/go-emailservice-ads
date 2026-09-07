@@ -108,6 +108,7 @@ type Config struct {
 		OAuth         oauthaccess.Config `yaml:"oauth"`
 		TLS           *TLSConfig         `yaml:"tls"`
 		RESTAddr      string             `yaml:"rest_addr"`
+		AdminEnabled  bool               `yaml:"admin_enabled"`
 		GRPCEnabled   bool               `yaml:"grpc_enabled"`
 		GRPCAddr      string             `yaml:"grpc_addr"`
 		APIKeys       []APIKeyConfig     `yaml:"api_keys"`        // API keys for programmatic access
