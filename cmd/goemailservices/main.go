@@ -277,6 +277,13 @@ func main() {
 		}
 	}
 
+	if cfg.Auth.LDAP.Enabled {
+		provider, err := auth.NewLDAPProvider(cfg.Auth.LDAP)
+		if err != nil {
+			logger.Fatal("Invalid LDAP configuration", zap.Error(err))
+		}
+		imapUserStore.SetLDAPProvider(provider)
+	}
 	// Initialize SSO for IMAP if enabled
 	if cfg.SSO.Enabled {
 		ssoProvider := auth.NewSSOProvider(cfg, logger)

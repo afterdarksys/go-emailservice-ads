@@ -47,8 +47,9 @@ type failureRecord struct {
 
 // UserStore manages user authentication with account lockout protection
 type UserStore struct {
-	users map[string]*User
-	mu    sync.RWMutex
+	directory directoryAuthenticator
+	users     map[string]*User
+	mu        sync.RWMutex
 
 	// Account lockout tracking
 	failuresByUsername map[string]*failureRecord
@@ -190,6 +191,20 @@ func (s *UserStore) AuthenticateWithIP(username, password, ip string) (*User, er
 		}
 	}
 
+	// Local disablement is authoritative even when credentials are external.
+	local, exists := s.GetUser(username)
+	if exists && !local.Enabled {
+		s.recordFailure(username, ip, now)
+		return nil, ErrInvalidCredentials
+	}
+	if s.directory != nil && s.directory.Matches(username) {
+		if !exists || s.directory.Authenticate(username, password) != nil {
+			s.recordFailure(username, ip, now)
+			return nil, ErrInvalidCredentials
+		}
+		s.clearFailures(username, ip)
+		return local, nil
+	}
 	// Try SSO authentication first for @msgs.global users
 	if s.ssoProvider != nil && strings.HasSuffix(strings.ToLower(username), "@msgs.global") {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
