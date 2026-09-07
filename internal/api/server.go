@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/extensions"
+	"github.com/afterdarksys/go-emailservice-ads/internal/ha"
 	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
@@ -30,6 +31,7 @@ import (
 
 // Server encapsulates the API servers
 type Server struct {
+	haGuard          *ha.Guard
 	outbox           *extensions.Outbox
 	extensionsCancel context.CancelFunc
 	configReload     func() error
@@ -116,6 +118,7 @@ func (s *Server) Start() error {
 // tests can exercise the real routes and middleware without binding a port.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/ha/status", s.authMiddleware(s.handleHAStatus))
 	mux.HandleFunc("/admin/", s.handleAdmin)
 	mux.HandleFunc("/api/v1/extensions", s.authMiddleware(s.handleExtensions))
 	mux.HandleFunc("/api/v1/extensions/webhooks/retry", s.authMiddleware(s.handleExtensions))
@@ -335,6 +338,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	// Check if critical components are ready
 	ready := true
 	checks := make(map[string]bool)
+	if s.haGuard != nil {
+		checks["ha_ownership"] = s.haGuard.Status().Safe
+		ready = checks["ha_ownership"]
+	}
 
 	// Check storage
 	if s.store != nil {

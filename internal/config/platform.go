@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/extensions"
+	"github.com/afterdarksys/go-emailservice-ads/internal/ha"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstorm"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
+	HA                         ha.Config               `yaml:"ha"`
 	AdmissionPlugins           []extensions.Plugin     `yaml:"admission_plugins"`
 	Webhooks                   []extensions.Webhook    `yaml:"webhooks"`
 	DMARCReporting             bool                    `yaml:"dmarc_reporting"`
@@ -68,6 +70,9 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if err := p.HA.Validate(); err != nil {
+		return err
+	}
 	if err := extensions.ValidatePlugins(p.AdmissionPlugins); err != nil {
 		return err
 	}
@@ -137,6 +142,13 @@ func (c *Config) validatePlatform() error {
 	}
 	if p.PolicyPath == "" {
 		p.PolicyPath = "policies.yaml"
+	}
+	if p.HA.Enabled {
+		for _, path := range []string{p.DataDir, c.Auth.UserDatabaseURL, p.PolicyPath, p.FencingLeaseFile} {
+			if path == "" || !ha.Inside(p.HA.Volume, path) {
+				return fmt.Errorf("HA data, identity, policy and lease paths must be on the replicated volume")
+			}
+		}
 	}
 	if p.MaxHops == 0 {
 		p.MaxHops = 30

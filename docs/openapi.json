@@ -2593,6 +2593,24 @@
           }
         }
       }
+    },
+    "/api/v1/ha/status": {
+      "get": {
+        "operationId": "haStatus",
+        "summary": "Replicated-volume ownership status",
+        "x-required-permission": "ha:read",
+        "responses": {
+          "200": {
+            "description": "Ownership state"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        }
+      }
     }
   },
   "components": {

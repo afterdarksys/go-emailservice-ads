@@ -22,6 +22,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/elasticsearch"
 	"github.com/afterdarksys/go-emailservice-ads/internal/failover"
+	"github.com/afterdarksys/go-emailservice-ads/internal/ha"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/jmap"
 	"github.com/afterdarksys/go-emailservice-ads/internal/metrics"
@@ -83,6 +84,20 @@ func runMain() {
 		logger.Fatal("Failed to load config", zap.Error(err))
 	}
 
+	var haGuard *ha.Guard
+	var ownershipLost <-chan error
+	if cfg.Platform.HA.Enabled {
+		haGuard, err = ha.New(cfg.Platform.HA)
+		if err != nil {
+			logger.Fatal("HA configuration failed", zap.Error(err))
+		}
+		if err = haGuard.Check(context.Background()); err != nil {
+			logger.Fatal("HA ownership refused", zap.Error(err))
+		}
+		haCtx, haCancel := context.WithCancel(context.Background())
+		defer haCancel()
+		ownershipLost = haGuard.Monitor(haCtx)
+	}
 	if cfg.Platform.FencingLeaseFile != "" {
 		lease, err := failover.Acquire(cfg.Platform.FencingLeaseFile)
 		if err != nil {
@@ -131,7 +146,9 @@ func runMain() {
 		portChecker.Check("JMAP", cfg.JMAP.Addr)
 	}
 	portChecker.Check("REST API", cfg.API.RESTAddr)
-	// gRPC is not implemented; no port is opened.
+	if cfg.API.GRPCEnabled {
+		portChecker.Check("management gRPC", cfg.API.GRPCAddr)
+	}
 
 	if !portChecker.AllAvailable() {
 		logger.Error("Port conflict detected:\n" + portChecker.FormatReport())
@@ -327,6 +344,7 @@ func runMain() {
 	// Start API Servers with full dependencies
 	reloadRequests := make(chan struct{}, 1)
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
+	apiServer.SetHAGuard(haGuard)
 	apiServer.SetConfigReload(func() error {
 		if err := validateReloadConfig(*configPath); err != nil {
 			return err
@@ -420,6 +438,8 @@ func runMain() {
 waitForStop:
 	for {
 		select {
+		case err := <-ownershipLost:
+			logger.Fatal("HA ownership lost; terminating writers and delivery immediately", zap.Error(err))
 		case sig := <-quit:
 			if sig != syscall.SIGHUP {
 				break waitForStop

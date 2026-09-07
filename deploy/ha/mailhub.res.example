@@ -1,0 +1,33 @@
+# DRBD 9: two data nodes plus an independent diskless quorum witness.
+# Replace hostnames, addresses and backing devices before deployment.
+resource mailhub {
+  protocol C;
+  options {
+    auto-promote no;
+    quorum majority;
+    on-no-quorum io-error;
+    on-no-data-accessible io-error;
+  }
+  net { allow-two-primaries no; }
+  on mail-a {
+    node-id 0;
+    device /dev/drbd100;
+    disk /dev/REPLACE_DATA_DEVICE;
+    meta-disk internal;
+    address 192.0.2.10:7790;
+  }
+  on mail-b {
+    node-id 1;
+    device /dev/drbd100;
+    disk /dev/REPLACE_DATA_DEVICE;
+    meta-disk internal;
+    address 192.0.2.11:7790;
+  }
+  on mail-witness {
+    node-id 2;
+    device /dev/drbd100;
+    disk none;
+    address 192.0.2.12:7790;
+  }
+  connection-mesh { hosts mail-a mail-b mail-witness; }
+}

@@ -1,0 +1,21 @@
+# Install on both data nodes; let the cluster manager start it, never enable it.
+[Unit]
+Description=Mailhub replicated-volume owner
+After=network-online.target
+RequiresMountsFor=/srv/mailhub
+ConditionPathIsMountPoint=/srv/mailhub
+[Service]
+Type=simple
+User=mailhub
+Group=mailhub
+EnvironmentFile=/etc/mailhub/environment
+ExecStartPre=/usr/local/bin/mailhub-ha-check --resource mailhub --volume /srv/mailhub --device /dev/drbd100
+ExecStart=/usr/local/bin/goemailservices -config /etc/mailhub/config.yaml
+Restart=no
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/mailhub
