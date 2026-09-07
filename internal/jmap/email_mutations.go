@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
+	"sort"
 	"strings"
 )
 
@@ -74,10 +75,53 @@ func (j *JMAPServer) mutateEmails(ctx context.Context, user, since string, updat
 			patches[mid] = p
 		}
 	}
+
+	creations := map[string]mailstate.EmailCreation{}
+	creator, canCreate := j.store.(mailstate.EmailCreator)
+	keys := make([]string, 0, len(create))
 	for key := range create {
-		nc[key] = map[string]interface{}{"type": "forbidden", "description": "Email creation is not supported"}
+		keys = append(keys, key)
 	}
-	r, err := j.store.(mailstate.EmailMutator).SetEmails(ctx, user, since, patches, destroy)
+	sort.Strings(keys)
+	preparedBytes := 0
+	for _, key := range keys {
+		v := create[key]
+		if !canCreate {
+			nc[key] = map[string]interface{}{"type": "forbidden"}
+			continue
+		}
+		p, kind, missing := j.buildEmail(ctx, user, v)
+		// Reusing large upload IDs must not multiply one bounded JSON request
+		// into hundreds of fully buffered MIME messages.
+		if kind == "" && preparedBytes+len(p.Data) > mailstate.MaxUploadBytes {
+			kind = "tooLarge"
+		}
+		if kind != "" {
+			e := map[string]interface{}{"type": kind}
+			if missing != nil {
+				e["notFound"] = missing
+			}
+			nc[key] = e
+		} else {
+			preparedBytes += len(p.Data)
+			creations[key] = p
+		}
+	}
+	var r mailstate.EmailSetResult
+	var err error
+	if canCreate {
+		r, err = creator.SetEmailsWithCreates(ctx, user, since, creations, patches, destroy)
+	} else {
+		r, err = j.store.(mailstate.EmailMutator).SetEmails(ctx, user, since, patches, destroy)
+	}
+	created := map[string]interface{}{}
+	for key, e := range r.Created {
+		created[key] = map[string]interface{}{"id": e.ID, "blobId": e.ID, "threadId": e.ID, "size": e.Size}
+	}
+	for key, kind := range r.NotCreated {
+		nc[key] = map[string]interface{}{"type": kind}
+	}
+
 	if errors.Is(err, mailstate.ErrStateMismatch) {
 		return methodError("stateMismatch", id)
 	}
@@ -94,5 +138,5 @@ func (j *JMAPServer) mutateEmails(ctx context.Context, user, since string, updat
 	for mid, kind := range r.NotDestroyed {
 		nd[mid] = map[string]interface{}{"type": kind}
 	}
-	return MethodResponse{Name: "Email/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": r.OldState, "newState": r.NewState, "created": map[string]interface{}{}, "updated": updated, "destroyed": r.Destroyed, "notCreated": nc, "notUpdated": nu, "notDestroyed": nd}}
+	return MethodResponse{Name: "Email/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": r.OldState, "newState": r.NewState, "created": created, "updated": updated, "destroyed": r.Destroyed, "notCreated": nc, "notUpdated": nu, "notDestroyed": nd}}
 }

@@ -43,6 +43,8 @@ named application and human-visible observations.
 | A7 | JMAP mailbox management | Stable IDs, create/rename/reparent, subscription and deletion protection; Mailbox/changes survives restore. | Included in A1 |
 | A8 | JMAP email move/delete | Atomic move/keyword writes, targeted destruction, selected IMAP notifications and both change feeds survive restore. | Included in A1 |
 | A9 | JMAP upload/import | Uploaded blobs and imported MIME/attachments remain owner-scoped, appear in IMAP, and survive restore with change-feed continuity. | Included in A1 |
+| A10 | JMAP structured composition | Text/HTML and uploaded attachments round-trip into a durable draft with IMAP arrival notification. | Included in A1 |
+| A11 | JMAP submission | Primary identity sends through SMTP admission; Bcc is private, owner/state checks reject, explicit Sent filing and durable receipts/messages survive restore. | Included in A1 |
 | C1 | Add two accounts in the target client | TLS/authentication work; accounts see only their own folders/messages. | Pending |
 | C2 | Send/receive a reply with attachment | Recipient, subject, body and attachment are intact; Sent placement matches configuration. | Pending |
 | C3 | Folder lifecycle | Create, subscribe, rename, move/copy, delete and reconnect show durable state. | Pending |
@@ -65,7 +67,8 @@ After all rows pass, the operator may record:
 
 This scope excludes production rollout, high availability, load/slow-client
 stress, simultaneous body downloads with mailbox mutations, JMAP mail workflows
-beyond upload/import, mailbox management, email move/delete and keyword updates/object changes and
+beyond documented composition/immediate submission, upload/import, mailbox management,
+email move/delete and keyword updates/object changes, and
 unsupported Sieve extensions. Production identity, DNS, storage and failover gates
 remain in [deployment qualification](DEPLOYMENT_QUALIFICATION.md). Any workflow
 the intended users require must enter scope before recording their acceptance.

@@ -72,7 +72,7 @@ func (j *JMAPServer) durableMailboxGet(ctx context.Context, user string, args ma
 		if m.Role != "" {
 			role = m.Role
 		}
-		obj := map[string]interface{}{"id": m.ID, "name": name, "parentId": parent, "role": role, "sortOrder": m.SortOrder, "isSubscribed": m.Subscribed, "totalEmails": m.Total, "unreadEmails": m.Unread, "totalThreads": m.Total, "unreadThreads": m.Unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": j.emailMutations(), "mayRemoveItems": j.emailMutations(), "maySetSeen": j.keywordWrites(), "maySetKeywords": j.keywordWrites(), "mayCreateChild": true, "mayRename": m.Path != "INBOX", "mayDelete": m.Path != "INBOX", "maySubmit": false}}
+		obj := map[string]interface{}{"id": m.ID, "name": name, "parentId": parent, "role": role, "sortOrder": m.SortOrder, "isSubscribed": m.Subscribed, "totalEmails": m.Total, "unreadEmails": m.Unread, "totalThreads": m.Total, "unreadThreads": m.Unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": j.emailMutations(), "mayRemoveItems": j.emailMutations(), "maySetSeen": j.keywordWrites(), "maySetKeywords": j.keywordWrites(), "mayCreateChild": true, "mayRename": m.Path != "INBOX", "mayDelete": m.Path != "INBOX", "maySubmit": j.submitter != nil}}
 		if project {
 			for key := range obj {
 				if !properties[key] {

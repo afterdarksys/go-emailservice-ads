@@ -68,6 +68,8 @@ type EmailPatch struct {
 	AddMailboxes, RemoveMailboxes []string
 }
 type EmailSetResult struct {
+	Created                  map[string]ImportedEmail
+	NotCreated               map[string]string
 	OldState, NewState       string
 	Updated, Destroyed       []string
 	NotUpdated, NotDestroyed map[string]string
@@ -103,4 +105,29 @@ type ImportStore interface {
 	UploadBlob(context.Context, string, string, []byte) (Blob, error)
 	GetBlob(context.Context, string, string) (Blob, error)
 	ImportEmails(context.Context, string, string, map[string]EmailImport) (ImportResult, error)
+}
+
+type EmailCreation struct {
+	Data       []byte
+	MailboxID  string
+	Flags      []string
+	ReceivedAt time.Time
+}
+type EmailCreator interface {
+	SetEmailsWithCreates(context.Context, string, string, map[string]EmailCreation, map[string]EmailPatch, []string) (EmailSetResult, error)
+}
+
+type Submission struct {
+	ID             string                 `json:"id"`
+	EmailID        string                 `json:"emailId"`
+	IdentityID     string                 `json:"identityId"`
+	ThreadID       string                 `json:"threadId"`
+	SendAt         string                 `json:"sendAt"`
+	UndoStatus     string                 `json:"undoStatus"`
+	Envelope       map[string]interface{} `json:"envelope"`
+	DeliveryStatus interface{}            `json:"deliveryStatus"`
+}
+type Submitter interface {
+	Submit(context.Context, string, string, string, string, []string, []byte) (Submission, error)
+	Submissions(context.Context, string) ([]Submission, error)
 }

@@ -51,6 +51,7 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
+	SubmissionReceipt   *storage.JournalEntry `json:"-"`
 	DSNMail             smtp.MailOptions
 	DSNRecipients       map[string]smtp.RcptOptions
 	complianceBypass    bool
@@ -766,7 +767,7 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 		return fmt.Errorf("compliance preservation failed: %w", err)
 	}
 	if held {
-		return nil
+		return qm.persistSubmissionReceipt(msg)
 	}
 	if qm.platform.Bounce.TrackIncoming && !msg.IsBounce {
 		reports, parseErr := bounce.ParseReport(msg.Data)
@@ -815,7 +816,7 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	if msg.Quarantine {
 		entry.Status = "held"
 	}
-	messageID, isDuplicate, err := qm.store.Store(entry)
+	messageID, isDuplicate, err := qm.store.StoreWithReceipt(entry, msg.SubmissionReceipt)
 	if err != nil {
 		return fmt.Errorf("failed to store message: %w", err)
 	}

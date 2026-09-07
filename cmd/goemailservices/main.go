@@ -365,6 +365,16 @@ func main() {
 	var jmapServer *jmap.JMAPServer
 	if cfg.JMAP.Enabled {
 		jmapServer = jmap.NewJMAPServer(logger, cfg, imapValidator, imapStore)
+		if len(smtpServers) > 0 {
+			selected := 0
+			for i, c := range listenerConfigs {
+				if c.Server.Role == "submission" {
+					selected = i
+					break
+				}
+			}
+			jmapServer.SetSubmitter(smtpServers[selected])
+		}
 		if err := jmapServer.Start(cfg.JMAP.Addr); err != nil {
 			logger.Fatal("JMAP server failed", zap.Error(err))
 		}

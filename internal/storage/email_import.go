@@ -96,11 +96,15 @@ func (s *MailboxStore) importEmail(ctx context.Context, tx *sql.Tx, user string,
 	if err != nil {
 		return out, "", "", err
 	}
-	if len(blob.Data) > mailstate.MaxUploadBytes {
+	return s.importData(ctx, tx, user, p, blob.Data)
+}
+func (s *MailboxStore) importData(ctx context.Context, tx *sql.Tx, user string, p mailstate.EmailImport, data []byte) (mailstate.ImportedEmail, string, string, error) {
+	out := mailstate.ImportedEmail{}
+	if len(data) > mailstate.MaxUploadBytes {
 		return out, "", "tooLarge", nil
 	}
-	message, err := mail.ReadMessage(bytes.NewReader(blob.Data))
-	if err != nil || len(message.Header) == 0 || bytes.IndexByte(blob.Data, 0) >= 0 {
+	message, err := mail.ReadMessage(bytes.NewReader(data))
+	if err != nil || len(message.Header) == 0 || bytes.IndexByte(data, 0) >= 0 {
 		return out, "", "invalidEmail", nil
 	}
 	date := p.ReceivedAt
@@ -130,7 +134,7 @@ func (s *MailboxStore) importEmail(ctx context.Context, tx *sql.Tx, user string,
 	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(size),0) FROM message_flags WHERE username=? AND expunged=0`, user).Scan(&used); err != nil {
 		return out, "", "", err
 	}
-	if s.quotaBytes > 0 && used+int64(len(blob.Data)) > s.quotaBytes {
+	if s.quotaBytes > 0 && used+int64(len(data)) > s.quotaBytes {
 		return out, "", "overQuota", nil
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO mailbox_state(username,mailbox,uidvalidity,uidnext) VALUES(?,?,?,1)`, user, folder, time.Now().Unix()); err != nil {
@@ -143,12 +147,12 @@ func (s *MailboxStore) importEmail(ctx context.Context, tx *sql.Tx, user string,
 	if next >= uint64(^uint32(0)) {
 		return out, "", "overQuota", nil
 	}
-	out.ID, err = s.adapter.StoreMessage(ctx, user, folder, blob.Data)
+	out.ID, err = s.adapter.StoreMessage(ctx, user, folder, data)
 	if err != nil {
 		return out, "", "", err
 	}
-	out.Size = len(blob.Data)
-	sender, subject, _ := parseHeaders(blob.Data)
+	out.Size = len(data)
+	sender, subject, _ := parseHeaders(data)
 	_, err = tx.ExecContext(ctx, `INSERT INTO message_flags(msg_id,username,mailbox,uid,flags,sender,subject,size,sent_at,deleted) VALUES(?,?,?,?,?,?,?,?,?,?)`, out.ID, user, folder, next, strings.Join(flags, " "), sender, subject, out.Size, date.Unix(), boolInt(containsFlag(flags, `\Deleted`)))
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE mailbox_state SET uidnext=? WHERE username=? AND mailbox=?`, next+1, user, folder)

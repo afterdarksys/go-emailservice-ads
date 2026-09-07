@@ -1,4 +1,4 @@
-# JMAP API: mailbox management, import and email mutations
+# JMAP API: mail creation, submission and synchronization
 
 The optional JMAP listener uses its configured address. Put it behind a trusted
 TLS terminator as described in CONFIGURATION.md. Authentication accepts shared
@@ -12,7 +12,8 @@ Discover URLs with `GET /.well-known/jmap`. Use the discovered `primary` account
 ID for `POST /jmap/api`. With the durable mailbox store, the account allows keyword
 writes and mailbox management. Mailbox rights advertise keyword updates and
 child creation; rename/delete are enabled except for INBOX. Message add/remove
-rights allow moves and email deletion; submission rights remain false. A custom backend without the synchronization interface stays
+rights allow moves and email deletion; submission rights are enabled when the SMTP
+submission adapter is wired (as in the main executable). A custom backend without the synchronization interface stays
 read-only. Request bodies, method counts and get/set/query results are bounded.
 
 | Operation | Current behavior |
@@ -20,13 +21,16 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | Mailbox/get | Durable folders, parent relationships, counts, unread counts and supported rights. |
 | Email/get | Owned messages across folders, keywords, internal receipt date, decoded MIME body values and attachment descriptors. |
 | Email/query | Filters inMailbox, subject, from, to, text, hasKeyword and notKeyword; bounded position/limit pagination. |
-| Email/set | Update keywords and mailboxIds using replacement or patch syntax; destroy owned emails; conditional ifInState and per-object errors. Creation returns forbidden. Other email properties cannot be changed. |
+| Email/set | Create structured MIME emails; update keywords and mailboxIds using replacement or patch syntax; destroy owned emails; conditional ifInState and per-object errors. Existing message content is immutable. |
 | Email/changes | Durable, account-scoped created/updated/destroyed IDs, bounded pagination and restart/restore continuity. |
 | GET download URL | Owner-scoped raw message or decoded MIME part; another account gets 404. |
 | Mailbox/set | Create, rename/reparent, subscribe/unsubscribe, sort order and empty-mailbox deletion; conditional state checks and per-object errors. |
 | Mailbox/changes | Durable, account-scoped created/updated/destroyed mailbox IDs, including count and IMAP changes. |
 | POST upload URL | Owner-scoped temporary blobs, bounded size/storage, expiry and authenticated download. |
 | Email/import | Create messages from uploaded blobs or owned raw email blobs, with mailbox, keywords, receivedAt and conditional state. |
+| Identity/get | One immutable primary identity using the enabled shared mail account's email address. |
+| EmailSubmission/set | Submit owned emails immediately through SMTP admission; conditional state and per-object errors. |
+| EmailSubmission/get | Owner-scoped durable acceptance receipts, including after source-email deletion or queue delivery. |
 
 ## Upload and import
 
@@ -69,8 +73,7 @@ The importer preserves raw MIME bytes, including UTF-8 headers and attachments.
 Duplicate content is allowed and creates independent emails, so retrying after
 an uncertain response can create a duplicate. Use ifInState and reconcile
 Email/changes before retrying. Existing owned raw email blob IDs can also be
-imported; MIME-part blob import and Email/set creation from structured body
-properties remain unsupported.
+imported; MIME-part blob import remains unsupported.
 
 Each import is atomic: mailbox metadata, UID allocation and both change feeds
 commit together. Failed metadata writes discard orphan payloads; startup recovery
@@ -94,7 +97,118 @@ Troubleshooting:
 - stateMismatch: refresh email state before retrying; no imports were performed.
 
 This import route creates mailbox mail; it does not submit outbound messages.
-Use SMTP for sending until JMAP submission is implemented.
+Use EmailSubmission/set or SMTP to send.
+
+## Structured email creation
+
+Email/set create accepts mailboxIds (exactly one owned destination), keywords,
+receivedAt, from/to/cc/bcc/replyTo address arrays, subject, sentAt, messageId,
+inReplyTo, references, textBody, htmlBody, bodyValues and attachments. Address
+objects accept email and optional name. Dates use UTC RFC3339 ending in Z;
+sentAt and Message-ID default to server time and a generated identifier.
+
+Use at most one UTF-8 text/plain part and one UTF-8 text/html part. Each part's
+partId references a bodyValues entry containing value. Optional isTruncated and
+isEncodingProblem must be false. Omitted bodies produce an empty text part.
+Attachments accept an owned uploaded/raw-email blobId, optional MIME type and
+name, and disposition attachment. They are encoded into the independent durable
+email, so temporary-blob expiry does not remove the attachment. bodyStructure,
+inline CID parts, arbitrary headers and MIME-part attachment blob IDs are not
+supported. Header injection and unsupported fields return invalidProperties.
+
+Each encoded email and the total prepared MIME in one Email/set are limited to
+10 MiB; exceeding either returns tooLarge for the affected creation. Creation
+keys are processed lexically. Split large batches into separate requests.
+Mailbox quotas apply to the resulting MIME bytes, including encoding overhead.
+Missing/expired/foreign attachment blobs return blobNotFound with notFound IDs.
+
+Create, update and destroy share one ifInState check and transaction. Each object
+has a savepoint: a failed creation leaves no mailbox row, allocated UID or change
+event; other valid objects may succeed. New emails generate IMAP arrival updates.
+Creating mail alone never submits it. To change an existing draft's content,
+create a replacement and destroy the old draft after confirming creation.
+
+## Submission and acceptance receipts
+
+Discover urn:ietf:params:jmap:submission and Identity/get before sending. The
+main executable reuses the first configured submission listener's backend,
+falling back to the first SMTP listener. There is no separate send queue or
+additional JMAP submission configuration. The shared account must be enabled;
+both the visible From and envelope mailFrom must match its primary email address.
+
+This example creates a draft and submits it in one API request. Replace the
+mailbox ID and addresses with discovered/configured values:
+
+```json
+{
+  "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"],
+  "methodCalls": [
+    ["Email/set", {"accountId": "primary", "create": {"draft": {
+      "mailboxIds": {"DRAFTS_MAILBOX_ID": true}, "keywords": {"$draft": true},
+      "from": [{"email": "alice@example.test"}],
+      "to": [{"email": "bob@example.test"}], "subject": "Hello",
+      "textBody": [{"partId": "text", "type": "text/plain"}],
+      "bodyValues": {"text": {"value": "Hello from JMAP"}}
+    }}}, "compose"],
+    ["EmailSubmission/set", {"accountId": "primary", "create": {"send": {
+      "emailId": "#draft", "identityId": "primary"
+    }}}, "submit"]
+  ]
+}
+```
+
+emailId may reference a creation key from a preceding method in the same request,
+or the request's createdIds map. Other cross-method result references and
+same-Email/set update/destroy references to new creations are not implemented.
+Creation and submission are separate operations: a rejected send leaves the
+created draft available for correction. A successful response returns a submission
+ID and createdIds mappings. Store the submission ID for subsequent get requests.
+
+Without envelope, recipients are derived from To, Cc and Bcc and deduplicated.
+An explicit envelope requires mailFrom: {email} and rcptTo: [{email}]; parameters
+must be absent or null. Bcc headers are removed from submitted bytes while the
+owner's draft retains them. Recipient lookup/aliases, sender authorization,
+message/recipient limits, sender quotas, mailstorm protection, policies, scanners
+and durable queue admission run through the existing SMTP path. Outbound delivery
+uses the existing routing/signing/retry machinery. Per-IP message limits see the
+HTTP peer (normally the TLS proxy); forwarded headers are not trusted as identity.
+
+A receipt means **accepted for processing**, including configured policy discard
+or hold; it does not prove delivery. undoStatus is final, sendAt is acceptance
+time, deliveryStatus is null, and DSN/MDN blob lists are empty. Normal queue mail
+and its receipt share one journal transaction. Policy discard persists its receipt
+before success; compliance hold persists preserved evidence before its receipt.
+A receipt write failure after hold capture can leave preserved evidence despite
+an API failure. Inspect compliance records before repeating that request.
+
+The source email is not automatically moved to Sent or cleared of $draft. After
+successful acceptance, issue a separate Email/set for those changes. Delayed
+send, cancellation and onSuccessUpdateEmail/onSuccessDestroyEmail are unsupported;
+unsupported set arguments fail before sending. Updates to an existing receipt
+return cannotUnsend; destroy returns forbidden. Identity mutation and submission
+query/changes methods are unsupported. Both get methods support ids and properties
+and retain the 500-object limit; use saved IDs when the account exceeds that limit.
+
+Receipts survive delivery, compaction, restart and backup restore and remain
+owner-scoped even after the email is deleted. They contain envelope addresses and
+email/identity IDs, but no MIME body. They consume disk, not pending-message quota.
+Automatic receipt expiry/disposal is not implemented; include growth and retained
+metadata in capacity and retention planning. After an uncertain response, inspect
+receipts and refresh state before retrying: an explicit retry with fresh state
+creates another send. There is no retry idempotency key.
+
+Submission troubleshooting:
+
+- stateMismatch: refresh EmailSubmission/get state; no submissions were attempted.
+- invalidProperties: missing/foreign/non-email emailId, invalid identity/envelope,
+  unsupported property or an unresolved creation reference.
+- forbiddenFrom / forbiddenMailFrom: use the account's Identity/get address.
+- noRecipients / tooManyRecipients / tooLarge: correct recipients or encoded size;
+  server.max_recipients and server.max_message_bytes apply.
+- forbiddenToSend: SMTP rejected admission; inspect recipient validation, policy
+  and scanner logs. Temporary admission or persistence failures return serverFail.
+- Receipt exists but no mail arrives: inspect queue, quarantine, compliance hold,
+  policy discard, routing and recipient Sieve. A receipt is not delivery status.
 
 ## Mailbox management
 
@@ -252,8 +366,8 @@ unsupportedFilter. Email/query still reports canCalculateChanges=false:
 Email/queryChanges is not implemented. Email/changes is an object change feed,
 not incremental query membership or ordering.
 
-Structured Email/set creation, thread
-grouping, submission and push remain unimplemented. Use SMTP/IMAP for these
-supported mail workflows. This is not a claim of full RFC 8620/8621 or named
+Advanced composition/submission options above, thread grouping and push remain
+unimplemented. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
-scripts/jmap-sync.py, scripts/jmap-email-mutations.py and scripts/jmap-import.py (invoked by verify-release.sh) for automated coverage.
+scripts/jmap-sync.py, scripts/jmap-email-mutations.py, scripts/jmap-import.py and
+scripts/jmap-compose-send.py (invoked by verify-release.sh) for automated coverage.

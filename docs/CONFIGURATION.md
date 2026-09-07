@@ -224,7 +224,7 @@ listener/map/tenant REST administration, and SMTP OAuth cannot be inferred from
 older guides or similarly named source packages. Use the [API reference](API_REFERENCE.md)
 and [backlog](../TODO) for supported operations and explicit remaining work.
 
-### JMAP upload/import capacity
+### JMAP creation, upload and submission capacity
 
 JMAP upload limits are currently fixed: 10 MiB per file, four combined uploads/API
 requests, and 20 temporary blobs or 100 MiB per account. Uploads expire after
@@ -232,3 +232,13 @@ requests, and 20 temporary blobs or 100 MiB per account. Uploads expire after
 is separate from `platform.mailbox_quota_bytes`, which applies when Email/import
 creates mail. Include temporary blob space in disk/backup sizing. See
 [JMAP API](JMAP_API.md#upload-and-import) for workflow and troubleshooting.
+
+Structured Email/set creation also enforces a 10 MiB encoded-email and aggregate
+prepared-MIME limit per method. The main executable enables immediate JMAP
+submission through the first submission-role SMTP backend, or the first SMTP
+backend when no such role is configured. Existing server message/recipient limits,
+sender quotas, policies, scanners and queue configuration apply. Keep JMAP behind
+trusted TLS termination; per-IP message limits see the proxy address. Submission
+receipts are durable journal metadata with no automatic expiry and do not consume
+pending-message quota. Plan disk/backup capacity for their growth. See
+[submission semantics and troubleshooting](JMAP_API.md#submission-and-acceptance-receipts).

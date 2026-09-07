@@ -36,6 +36,7 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Search | Header, decoded body, wildcard UID and sent-date criteria select matching messages. |
 | Recovery | Credentials, folders, copied message isolation, flags and internal dates survive restored-service startup. |
 | JMAP upload/import | Owner-scoped upload/download, MIME/attachment preservation, stale/foreign rejection, selected IMAP arrival and temporary-blob/import restore continuity. |
+| JMAP composition/submission | Text/HTML/attachment creation, selected IMAP arrival, authenticated local delivery with Bcc removed, owner/state checks, explicit Sent filing and receipt/message restore continuity. |
 | JMAP email move/delete | Combined mailboxIds/keyword updates are atomic; only requested emails are destroyed; selected IMAP sessions and both change feeds reconcile through restore. |
 | JMAP mailbox management | Create/rename/reparent/subscription and protected empty deletion agree with IMAP; stable IDs and Mailbox/changes survive backup restore. |
 | JMAP keyword synchronization | Email/set updates appear in IMAP; stale states and foreign-owned IDs are rejected; Email/changes tracks IMAP updates through backup restore. |
@@ -91,9 +92,12 @@ text, not RFC 5322 headers. Flags and the selected folder persist together.
 
 ## Remaining acceptance boundaries
 
-The optional JMAP listener supports reads, uploads/imports, keyword updates, email move/delete, mailbox management and durable
-Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Structured Email/set creation, submission,
-query synchronization and broader Sieve extensions remain open work.
+The optional JMAP listener supports reads, uploads/imports, structured composition,
+immediate submission, keyword updates, email move/delete, mailbox management and
+durable Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Advanced
+composition, submission cancellation/delay and automatic success email updates,
+receipt query/changes/disposal, query synchronization and broader Sieve extensions
+remain open work. Acceptance receipts do not establish delivery or client UAT.
 
 Production OAuth, public DNS/signing, external scanner behavior, Object Lock and
 provider fencing require the actual deployment dependencies. Execute
