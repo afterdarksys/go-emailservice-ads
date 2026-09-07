@@ -97,9 +97,9 @@ decoded MIME text. Flags and each selected-folder delivery persist together.
 The optional JMAP listener supports reads, uploads/imports, structured composition,
 immediate submission, keyword updates, email move/delete, mailbox management and
 durable Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Advanced
-composition, submission cancellation/delay, query anchors/thread collapsing/push,
+composition, submission cancellation/delay, thread collapsing/push,
 and automatic receipt/checkpoint expiry remain open work. Success email hooks,
-query/receipt synchronization and documented Sieve workflows are implemented. Acceptance receipts do not establish delivery or client UAT.
+query/receipt synchronization, anchored query pagination and documented Sieve workflows are implemented. Acceptance receipts do not establish delivery or client UAT.
 
 Production OAuth, public DNS/signing, external scanner behavior, Object Lock and
 provider fencing require the actual deployment dependencies. Execute

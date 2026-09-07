@@ -254,7 +254,7 @@ func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]int
 func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
 	for key := range args {
 		switch key {
-		case "accountId", "filter", "sort", "position", "limit", "calculateTotal":
+		case "accountId", "filter", "sort", "position", "anchor", "anchorOffset", "limit", "calculateTotal":
 		default:
 			return methodError("invalidArguments", id)
 		}
@@ -281,22 +281,6 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 		default:
 			return methodError("unsupportedFilter", id)
 		}
-	}
-	if args["anchor"] != nil || args["anchorOffset"] != nil {
-		return methodError("invalidArguments", id)
-	}
-	position, limit := 0, maxJMAPObjects
-	for key, dst := range map[string]*int{"position": &position, "limit": &limit} {
-		if value, ok := args[key]; ok {
-			n, ok := value.(float64)
-			if !ok || n < 0 || n != float64(int(n)) {
-				return methodError("invalidArguments", id)
-			}
-			*dst = int(n)
-		}
-	}
-	if limit > maxJMAPObjects {
-		limit = maxJMAPObjects
 	}
 	type entry struct {
 		id   string
@@ -359,17 +343,11 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 		return methodError("serverFail", id)
 	}
 	total := len(entries)
-	if position > total {
-		position = total
+	position, start, end, kind := queryPage(args, allIDs)
+	if kind != "" {
+		return methodError(kind, id)
 	}
-	end := position + limit
-	if end > total {
-		end = total
-	}
-	ids := []string{}
-	for _, entry := range entries[position:end] {
-		ids = append(ids, entry.id)
-	}
+	ids := allIDs[start:end]
 	return MethodResponse{Name: "Email/query", Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": can, "position": position, "ids": ids, "total": total}, CallID: id}
 
 }
