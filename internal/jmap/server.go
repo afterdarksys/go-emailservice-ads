@@ -341,6 +341,7 @@ func (j *JMAPServer) processRequest(ctx context.Context, req *Request) *Response
 	for _, call := range req.MethodCalls {
 		methodResp := j.processMethodCall(ctx, authUser, call)
 		resp.MethodResponses = append(resp.MethodResponses, methodResp)
+		resp.MethodResponses = append(resp.MethodResponses, methodResp.Followups...)
 		if created, ok := methodResp.Arguments["created"].(map[string]interface{}); ok {
 			for key, v := range created {
 				if obj, ok := v.(map[string]interface{}); ok {
@@ -381,6 +382,14 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return j.mailboxSet(ctx, authUser, args, callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
+	case "Email/queryChanges":
+		return j.queryChanges(ctx, authUser, "Email", args, callID)
+	case "EmailSubmission/query":
+		return j.submissionQuery(ctx, authUser, args, callID)
+	case "EmailSubmission/queryChanges":
+		return j.queryChanges(ctx, authUser, "EmailSubmission", args, callID)
+	case "EmailSubmission/changes":
+		return j.submissionChanges(ctx, authUser, args, callID)
 	case "Identity/get":
 		return j.identityGet(ctx, authUser, args, callID)
 	case "EmailSubmission/get":
@@ -632,6 +641,7 @@ type Response struct {
 }
 
 type MethodResponse struct {
+	Followups []MethodResponse       `json:"-"`
 	Name      string                 `json:"0"`
 	Arguments map[string]interface{} `json:"1"`
 	CallID    string                 `json:"2"`

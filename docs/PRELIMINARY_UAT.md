@@ -44,7 +44,9 @@ named application and human-visible observations.
 | A8 | JMAP email move/delete | Atomic move/keyword writes, targeted destruction, selected IMAP notifications and both change feeds survive restore. | Included in A1 |
 | A9 | JMAP upload/import | Uploaded blobs and imported MIME/attachments remain owner-scoped, appear in IMAP, and survive restore with change-feed continuity. | Included in A1 |
 | A10 | JMAP structured composition | Text/HTML and uploaded attachments round-trip into a durable draft with IMAP arrival notification. | Included in A1 |
-| A11 | JMAP submission | Primary identity sends through SMTP admission; Bcc is private, owner/state checks reject, explicit Sent filing and durable receipts/messages survive restore. | Included in A1 |
+| A11 | JMAP submission | Primary identity sends through SMTP admission; Bcc is private, owner/state checks reject, automatic Sent filing and durable receipts/messages survive restore. | Included in A1 |
+| A12 | Query/receipt lifecycle | Query deltas, receipt destruction and success-triggered source deletion survive restore without cancelling delivery. | Included in A1 |
+| A13 | Sieve workflows | Multiple flagged deliveries and redirect work; vacation sends once and remains suppressed after restore. | Included in A1 |
 | C1 | Add two accounts in the target client | TLS/authentication work; accounts see only their own folders/messages. | Pending |
 | C2 | Send/receive a reply with attachment | Recipient, subject, body and attachment are intact; Sent placement matches configuration. | Pending |
 | C3 | Folder lifecycle | Create, subscribe, rename, move/copy, delete and reconnect show durable state. | Pending |

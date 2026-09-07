@@ -51,7 +51,8 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
-	SubmissionReceipt   *storage.JournalEntry `json:"-"`
+	ExtraReceipts       []*storage.JournalEntry `json:"-"`
+	SubmissionReceipt   *storage.JournalEntry   `json:"-"`
 	DSNMail             smtp.MailOptions
 	DSNRecipients       map[string]smtp.RcptOptions
 	complianceBypass    bool
@@ -83,6 +84,7 @@ type Message struct {
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
+	sieveMu      sync.Mutex
 	destinations *delivery.DestinationThrottle
 	reputationDB *filtering.PremailReputation
 	platform     config.PlatformConfig
@@ -404,6 +406,9 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 		if qm.policyManager != nil {
 			scriptPath := filepath.Join(qm.dataDir, "sieve", url.PathEscape(username)+".sieve")
 			scriptData, readErr := os.ReadFile(scriptPath)
+			if _, e := qm.store.Get(sieveKey("plan", msg.ID, username)); e == nil {
+				readErr = nil
+			}
 			if readErr != nil && !os.IsNotExist(readErr) {
 				deliveryErr = errors.Join(deliveryErr, fmt.Errorf("read Sieve for %s: %w", rcpt, readErr))
 				continue
@@ -414,23 +419,15 @@ func (qm *QueueManager) deliverLocal(msg *Message, recipients []string) error {
 					deliveryErr = errors.Join(deliveryErr, err)
 					continue
 				}
-				action, err := qm.policyManager.EvaluateSieve(qm.ctx, string(scriptData), emailCtx)
+				action, err := qm.sievePlan(msg, username, string(scriptData), emailCtx)
 				if err != nil {
 					deliveryErr = errors.Join(deliveryErr, fmt.Errorf("Sieve for %s: %w", rcpt, err))
 					continue
 				}
-				flags = action.Tags
-				switch action.Type {
-				case policy.ActionFileinto:
-					folder = action.Target
-				case policy.ActionDiscard:
-					continue
-				case policy.ActionReject:
-					if err = qm.generateBounce(msg, &delivery.DeliveryResult{SMTPCode: 550, IsPermanent: true, Message: action.Reason}, []string{rcpt}); err != nil {
-						deliveryErr = errors.Join(deliveryErr, err)
-					}
-					continue
+				if err = qm.executeSieve(msg, username, rcpt, action); err != nil {
+					deliveryErr = errors.Join(deliveryErr, err)
 				}
+				continue
 			}
 		}
 
@@ -816,7 +813,7 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	if msg.Quarantine {
 		entry.Status = "held"
 	}
-	messageID, isDuplicate, err := qm.store.StoreWithReceipt(entry, msg.SubmissionReceipt)
+	messageID, isDuplicate, err := qm.store.StoreWithReceipt(entry, append(msg.ExtraReceipts, msg.SubmissionReceipt)...)
 	if err != nil {
 		return fmt.Errorf("failed to store message: %w", err)
 	}

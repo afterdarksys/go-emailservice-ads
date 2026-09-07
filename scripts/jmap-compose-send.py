@@ -48,8 +48,10 @@ def qualify(request, port, imap_port, tls):
         response = batch(port, [
             ['Email/set', {'accountId': 'primary', 'ifInState': before['state'], 'create': {'draft': obj}}, 'compose'],
             ['EmailSubmission/set', {'accountId': 'primary', 'ifInState': receipts_before['state'],
-             'create': {'send': {'emailId': '#draft', 'identityId': 'primary'}}}, 'send']])
-        composed, submitted = (v[1] for v in response['methodResponses'])
+             'create': {'send': {'emailId': '#draft', 'identityId': 'primary'}},
+             'onSuccessUpdateEmail': {'#send': {'mailboxIds': {sent: True}, 'keywords/$draft': None}}}, 'send']])
+        composed, submitted = (v[1] for v in response['methodResponses'][:2])
+        assert len(response['methodResponses']) == 3 and response['methodResponses'][2][0] == 'Email/set', response
         assert 'draft' in composed.get('created', {}), response
         assert 'send' in submitted.get('created', {}), response
         mid, receipt = composed['created']['draft']['id'], submitted['created']['send']['id']
@@ -57,21 +59,19 @@ def qualify(request, port, imap_port, tls):
         assert submitted['created']['send']['undoStatus'] == 'final', submitted
         client.noop()
         assert client.response('EXISTS')[1][0] is not None, 'composed draft did not notify IMAP'
-    # Stale state rejects before a second send; unsupported side effects also reject before sending.
+    # Stale state and malformed success hooks reject before a second send.
     for args, kind in [
         ({'ifInState': receipts_before['state']}, 'stateMismatch'),
-        ({'onSuccessDestroyEmail': ['#again']}, 'invalidArguments')]:
+        ({'onSuccessDestroyEmail': True}, 'invalidArguments')]:
         method, rejected = request(port, 'EmailSubmission/set', dict(args, create={'again': {'emailId': mid, 'identityId': 'primary'}}))
         assert method == 'error' and rejected['type'] == kind, rejected
     _, foreign = request(port, 'EmailSubmission/get', {'ids': [receipt]}, 'probe@mail.test', 'isolated-test-password')
     assert foreign['notFound'] == [receipt], foreign
     _, foreign = request(port, 'EmailSubmission/set', {'create': {'send': {'emailId': mid, 'identityId': 'primary'}}}, 'probe@mail.test', 'isolated-test-password')
     assert foreign['notCreated']['send']['type'] == 'invalidProperties', foreign
-    # Client explicitly files the source message; successful submission alone preserves the draft.
+    # The implicit Email/set files Sent and clears the draft keyword.
     _, draft = request(port, 'Email/get', {'ids': [mid]})
-    assert draft['list'][0]['keywords']['$draft'], draft
-    _, filed = request(port, 'Email/set', {'update': {mid: {'mailboxIds': {sent: True}, 'keywords/$draft': None}}})
-    assert mid in filed['updated'], filed
+    assert not draft['list'][0]['keywords'].get('$draft') and draft['list'][0]['mailboxIds'].get(sent), draft
     received_id = None
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:

@@ -15,6 +15,9 @@ import (
 )
 
 type svInterp struct {
+	plan                  []*Action
+	implicitKeep          bool
+	vacationCount         int
 	execution             context.Context
 	err                   error
 	actions               int
@@ -26,13 +29,21 @@ type svInterp struct {
 }
 
 func svExec(execution context.Context, ctx *EmailContext, script *svScript) (*Action, error) {
-	interp := &svInterp{execution: execution, ctx: ctx, vars: make(map[string]string), variablesEnabled: script.variables}
+	interp := &svInterp{execution: execution, ctx: ctx, vars: make(map[string]string), variablesEnabled: script.variables, implicitKeep: true}
 	result := &Action{Type: ActionKeep}
 	interp.runBlock(script.cmds, result)
-	if !interp.deliveryFlagsCaptured {
-		result.Tags = svValidFlags(interp.flags)
+	if interp.err != nil {
+		return nil, interp.err
 	}
-	return result, interp.err
+	if interp.implicitKeep {
+		interp.plan = append(interp.plan, &Action{Type: ActionKeep, Target: "INBOX", Tags: svValidFlags(interp.flags)})
+	}
+	if len(interp.plan) == 0 {
+		return &Action{Type: ActionDiscard, Tags: svValidFlags(interp.flags)}, nil
+	}
+	out := *interp.plan[0]
+	out.Actions = interp.plan
+	return &out, nil
 }
 
 // runBlock returns true if a terminal action (reject/discard/stop) was hit.
@@ -71,37 +82,65 @@ func (i *svInterp) runCmd(cmd svCmd, result *Action) bool {
 
 func (i *svInterp) runAction(c *svActionCmd, result *Action) bool {
 	switch c.name {
-	case "keep", "fileinto", "discard", "reject", "ereject":
+	case "keep", "fileinto", "redirect", "vacation", "discard", "reject", "ereject":
 		i.actions++
-		if i.actions > 1 {
-			i.err = fmt.Errorf("multiple delivery actions are not supported")
+		if i.actions > 32 {
+			i.err = fmt.Errorf("Sieve action limit exceeded")
 			return true
 		}
 	}
 	switch c.name {
-	case "keep":
-		i.captureDeliveryFlags(c, result)
-		result.Type = ActionKeep
-		if result.Target == "" {
-			result.Target = "INBOX"
+	case "keep", "fileinto", "redirect":
+		a := &Action{Type: ActionKeep, Target: "INBOX"}
+		if c.name == "fileinto" {
+			a.Type = ActionFileinto
+			a.Target = i.expand(c.args[0])
 		}
-	case "fileinto":
-		i.captureDeliveryFlags(c, result)
-		if len(c.args) > 0 {
-			result.Type = ActionFileinto
-			result.Target = i.expand(c.args[0])
+		if c.name == "redirect" {
+			a.Type = ActionRedirect
+			a.Target = i.expand(c.args[0])
+			p, err := mail.ParseAddress(a.Target)
+			if err != nil || p.Address != a.Target || strings.ContainsAny(a.Target, "\r\n\x00") {
+				i.err = fmt.Errorf("invalid redirect address")
+				return true
+			}
+		} else {
+			i.captureDeliveryFlags(c, a)
 		}
+		i.plan = append(i.plan, a)
+		if !c.copy {
+			i.implicitKeep = false
+		}
+	case "vacation":
+		i.vacationCount++
+		if i.vacationCount > 1 {
+			i.err = fmt.Errorf("multiple vacation actions")
+			return true
+		}
+		v := *c.vacation
+		v.Subject = i.expand(v.Subject)
+		v.Message = i.expand(v.Message)
+		v.From = i.expand(v.From)
+		v.Handle = i.expand(v.Handle)
+		v.Addresses = append([]string{}, v.Addresses...)
+		for n, a := range v.Addresses {
+			v.Addresses[n] = i.expand(a)
+		}
+		if strings.ContainsAny(v.Subject+v.From, "\r\n\x00") {
+			i.err = fmt.Errorf("invalid vacation header")
+			return true
+		}
+		i.plan = append(i.plan, &Action{Type: ActionVacation, Vacation: &v})
 	case "reject", "ereject":
-		reason := "Message rejected by recipient's mail filter"
-		if len(c.args) > 0 {
-			reason = i.expand(c.args[0])
+		if len(i.plan) > 0 {
+			i.err = fmt.Errorf("reject conflicts with delivery actions")
+			return true
 		}
-		result.Type = ActionReject
-		result.Reason = reason
+		i.implicitKeep = false
+		i.plan = append(i.plan, &Action{Type: ActionReject, Reason: i.expand(c.args[0])})
 		return true
 	case "discard":
-		result.Type = ActionDiscard
-		return true
+		i.implicitKeep = false
 	case "stop":
 		return true
 	case "set":

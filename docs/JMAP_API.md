@@ -20,7 +20,8 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | --- | --- |
 | Mailbox/get | Durable folders, parent relationships, counts, unread counts and supported rights. |
 | Email/get | Owned messages across folders, keywords, internal receipt date, decoded MIME body values and attachment descriptors. |
-| Email/query | Filters inMailbox, subject, from, to, text, hasKeyword and notKeyword; bounded position/limit pagination. |
+| Email/query | Filters inMailbox, subject, from, to, text, hasKeyword and notKeyword; bounded pagination and durable query snapshots. |
+| Email/queryChanges | Added IDs with indices and removed IDs for a retained, matching query snapshot. |
 | Email/set | Create structured MIME emails; update keywords and mailboxIds using replacement or patch syntax; destroy owned emails; conditional ifInState and per-object errors. Existing message content is immutable. |
 | Email/changes | Durable, account-scoped created/updated/destroyed IDs, bounded pagination and restart/restore continuity. |
 | GET download URL | Owner-scoped raw message or decoded MIME part; another account gets 404. |
@@ -29,8 +30,10 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | POST upload URL | Owner-scoped temporary blobs, bounded size/storage, expiry and authenticated download. |
 | Email/import | Create messages from uploaded blobs or owned raw email blobs, with mailbox, keywords, receivedAt and conditional state. |
 | Identity/get | One immutable primary identity using the enabled shared mail account's email address. |
-| EmailSubmission/set | Submit owned emails immediately through SMTP admission; conditional state and per-object errors. |
+| EmailSubmission/set | Submit owned emails, delete receipts, and apply success-triggered email updates/destruction; conditional state and per-object errors. |
 | EmailSubmission/get | Owner-scoped durable acceptance receipts, including after source-email deletion or queue delivery. |
+| EmailSubmission/query / queryChanges | Filter/sort/page receipts and reconcile retained query snapshots. |
+| EmailSubmission/changes | Paginated created/destroyed receipt IDs from a retained state. |
 
 ## Upload and import
 
@@ -181,18 +184,39 @@ before success; compliance hold persists preserved evidence before its receipt.
 A receipt write failure after hold capture can leave preserved evidence despite
 an API failure. Inspect compliance records before repeating that request.
 
-The source email is not automatically moved to Sent or cleared of $draft. After
-successful acceptance, issue a separate Email/set for those changes. Delayed
-send, cancellation and onSuccessUpdateEmail/onSuccessDestroyEmail are unsupported;
-unsupported set arguments fail before sending. Updates to an existing receipt
-return cannotUnsend; destroy returns forbidden. Identity mutation and submission
-query/changes methods are unsupported. Both get methods support ids and properties
-and retain the 500-object limit; use saved IDs when the account exceeds that limit.
+Use onSuccessUpdateEmail to file Sent and clear $draft as part of submission,
+without a separate client request. Keys are submission IDs or `#creationKey` for
+new submissions in that method. onSuccessDestroyEmail takes submission IDs using
+the same convention. Successful creation or receipt deletion triggers the requested
+email action; failed operations do not. A single implicit Email/set response
+follows EmailSubmission/set with the same call ID. Inspect **both** responses:
+acceptance can succeed while filing fails, and retrying the send would duplicate it.
+
+```json
+["EmailSubmission/set", {
+  "accountId": "primary",
+  "create": {"send": {"emailId": "DRAFT_EMAIL_ID", "identityId": "primary"}},
+  "onSuccessUpdateEmail": {"#send": {
+    "mailboxIds": {"SENT_MAILBOX_ID": true}, "keywords/$draft": null
+  }}
+}, "send"]
+```
+
+Without these arguments, the source email is unchanged. A malformed hook argument
+fails before sending; an unsupported email patch is reported by the implicit
+Email/set after acceptance. Delayed send and cancellation remain unsupported;
+updates to existing receipts return cannotUnsend. Identity mutation is unsupported.
+
+Destroying an owned receipt through EmailSubmission/set removes the receipt only.
+It neither cancels its independently queued mail nor deletes its source email,
+unless onSuccessDestroyEmail also requests that email deletion. Receipt deletions
+are journaled and survive restart/restore. Get methods retain the 500-object limit;
+use EmailSubmission/query pagination to find IDs in larger accounts.
 
 Receipts survive delivery, compaction, restart and backup restore and remain
 owner-scoped even after the email is deleted. They contain envelope addresses and
 email/identity IDs, but no MIME body. They consume disk, not pending-message quota.
-Automatic receipt expiry/disposal is not implemented; include growth and retained
+Automatic receipt expiry is not implemented; use explicit receipt deletion and include growth and retained
 metadata in capacity and retention planning. After an uncertain response, inspect
 receipts and refresh state before retrying: an explicit retry with fresh state
 creates another send. There is no retry idempotency key.
@@ -360,14 +384,42 @@ not message bodies. Include this metadata in the deployment's retention policy.
 
 ## Limits and qualification
 
-Queries use newest internal date first with deterministic ID tie-breaking.
-Explicit sort requests return unsupportedSort; unsupported filters return
-unsupportedFilter. Email/query still reports canCalculateChanges=false:
-Email/queryChanges is not implemented. Email/changes is an object change feed,
-not incremental query membership or ordering.
+Email queries use newest internal date first with deterministic ID tie-breaking.
+Explicit email sort requests return unsupportedSort; unsupported filters return
+unsupportedFilter. Receipt queries default to newest sendAt first and support
+sorting by emailId, threadId and sendAt (sentAt is accepted as an alias), with
+isAscending and an ID tie-breaker. Receipt filters accept identityIds, emailIds,
+threadIds, undoStatus, before and after; all supplied conditions must match.
+
+Query methods return canCalculateChanges=true when the complete result has at
+most 10,000 IDs and the durable snapshot backend is available. Larger queries
+remain pageable but require full reconciliation. Pass the queryState plus the
+same filter/sort to the corresponding queryChanges method. Remove returned IDs
+first, then insert each added ID at its returned index. calculateTotal=true adds
+the new total. maxChanges is bounded to 500; tooManyChanges means refresh the
+query, not an incomplete successful delta. Anchors, upToId and thread collapsing
+are not implemented and fail explicitly. Email/changes remains the independent
+object change feed.
+
+The mailbox database retains 64 distinct recently used snapshots per account for
+each of Email queries, receipt queries and receipt object states. Tokens are
+owner- and query-scoped and survive backup/restore. Old, foreign, mismatched or
+unavailable tokens return cannotCalculateChanges; issue a fresh query/get and
+reconcile. Full snapshots store IDs only, capped at 10,000 per snapshot. Include
+this bounded metadata in SQLite/backup capacity planning. Refreshing a snapshot
+renews its place in history. Future tokens are unavailable after restoring an
+older backup.
+
+EmailSubmission/changes accepts sinceState and maxChanges, returns created and
+destroyed IDs (updated is empty), and supplies a resumable newState when
+hasMoreChanges is true. Receipt states are recorded by get/query/set. Deleting
+receipts does not remove earlier membership snapshots; those age out under the
+same 64-snapshot bound. This is synchronization history, not an audit log.
 
 Advanced composition/submission options above, thread grouping and push remain
 unimplemented. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
 scripts/jmap-sync.py, scripts/jmap-email-mutations.py, scripts/jmap-import.py and
-scripts/jmap-compose-send.py (invoked by verify-release.sh) for automated coverage.
+scripts/jmap-compose-send.py and scripts/jmap-workflows.py (invoked by verify-release.sh) for automated coverage.
+
+Protocol references: [JMAP mail and submission](https://www.rfc-editor.org/rfc/rfc8621.html), [JMAP core](https://www.rfc-editor.org/rfc/rfc8620.html). Supported subsets and limits above remain authoritative for this implementation.

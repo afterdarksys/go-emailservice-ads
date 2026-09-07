@@ -97,6 +97,19 @@ func (qm *QueueManager) persistSubmissionReceipt(msg *Message) error {
 	if msg.SubmissionReceipt == nil {
 		return nil
 	}
-	_, _, err := qm.store.Store(msg.SubmissionReceipt)
+	_, _, err := qm.store.StoreWithReceipt(msg.SubmissionReceipt, msg.ExtraReceipts...)
 	return err
+}
+
+// Deleting a receipt never cancels or changes the independently queued message.
+func (server *Server) DestroySubmission(ctx context.Context, user, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store := server.backend.qManager.store
+	entry, err := store.Get("jmap-submission-" + id)
+	if err != nil || entry.Tier != "jmap_submission" || entry.Metadata["username"] != user {
+		return mailstate.ErrBlobNotFound
+	}
+	return store.UpdateStatus(entry.MessageID, "delivered", "")
 }

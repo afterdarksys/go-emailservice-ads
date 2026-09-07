@@ -131,3 +131,11 @@ type Submitter interface {
 	Submit(context.Context, string, string, string, string, []string, []byte) (Submission, error)
 	Submissions(context.Context, string) ([]Submission, error)
 }
+
+type SubmissionManager interface {
+	DestroySubmission(context.Context, string, string) error
+}
+type SnapshotStore interface {
+	SaveSnapshot(context.Context, string, string, string, string, []string) error
+	LoadSnapshot(context.Context, string, string, string, string) ([]string, error)
+}

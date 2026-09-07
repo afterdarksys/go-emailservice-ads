@@ -888,6 +888,9 @@ func (s *Session) Data(r io.Reader) error {
 				}
 				// Continue with default action
 			} else if action != nil {
+				if len(action.Actions) > 1 || action.Type == policy.ActionVacation {
+					return &smtp.SMTPError{Code: 451, Message: "Multi-action Sieve is supported only in recipient scripts"}
+				}
 				// Handle policy action
 				switch action.Type {
 				case policy.ActionReject:

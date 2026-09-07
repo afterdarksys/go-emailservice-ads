@@ -13,7 +13,7 @@ type sieveEngine struct {
 // newSieveEngine creates a new Sieve engine
 func newSieveEngine() (*sieveEngine, error) {
 	return &sieveEngine{
-		capabilities: []string{"fileinto", "reject", "envelope", "body", "variables", "imap4flags"},
+		capabilities: []string{"fileinto", "reject", "envelope", "body", "variables", "imap4flags", "copy", "vacation"},
 	}, nil
 }
 
