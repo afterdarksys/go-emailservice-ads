@@ -66,18 +66,14 @@ RUN mkdir -p /data /var/lib/mail-storage /var/log/mail && \
 USER mailservice
 
 # Expose ports
-EXPOSE 2525 8080 50051 9090
+EXPOSE 587 1143 8080 50051
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Environment variables
-ENV MAILHUB_DATA_DIR=/data \
-    LOG_LEVEL=info \
-    SMTP_ADDR=:2525 \
-    API_REST_ADDR=:8080 \
-    API_GRPC_ADDR=:50051
+ENV MAILHUB_DATA_DIR=/data
 
 # Default command
 ENTRYPOINT ["/usr/local/bin/goemailservices"]

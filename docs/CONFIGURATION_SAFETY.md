@@ -18,7 +18,8 @@ submission mechanism; IMAPS-before-SMTP is not implemented.
 
 Validation rejects public/global relay CIDRs, malformed networks, public
 plaintext AUTH, submission without authentication/TLS or a SASL mechanism,
-invalid local domains, and overlapping active listener bindings. Explicit
+invalid local domains, and overlapping active listener bindings. Startup and
+`--check-config` also reject required TLS listeners without certificate/key settings. Explicit
 private/loopback relay networks remain an operator-controlled option. Avoid
 large private grants behind shared proxies/NAT; prefer per-account AUTH.
 Plaintext AUTH is permitted only for an explicitly bound loopback test listener.
@@ -45,3 +46,11 @@ The release smoke test covers plaintext AUTH suppression, invalid credentials,
 unauthenticated submission rejection, authenticated external RCPT permission
 (without sending external mail), perimeter relay denial and permitted local
 receipt. It also verifies rejected invalid reloads and successful valid reloads.
+
+The root Compose examples now persist the actual `/data` directory, publish
+587 and mount `./certs` read-only. Before upgrading an existing container, stop it
+and inventory both `/data` and `/var/lib/mail-storage`; copy the real live store
+into the chosen persistent volume and verify a backup/restore. Do not simply
+recreate an old container whose data may be in its writable layer. The optional
+second-node Compose profile is independent, not a replica. Use the HA guide for
+replication. Persist custom policy paths separately in standalone deployments.

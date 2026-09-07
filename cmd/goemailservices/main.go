@@ -84,6 +84,9 @@ func runMain() {
 		logger.Fatal("Failed to load config", zap.Error(err))
 	}
 
+	if err := cfg.ValidateRuntimeSettings(); err != nil {
+		logger.Fatal("Invalid listener configuration", zap.Error(err))
+	}
 	var haGuard *ha.Guard
 	var ownershipLost <-chan error
 	if cfg.Platform.HA.Enabled {
@@ -529,6 +532,9 @@ logging:
 func validateConfigFile(path string) error {
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
+		return err
+	}
+	if err = cfg.ValidateRuntimeSettings(); err != nil {
 		return err
 	}
 	_, err = zapcore.ParseLevel(cfg.Logging.Level)

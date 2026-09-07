@@ -91,3 +91,16 @@ func (c *Config) ValidateReloadFrom(old *Config) error {
 	}
 	return nil
 }
+
+// ValidateRuntimeSettings catches known-unusable listener combinations without
+// contacting providers or reading certificate contents.
+func (c *Config) ValidateRuntimeSettings() error {
+	configured := func(t *TLSConfig) bool { return t != nil && t.Cert != "" && t.Key != "" }
+	if len(c.Platform.Listeners) == 0 && (c.Server.RequireTLS || c.Server.RequireAuth && !c.Server.AllowInsecureAuth) && !configured(c.Server.TLS) {
+		return fmt.Errorf("SMTP requires TLS but certificate/key settings are missing")
+	}
+	if !c.IMAP.Disabled && c.IMAP.TLSMode != "disabled" && !configured(c.IMAP.TLS) {
+		return fmt.Errorf("IMAP TLS mode requires certificate/key settings")
+	}
+	return nil
+}

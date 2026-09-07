@@ -20,7 +20,8 @@ func TestConfigCheckProcess(t *testing.T) {
 		name, content string
 		success       bool
 	}{
-		{"valid", "platform:\n  data_dir: ./must-not-create\n", true},
+		{"valid", "platform:\n  data_dir: ./must-not-create\nserver:\n  tls: {cert: /missing/cert, key: /missing/key}\nimap:\n  tls: {cert: /missing/cert, key: /missing/key}\n", true},
+		{"missing-tls-settings", "server: {}\n", false},
 		{"unknown", "platfrom: {}\n", false},
 		{"bad-log-level", "logging:\n  level: invalid\n", false},
 		{"missing", "", false},

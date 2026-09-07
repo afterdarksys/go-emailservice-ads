@@ -57,7 +57,7 @@ func (s *Server) startGRPC() error {
 	if err != nil {
 		return err
 	}
-	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(tc)), grpc.MaxRecvMsgSize(2<<20), grpc.MaxSendMsgSize(4<<20), grpc.MaxConcurrentStreams(32))
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(tc)), grpc.MaxRecvMsgSize(2<<20), grpc.MaxSendMsgSize(4<<20), grpc.MaxConcurrentStreams(32), grpc.MaxHeaderListSize(16<<10), grpc.ConnectionTimeout(5*time.Second))
 	registerManagement(g, s)
 	s.grpcServer = g
 	s.wg.Add(1)

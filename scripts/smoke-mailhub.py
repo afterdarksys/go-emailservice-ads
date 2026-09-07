@@ -61,7 +61,7 @@ def run(binary, backup):
                 # Real wire checks: neither submission nor the MX listener is an open relay.
                 with smtplib.SMTP('localhost',smtp_port,timeout=10) as client:
                     client.ehlo(); assert 'auth' not in client.esmtp_features
-                    client.starttls(context=tls)
+                    client.starttls(context=tls); client.ehlo()
                     assert client.mail('outsider@external.test')[0] == 530
                     try: client.login('probe@mail.test','incorrect-password')
                     except smtplib.SMTPAuthenticationError: pass

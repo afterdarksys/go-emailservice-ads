@@ -1,4 +1,5 @@
-version: '3.8'
+# Standalone deployment. Real HA: docs/HIGH_AVAILABILITY.md.
+# Before upgrading, migrate existing data while stopped; see configuration safety.
 
 # Simplified single-instance deployment for testing
 services:
@@ -10,11 +11,12 @@ services:
     container_name: mail-server
     hostname: mail.local
     ports:
-      - "2525:2525"   # SMTP
+      - "587:587"   # TLS authenticated submission
       - "8080:8080"   # REST API
       - "50051:50051" # gRPC
     volumes:
-      - mail-data:/var/lib/mail-storage
+      - mail-data:/data
+      - ./certs:/var/lib/mail-storage/certs:ro
       - ./config.yaml:/opt/goemailservices/config.yaml:ro
     environment:
       - LOG_LEVEL=debug
