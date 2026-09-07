@@ -6,6 +6,7 @@ the active `cmd/goemailservices` executable as reviewed on 2026-09-07.
 | Task | Guide |
 | --- | --- |
 | Start, stop, upgrade, manage users and queues | [Administration](ADMINISTRATION.md) |
+| Inspect/edit files and databases; administer queues from a shell | [CLI reference](CLI_ADMINISTRATION.md) |
 | Configure listeners, storage, authentication and filtering | [Configuration](CONFIGURATION.md) |
 | Diagnose admission, delivery, TLS and API failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Integrate with the management REST API | [API reference](API_REFERENCE.md), [OpenAPI contract](openapi.json) and [authentication](../API_AUTHENTICATION.md) |

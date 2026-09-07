@@ -286,3 +286,6 @@ privacy schedule; restoring an old backup restores its then-current records.
 Enterprise auth: [LDAP/AD, SAML broker and SCIM](ENTERPRISE_IDENTITY.md).
 Full reload: [configuration lifecycle](CONFIGURATION_RELOAD.md).
 Set `platform.dmarc_reporting: true` for [DMARC aggregate reports](DMARC_REPORTING.md).
+
+For validated editing, SQLite administration and relay probes, use the
+[configuration/admin CLI reference](CLI_ADMINISTRATION.md).

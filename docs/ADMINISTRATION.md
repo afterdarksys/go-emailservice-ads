@@ -12,6 +12,8 @@ From the repository root, build the service and operational utilities:
 
 ```sh
 go build -o bin/goemailservices ./cmd/goemailservices
+go build -o bin/adsemailadm ./cmd/adsemailadm
+go build -o bin/gemsads-conf ./cmd/gemsads-conf
 go build -o bin/mailhub-backup ./cmd/mailhub-backup
 go build -o bin/mailhub-failover ./cmd/mailhub-failover
 go build -o bin/mailhub-log ./cmd/mailhub-log
@@ -37,9 +39,10 @@ returns 503. Use the [mailflow probe](MONITORING.md) for ongoing checks.
 
 ## Routine management
 
-Use [REST requests](API_REFERENCE.md) with a named, scoped operator key. The
-legacy CLIs contain commands for APIs outside the active server; verify each
-command against the reference before automating it.
+Use `adsemailadm` or [REST requests](API_REFERENCE.md) with a named, scoped operator key.
+See the [CLI reference](CLI_ADMINISTRATION.md) for `gemsads-conf`, database
+maintenance, queue commands and explicit Postfix compatibility boundaries.
+`mailctl` retains legacy commands outside the active server.
 
 1. List `/api/v1/mailboxes`; create an account using POST with username, password
    and email. New accounts persist immediately and can authenticate over TLS.
@@ -49,7 +52,7 @@ command against the reference before automating it.
 3. Edit `platform.aliases` in the deployed YAML for aliases and restart in a
    controlled window. Test `/api/v1/recipients/{address}` afterward.
 4. Inspect `/api/v1/queue/stats`, `/queue/pending` and `/dlq/list` under `/api/v1`.
-   Use the exact `message_id` returned by the API for message operations.
+   Use the exact `id` returned by the API for message operations.
 5. Investigate the stored error before POST `/api/v1/dlq/retry/{id}`. Retry only
    messages whose underlying cause is resolved. Record intentional deletion
    before DELETE `/api/v1/message/{id}`; this discards queued mail.
