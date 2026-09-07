@@ -85,18 +85,21 @@ type Message struct {
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
-	DMARCReports *security.DurableDMARCReports
-	sieveMu      sync.Mutex
-	destinations *delivery.DestinationThrottle
-	reputationDB *filtering.PremailReputation
-	platform     config.PlatformConfig
-	abuse        abuseLimits
-	StormGuard   *mailstorm.Guard
-	users        *auth.UserStore
-	dataDir      string
-	logger       *zap.Logger
-	store        *storage.MessageStore
-	imapStore    *storage.MailboxStore
+	statsMu        sync.RWMutex
+	statsSources   map[string]func() map[string]interface{}
+	securityCounts map[string]uint64
+	DMARCReports   *security.DurableDMARCReports
+	sieveMu        sync.Mutex
+	destinations   *delivery.DestinationThrottle
+	reputationDB   *filtering.PremailReputation
+	platform       config.PlatformConfig
+	abuse          abuseLimits
+	StormGuard     *mailstorm.Guard
+	users          *auth.UserStore
+	dataDir        string
+	logger         *zap.Logger
+	store          *storage.MessageStore
+	imapStore      *storage.MailboxStore
 
 	emergency chan *Message
 	msa       chan *Message

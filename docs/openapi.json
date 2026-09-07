@@ -2432,6 +2432,69 @@
           }
         }
       }
+    },
+    "/api/v1/security/stats": {
+      "get": {
+        "operationId": "securityStatistics",
+        "summary": "Read active security statistics",
+        "x-required-permission": "security:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/dns/stats": {
+      "get": {
+        "operationId": "dnsStatistics",
+        "summary": "Read active dns statistics",
+        "x-required-permission": "dns:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/greylisting/stats": {
+      "get": {
+        "operationId": "greylistingStatistics",
+        "summary": "Read active greylisting statistics",
+        "x-required-permission": "greylisting:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
     }
   },
   "components": {

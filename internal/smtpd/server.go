@@ -150,6 +150,13 @@ func NewServerWithValidator(cfg *config.Config, logger *zap.Logger, qm *QueueMan
 		logger.Fatal("RequireTLS is enabled but no TLS certificates configured")
 	}
 
+	qm.RegisterStatistics(cfg.Server.Addr, func() map[string]interface{} {
+		grey := map[string]interface{}{"enabled": greylist != nil}
+		if greylist != nil {
+			grey["state"] = greylist.GetStats()
+		}
+		return map[string]interface{}{"dns": resolver.Statistics(), "greylisting": grey, "spf_enabled": cfg.Server.SPF.Enabled, "dmarc_enabled": cfg.Server.DMARC.Enabled, "dmarc_mode": cfg.Server.DMARC.Mode}
+	})
 	return &Server{
 		backend: be, smtpServer: s,
 		config:       cfg,
@@ -512,6 +519,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		ipAddr := net.ParseIP(s.ip)
 		if ipAddr != nil && fromDomain != "" {
 			spfResult, err := s.policyEngine.VerifySPF(ctx, ipAddr, fromDomain, spfIdentity)
+			s.qManager.countSecurity("spf_" + string(spfResult))
 			if err == nil {
 				spfResultStr = string(spfResult)
 				enforce := strings.EqualFold(s.config.Server.SPF.Mode, "enforce")
@@ -599,6 +607,7 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 		}
 
 		if shouldGreylist {
+			s.qManager.countSecurity("greylist_deferred")
 			s.logger.Info("Message greylisted",
 				zap.String("ip", s.ip),
 				zap.String("from", s.msg.From),
@@ -789,6 +798,7 @@ func (s *Session) Data(r io.Reader) error {
 					zap.String("from_header_domain", fromHeaderDomain), zap.Error(derr))
 			}
 			s.msg.DMARCResult = string(dmarcResult)
+			s.qManager.countSecurity("dmarc_" + string(dmarcResult))
 
 			enforce := strings.EqualFold(s.config.Server.DMARC.Mode, "enforce")
 			if s.qManager.DMARCReports != nil {

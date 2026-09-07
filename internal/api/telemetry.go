@@ -16,7 +16,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.store != nil {
 		v := s.store.Telemetry()
-		for _, state := range []string{"pending", "queued", "processing", "held", "failed", "stored"} {
+		for _, state := range []string{"pending", "queued", "processing", "scheduled", "held", "failed", "stored"} {
 			fmt.Fprintf(w, "mailhub_messages{state=%q} %d\n", state, v.States[state])
 		}
 		fmt.Fprintf(w, "mailhub_queue_bytes %d\nmailhub_oldest_queued_seconds %g\nmailhub_disk_free_bytes %d\n", v.QueueBytes, v.OldestSeconds, v.FreeBytes)

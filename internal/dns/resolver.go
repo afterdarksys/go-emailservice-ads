@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -11,6 +12,9 @@ import (
 
 // Resolver provides DNS resolution with caching
 type Resolver struct {
+	hits        atomic.Uint64
+	misses      atomic.Uint64
+	failures    atomic.Uint64
 	mailServers []string
 	logger      *zap.Logger
 	resolver    *net.Resolver
@@ -67,6 +71,7 @@ func (r *Resolver) LookupMX(ctx context.Context, domain string) ([]*net.MX, erro
 		if time.Now().Before(entry.expiresAt) {
 			r.mxCacheMu.RUnlock()
 			r.logger.Debug("MX cache hit", zap.String("domain", domain))
+			r.hits.Add(1)
 			return entry.records, nil
 		}
 	}
@@ -78,8 +83,10 @@ func (r *Resolver) LookupMX(ctx context.Context, domain string) ([]*net.MX, erro
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	r.misses.Add(1)
 	records, err := r.resolver.LookupMX(ctx, domain)
 	if err != nil {
+		r.failures.Add(1)
 		r.logger.Warn("MX lookup failed",
 			zap.String("domain", domain),
 			zap.Error(err))
@@ -110,6 +117,7 @@ func (r *Resolver) LookupTXT(ctx context.Context, domain string) ([]string, erro
 		if time.Now().Before(entry.expiresAt) {
 			r.txtCacheMu.RUnlock()
 			r.logger.Debug("TXT cache hit", zap.String("domain", domain))
+			r.hits.Add(1)
 			return entry.records, nil
 		}
 	}
@@ -121,8 +129,10 @@ func (r *Resolver) LookupTXT(ctx context.Context, domain string) ([]string, erro
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	r.misses.Add(1)
 	records, err := r.resolver.LookupTXT(ctx, domain)
 	if err != nil {
+		r.failures.Add(1)
 		r.logger.Warn("TXT lookup failed",
 			zap.String("domain", domain),
 			zap.Error(err))
@@ -251,4 +261,8 @@ func (r *Resolver) cleanupExpiredEntries() {
 		}
 	}
 	r.txtCacheMu.Unlock()
+}
+
+func (r *Resolver) Statistics() map[string]interface{} {
+	return map[string]interface{}{"cache": r.GetCacheStats(), "hits": r.hits.Load(), "misses": r.misses.Load(), "failures": r.failures.Load(), "scope": "MX/TXT lookups"}
 }
