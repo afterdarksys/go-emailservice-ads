@@ -527,8 +527,9 @@ same filter/sort to the corresponding queryChanges method. Remove returned IDs
 first, then insert each added ID at its returned index. calculateTotal=true adds
 the new total. maxChanges is bounded to 500; tooManyChanges means refresh the
 query, not an incomplete successful delta. Query pagination supports anchors as
-described above; queryChanges does not accept pagination anchors. upToId and
-thread collapsing are not implemented and fail explicitly. Email/changes remains the independent
+described above; queryChanges does not accept pagination anchors. upToId remains
+unsupported. Email query/queryChanges accept collapseThreads; pass the same value
+when requesting deltas. Email/changes remains the independent
 object change feed.
 
 The mailbox database retains 64 distinct recently used snapshots per account for
@@ -541,15 +542,19 @@ renews its place in history. Future tokens are unavailable after restoring an
 older backup.
 
 EmailSubmission/changes accepts sinceState and maxChanges, returns created and
-destroyed IDs (updated is empty), and supplies a resumable newState when
+destroyed and updated IDs (including scheduled-send/cancel transitions), and supplies a resumable newState when
 hasMoreChanges is true. Receipt states are recorded by get/query/set. Deleting
 receipts does not remove earlier membership snapshots; those age out under the
 same 64-snapshot bound. This is synchronization history, not an audit log.
 
-Arbitrary-header composition, thread grouping and push remain
-unimplemented. This is not a claim of full RFC 8620/8621 or named
+Arbitrary-header composition remains unimplemented. Thread grouping and direct
+SSE push are described in [threads and push](JMAP_THREADS_PUSH.md). This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
 scripts/jmap-sync.py, scripts/jmap-email-mutations.py, scripts/jmap-import.py and
 scripts/jmap-compose-send.py and scripts/jmap-workflows.py (invoked by verify-release.sh) for automated coverage.
 
 Protocol references: [JMAP mail and submission](https://www.rfc-editor.org/rfc/rfc8621.html), [JMAP core](https://www.rfc-editor.org/rfc/rfc8620.html). Supported subsets and limits above remain authoritative for this implementation.
+
+`Thread/get` and `Thread/changes` are supported. Discovery advertises the
+authenticated event-source URL. See [thread and push contract](JMAP_THREADS_PUSH.md)
+for IDs, collapsing, state retention, stream limits and reconnect behavior.

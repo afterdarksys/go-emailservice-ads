@@ -1,7 +1,7 @@
 # Mailhub documentation — 2.7.0
 
 Start here for the supported single-owner mail platform. These guides describe
-the active `cmd/goemailservices` executable as reviewed on 2026-09-06.
+the active `cmd/goemailservices` executable as reviewed on 2026-09-07.
 
 | Task | Guide |
 | --- | --- |
@@ -26,3 +26,9 @@ not by themselves establish support in the main executable. Historical design
 plans under `.planning/phases` remain proposals unless reconciled in TODO.
 
 Per-user forwarding, vacation replies and multi-folder delivery: [Sieve workflows](SIEVE_WORKFLOWS.md).
+
+Enterprise and operational additions: [identity](ENTERPRISE_IDENTITY.md),
+[threads/push](JMAP_THREADS_PUSH.md), [DMARC reports](DMARC_REPORTING.md),
+[statistics](OPERATIONS_STATISTICS.md), [reload](CONFIGURATION_RELOAD.md),
+[measured performance](PERFORMANCE_MEASUREMENTS.md), [personal data](PERSONAL_DATA.md),
+and [completion audit](PROJECT_COMPLETION_AUDIT.md).

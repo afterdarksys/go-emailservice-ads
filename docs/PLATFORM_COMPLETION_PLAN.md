@@ -61,3 +61,12 @@ historical feature claims. Report production integrations and separately scoped
 features still outstanding; do not mark them complete merely because this plan
 finishes. Preserve an explicit evidence record for anything requiring external
 credentials, a real device, or an operator decision.
+
+## Implementation disposition
+
+Workstreams 2–11 have implementation and targeted regression coverage. Identity
+scope is now explicit: native LDAP/AD, a SCIM Users profile, and SAML through an
+identity broker with Mailhub token validation. General reload uses coordinated
+process replacement. Privacy closure includes external disposition obligations.
+See PROJECT_COMPLETION_AUDIT.md for the remaining 15 open TODO items. Desktop/mobile
+acceptance remains pending actual client results and an accepting operator.

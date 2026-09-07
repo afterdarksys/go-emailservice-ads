@@ -19,6 +19,7 @@ def request(port, name, args, user='qa@mail.test', password='qa-new-password'):
 
 
 def qualify(jmap_port, imap_port, tls):
+    thread_checkpoint = thread_checks()['qualify'](request, jmap_port)
     method, initial = request(jmap_port, 'Email/get', {'ids': []})
     assert method == 'Email/get'
     with imaplib.IMAP4('localhost', imap_port, timeout=10) as client:
@@ -38,7 +39,7 @@ def qualify(jmap_port, imap_port, tls):
         method, foreign = request(jmap_port, 'Email/set', {'update': {mid: {'keywords/$seen': None}}}, 'probe@mail.test', 'isolated-test-password')
         assert method == 'Email/set' and foreign['notUpdated'][mid]['type'] == 'notFound', foreign
         client.close()
-    return {'id': mid, 'state': written['newState'], 'mailbox': qualify_mailboxes(jmap_port, imap_port, tls),
+    return {'threads': thread_checkpoint, 'id': mid, 'state': written['newState'], 'mailbox': qualify_mailboxes(jmap_port, imap_port, tls),
             'mutations': mutation_checks()['qualify'](request, jmap_port, imap_port, tls),
             'imports': import_checks()['qualify'](request, jmap_port, imap_port, tls),
             'scheduled': schedule_checks()['qualify'](request, jmap_port),
@@ -72,6 +73,7 @@ def import_checks():
 
 
 def restored(jmap_port, checkpoint):
+    thread_checks()['restored'](request, jmap_port, checkpoint['threads'])
     mime_checks()["restored"](request, jmap_port, checkpoint["mime"])
     workflow_checks()["restored"](request, jmap_port, checkpoint["workflows"])
     composition_checks()["restored"](request, jmap_port, checkpoint["composition"])
@@ -130,3 +132,7 @@ def qualify_mailboxes(port, imap_port, tls):
         client.starttls(ssl_context=tls); client.login('qa@mail.test', 'qa-new-password')
         assert client.rename('JMAPChild', 'JMAPRestored')[0] == 'OK'
     return {'id': child, 'state': boxes['state']}
+
+
+def thread_checks():
+    return runpy.run_path(str(pathlib.Path(__file__).with_name("jmap-threads.py")))

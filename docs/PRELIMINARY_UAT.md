@@ -76,3 +76,18 @@ email move/delete and keyword updates/object changes, and
 unsupported Sieve extensions. Production identity, DNS, storage and failover gates
 remain in [deployment qualification](DEPLOYMENT_QUALIFICATION.md). Any workflow
 the intended users require must enter scope before recording their acceptance.
+
+## Added workstream qualification
+
+The completion series adds unit/persistence/API tests for thread grouping and
+collapse, SSE state/reconnect/limits, LDAP failure/disablement, JWT audience/issuer,
+SCIM create/disable/delete/restart, DMARC XML/destination authorization, statistics
+scope/source selection and offline privacy isolation/hold preservation. The live
+release smoke also tests threaded imports, collapsed queries, SSE reconnect,
+thread ownership and restored thread membership. It tests rejected configuration reload and successful process
+replacement preserving an account while activating a new API key.
+
+Add client acceptance rows for JMAP thread presentation, collapsed navigation,
+push after a second-client change, and reconnect after configuration reload.
+Record actual LDAP/AD/broker/provisioning provider results separately. These rows
+remain pending; source tests and implementation are not human sign-off.

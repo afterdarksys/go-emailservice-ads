@@ -213,3 +213,23 @@ Mailbox payloads cannot be deleted through the generic message DELETE endpoint
 and queue-list routes accept GET/HEAD and reject other methods with 405. See
 [JMAP API](JMAP_API.md) for the separate optional protocol and
 [QA/UAT](QA_UAT.md) for executable REST acceptance checks.
+
+## Additional operational APIs
+
+| Method | Endpoint | Scope | Result |
+| --- | --- | --- | --- |
+| GET | `/api/v1/security/stats` | `security:read` | Active authentication/evaluation/listener statistics |
+| GET | `/api/v1/dns/stats` | `dns:read` | Per-listener MX/TXT resolver counters/cache state |
+| GET | `/api/v1/greylisting/stats` | `greylisting:read` | Per-listener enabled/triplet state |
+| GET | `/api/v1/dmarc/reports` | `dmarc:read` | Aggregate report inventory |
+| GET | `/api/v1/dmarc/reports/{id}` | `dmarc:read` | XML report |
+| POST | `/api/v1/dmarc/reports/send` | `dmarc:write` | 204 after pending closed-day reports are queued |
+| POST | `/api/v1/config/reload` | `config:write` | 202 accepted for validated graceful process replacement |
+| GET/POST | `/api/v1/scim/v2/Users` | `scim:read` / `scim:write` | SCIM Users list/create |
+| GET/PUT/PATCH/DELETE | `/api/v1/scim/v2/Users/{id}` | `scim:read` / `scim:write` | SCIM lifecycle |
+| GET | `/api/v1/scim/v2/ServiceProviderConfig` | `scim:read` | Supported provisioning profile |
+
+See [statistics](OPERATIONS_STATISTICS.md), [DMARC](DMARC_REPORTING.md),
+[reload](CONFIGURATION_RELOAD.md), and [enterprise identity](ENTERPRISE_IDENTITY.md)
+for validation/errors and supported subsets. Personal-data operations use the
+[offline privacy tool](PERSONAL_DATA.md), not an unaudited HTTP delete-all endpoint.

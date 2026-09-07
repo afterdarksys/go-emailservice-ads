@@ -22,7 +22,7 @@ availability; follow with isolated startup and deployment qualification.
 | Mail users | `auth.default_users` seeds missing users; persistent/API changes survive restart and are not overwritten by bootstrap values |
 | Policies | `platform.policy_path` seeds `data_dir/policies.yaml`; API changes or policy reload update the managed policy file/set |
 | TLS certificate/key content | Reloaded on new handshakes at configured paths; use atomic paired replacements |
-| General YAML settings | Controlled restart required, including aliases, transports, bounce/compliance rules, key scope entries and OAuth configuration |
+| General YAML settings | SIGHUP or POST `/api/v1/config/reload` validates and performs graceful process replacement; clients reconnect |
 
 Use [credential rotation](CREDENTIAL_ROTATION.md) for key/certificate overlap.
 Policies reload separately; POST `/api/v1/policies/reload` does not reload the
@@ -282,3 +282,7 @@ compliance evidence, logs and already-created backups are separate retention
 scopes and are not deleted by these controls. Do not delete checkpoints manually
 while a source message can still retry. Choose retention with your backup and
 privacy schedule; restoring an old backup restores its then-current records.
+
+Enterprise auth: [LDAP/AD, SAML broker and SCIM](ENTERPRISE_IDENTITY.md).
+Full reload: [configuration lifecycle](CONFIGURATION_RELOAD.md).
+Set `platform.dmarc_reporting: true` for [DMARC aggregate reports](DMARC_REPORTING.md).
