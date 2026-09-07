@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
 	"io"
 	"mime"
 	"net/http"
@@ -367,6 +369,25 @@ func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blob := parts[1]
+	if strings.HasPrefix(blob, "upload-") {
+		store, ok := j.store.(mailstate.ImportStore)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		uploaded, err := store.GetBlob(r.Context(), authUserFromContext(r.Context()), blob)
+		if errors.Is(err, mailstate.ErrBlobNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Blob storage unavailable", 503)
+			return
+		}
+		writeBlobDownload(w, r, uploaded.Data, uploaded.MediaType)
+		return
+	}
+
 	id := blob
 	partNumber := 0
 	if pos := strings.LastIndex(blob, ".part."); pos >= 0 {
@@ -424,8 +445,29 @@ func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	writeBlobDownload(w, r, data, contentType)
+}
+
+func writeBlobDownload(w http.ResponseWriter, r *http.Request, data []byte, contentType string) {
+	requested := r.URL.Query().Get("type")
+	if requested == "" {
+		requested = r.URL.Query().Get("accept")
+	}
+	if requested != "" {
+		kind, params, err := mime.ParseMediaType(requested)
+		if err != nil {
+			http.Error(w, "Invalid download type", 400)
+			return
+		}
+		contentType = mime.FormatMediaType(kind, params)
+	}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/jmap/download/"), "/", 3)
+	name := "download"
+	if len(parts) == 3 && parts[2] != "" {
+		name = parts[2]
+	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Write(data)

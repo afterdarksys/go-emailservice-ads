@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
+	"time"
 )
 
 var ErrStateMismatch = errors.New("stateMismatch")
@@ -73,4 +74,33 @@ type EmailSetResult struct {
 }
 type EmailMutator interface {
 	SetEmails(context.Context, string, string, map[string]EmailPatch, []string) (EmailSetResult, error)
+}
+
+const MaxUploadBytes = 10 * 1024 * 1024
+
+var ErrBlobNotFound = errors.New("blobNotFound")
+var ErrUploadQuota = errors.New("uploadQuota")
+
+type Blob struct {
+	ID, MediaType string
+	Data          []byte
+}
+type EmailImport struct {
+	BlobID, MailboxID string
+	Flags             []string
+	ReceivedAt        time.Time
+}
+type ImportedEmail struct {
+	ID   string
+	Size int
+}
+type ImportResult struct {
+	OldState, NewState string
+	Created            map[string]ImportedEmail
+	NotCreated         map[string]string
+}
+type ImportStore interface {
+	UploadBlob(context.Context, string, string, []byte) (Blob, error)
+	GetBlob(context.Context, string, string) (Blob, error)
+	ImportEmails(context.Context, string, string, map[string]EmailImport) (ImportResult, error)
 }

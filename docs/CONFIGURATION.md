@@ -223,3 +223,12 @@ are not wired into the standard executable. General `directory.base_url`, dynami
 listener/map/tenant REST administration, and SMTP OAuth cannot be inferred from
 older guides or similarly named source packages. Use the [API reference](API_REFERENCE.md)
 and [backlog](../TODO) for supported operations and explicit remaining work.
+
+### JMAP upload/import capacity
+
+JMAP upload limits are currently fixed: 10 MiB per file, four combined uploads/API
+requests, and 20 temporary blobs or 100 MiB per account. Uploads expire after
+24 hours; capacity pressure evicts the oldest first. This temporary SQLite storage
+is separate from `platform.mailbox_quota_bytes`, which applies when Email/import
+creates mail. Include temporary blob space in disk/backup sizing. See
+[JMAP API](JMAP_API.md#upload-and-import) for workflow and troubleshooting.

@@ -1,4 +1,4 @@
-# JMAP API: mailbox management and email mutations
+# JMAP API: mailbox management, import and email mutations
 
 The optional JMAP listener uses its configured address. Put it behind a trusted
 TLS terminator as described in CONFIGURATION.md. Authentication accepts shared
@@ -25,7 +25,76 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | GET download URL | Owner-scoped raw message or decoded MIME part; another account gets 404. |
 | Mailbox/set | Create, rename/reparent, subscribe/unsubscribe, sort order and empty-mailbox deletion; conditional state checks and per-object errors. |
 | Mailbox/changes | Durable, account-scoped created/updated/destroyed mailbox IDs, including count and IMAP changes. |
-| Upload | HTTP 501. |
+| POST upload URL | Owner-scoped temporary blobs, bounded size/storage, expiry and authenticated download. |
+| Email/import | Create messages from uploaded blobs or owned raw email blobs, with mailbox, keywords, receivedAt and conditional state. |
+
+## Upload and import
+
+Discover uploadUrl and downloadUrl from the session. POST the raw file bytes to
+`/jmap/upload/primary/` with mail-account authentication and Content-Type (for
+example message/rfc822). A successful upload returns HTTP 201 with accountId,
+blobId, type and size. Uploading alone does not create an email or advance either
+change feed. Downloads require the same authenticated owner, use the supplied
+filename/media type, and are served as attachments with no-store/nosniff headers.
+
+Limits are fixed in this version: 10 MiB per upload, four concurrent uploads/API
+requests per server, and at most 20 temporary blobs or 100 MiB per account.
+Temporary uploads expire after 24 hours. To stay within the storage limits,
+new uploads evict the owner's oldest temporary blobs first, potentially before
+24 hours. Retain the source file until import succeeds so it can be reuploaded.
+Imported messages use independent durable payload IDs and survive upload expiry.
+
+Pass the returned blobId to Email/import. Each import requires exactly one
+owned mailbox ID and accepts keywords (default empty) and receivedAt as a UTC
+RFC3339 string ending in Z. If receivedAt is omitted, the importer uses the date
+in the first Received header when parseable, otherwise the import time.
+
+```json
+["Email/import", {
+  "accountId": "primary",
+  "ifInState": "STATE_FROM_EMAIL_GET",
+  "emails": {
+    "message": {
+      "blobId": "UPLOADED_BLOB_ID",
+      "mailboxIds": {"DESTINATION_ID": true},
+      "keywords": {"$seen": true},
+      "receivedAt": "2020-01-02T00:00:00Z"
+    }
+  }
+}, "import"]
+```
+
+created maps each successful creation key to id, blobId, threadId and size.
+The importer preserves raw MIME bytes, including UTF-8 headers and attachments.
+Duplicate content is allowed and creates independent emails, so retrying after
+an uncertain response can create a duplicate. Use ifInState and reconcile
+Email/changes before retrying. Existing owned raw email blob IDs can also be
+imported; MIME-part blob import and Email/set creation from structured body
+properties remain unsupported.
+
+Each import is atomic: mailbox metadata, UID allocation and both change feeds
+commit together. Failed metadata writes discard orphan payloads; startup recovery
+handles interrupted cleanup. Successful imports generate IMAP arrival updates.
+Temporary upload storage is separate from platform.mailbox_quota_bytes, which
+is enforced when importing. Uploaded blobs reside in mailbox.db and are included
+in backup/restore; account for up to 100 MiB per uploading account when sizing
+SQLite and backups. Expired rows are reclaimed at startup and on successful
+uploads; SQLite can reuse freed pages without shrinking the database file.
+
+Troubleshooting:
+
+- HTTP 413: upload exceeds the advertised 10 MiB limit.
+- HTTP 429: concurrent request limit; retry with backoff.
+- HTTP 503: upload storage failure; check disk space, permissions and service logs.
+- invalidProperties: missing/expired/evicted/foreign blob, invalid mailbox ID,
+  unsupported property, keyword or date. Reupload lost temporary blobs.
+- invalidEmail: raw message lacks readable headers or contains NUL bytes.
+- tooManyMailboxes: more than one mailbox requested.
+- overQuota: mailbox byte quota or destination UID capacity exhausted.
+- stateMismatch: refresh email state before retrying; no imports were performed.
+
+This import route creates mailbox mail; it does not submit outbound messages.
+Use SMTP for sending until JMAP submission is implemented.
 
 ## Mailbox management
 
@@ -183,8 +252,8 @@ unsupportedFilter. Email/query still reports canCalculateChanges=false:
 Email/queryChanges is not implemented. Email/changes is an object change feed,
 not incremental query membership or ordering.
 
-Email creation/import, upload, thread
+Structured Email/set creation, thread
 grouping, submission and push remain unimplemented. Use SMTP/IMAP for these
 supported mail workflows. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
-scripts/jmap-sync.py and scripts/jmap-email-mutations.py (invoked by verify-release.sh) for automated coverage.
+scripts/jmap-sync.py, scripts/jmap-email-mutations.py and scripts/jmap-import.py (invoked by verify-release.sh) for automated coverage.
