@@ -2,7 +2,7 @@ package imap
 
 import (
 	"context"
-	"github.com/emersion/go-imap/server"
+	"github.com/afterdarksys/go-emailservice-ads/internal/imapserver"
 )
 
 // go-imap's backend FETCH interface does not carry the selected read-only state.

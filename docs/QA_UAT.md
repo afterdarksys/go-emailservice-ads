@@ -3,6 +3,8 @@
 Updated 2026-09-06. Run against an isolated, single-owner instance with synthetic
 accounts. Record the commit, configuration, client version and results for each
 acceptance run. Do not use a production data directory for automated tests.
+Use the [preliminary acceptance record](PRELIMINARY_UAT.md) to retain candidate
+evidence and record the named-client sign-off.
 
 ## Automated release gate
 
@@ -27,6 +29,7 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Policy management | Create, test and delete return the documented results. |
 | IMAP folders | CREATE, subscriptions, metadata APPEND, COPY, hierarchical RENAME and DELETE persist. |
 | IMAP protocol responses | SELECT supplies counts/UIDVALIDITY; STORE supplies changed FLAGS; EXPUNGE supplies the removed sequence number. |
+| Multiple IMAP sessions | Three sessions receive append counts, both IDLE observers receive flag changes, silent STORE suppresses the writer's echo, and both observers receive EXPUNGE. A second account with the same folder name receives no notifications or messages. |
 | Bulk message reading | A single FETCH of 260 unread messages completes and marks every message Seen without overflowing notification delivery. |
 | Message reading | BODY.PEEK and EXAMINE preserve unread state; BODY in a writable selection sets Seen. |
 | Search | Header, decoded body, wildcard UID and sent-date criteria select matching messages. |
@@ -46,6 +49,14 @@ those messages. Record any timeout or unexpected protocol response as a defect.
 Run SMTP send/reply with your target external provider and confirm headers and
 folder placement. Automated Python protocol checks do not establish acceptance in
 every desktop/mobile client.
+
+The automated multi-session check is `scripts/imap-multisession.py`, invoked by
+the release smoke test. It covers one writer and two observers, including IDLE,
+against the durable mailbox store. It also exercises two concurrent APPEND/STORE
+writers and a dropped IDLE observer followed by full UID resynchronization.
+Slow-client stress, concurrent body downloads with mutations and named
+desktop/mobile applications still require qualification. Do not treat this
+protocol regression as a passing client matrix.
 
 ## Sieve configuration and failure diagnosis
 
