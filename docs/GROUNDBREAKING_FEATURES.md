@@ -1,5 +1,9 @@
 # Ground-Breaking Features - go-emailservice-ads
 
+> Historical feature narrative; implementation and production-readiness claims below
+> are not current qualification evidence. Use [JMAP API](JMAP_API.md) for supported protocol operations and
+> [QA/UAT](QA_UAT.md) for acceptance boundaries.
+
 This document describes the cutting-edge, innovative features implemented in go-emailservice-ads that set it apart from traditional email systems like Postfix and Sendmail.
 
 ## Table of Contents

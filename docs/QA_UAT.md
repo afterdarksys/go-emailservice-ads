@@ -91,7 +91,7 @@ text, not RFC 5322 headers. Flags and the selected folder persist together.
 
 The optional JMAP listener supports reads, keyword updates, mailbox management and durable
 Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Other email mutations,
-mailbox/query synchronization and broader Sieve extensions remain open work.
+query synchronization and broader Sieve extensions remain open work.
 
 Production OAuth, public DNS/signing, external scanner behavior, Object Lock and
 provider fencing require the actual deployment dependencies. Execute

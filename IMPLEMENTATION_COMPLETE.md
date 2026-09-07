@@ -1,5 +1,9 @@
 # Implementation Complete - 100% Production Ready Email System
 
+> Historical feature narrative; implementation and production-readiness claims below
+> are not current qualification evidence. Use [JMAP API](docs/JMAP_API.md) for supported protocol operations and
+> [QA/UAT](docs/QA_UAT.md) for acceptance boundaries.
+
 **Date**: March 8, 2026
 **Status**: ✅ **PRODUCTION READY**
 **Version**: 1.0.0
