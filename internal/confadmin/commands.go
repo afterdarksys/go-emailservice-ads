@@ -66,13 +66,17 @@ func documentCommand(op string, platform bool, configPath *string) *cobra.Comman
 		if e != nil {
 			return e
 		}
-		n, e := Parse(path, old)
-		if e != nil {
-			return e
-		}
-		if op == "show" {
-			cmd.Print(string(Redacted(n)))
-			return nil
+		// An editor must be able to repair malformed input; validation still
+		// applies to the completed candidate before any replacement.
+		if op != "edit" {
+			n, err := Parse(path, old)
+			if err != nil {
+				return err
+			}
+			if op == "show" {
+				cmd.Print(string(Redacted(n)))
+				return nil
+			}
 		}
 		var next []byte
 		switch op {

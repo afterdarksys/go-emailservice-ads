@@ -72,8 +72,8 @@ Views redact recognized secret fields, credential-bearing URLs and YAML comments
 This is best-effort masking: custom fields and database payloads may still contain
 personal or sensitive data. Do not publish output without review. Backups and editor
 temporary files contain the original secrets and use mode 0600. Formatting requires
-valid input; syntax errors need correction through an editor before they can be
-validated. Changes to runtime policy files must also meet their own application
+valid input; `config edit` / `file edit` can open malformed input, but only a valid
+completed candidate can be saved. Changes to runtime policy files must also meet their own application
 schema; generic JSON/YAML validation cannot establish that.
 
 `doctor` checks config/TLS and SQLite files under `platform.data_dir`, with a

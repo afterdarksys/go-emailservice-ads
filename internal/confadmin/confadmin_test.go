@@ -275,3 +275,48 @@ func TestRelayOutcomesNeverSendData(t *testing.T) {
 		})
 	}
 }
+
+func TestEditorRepairsMalformedConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	broken := "server: [\n"
+	put(t, path, broken)
+	candidate := filepath.Join(dir, "candidate")
+	put(t, candidate, config.DefaultDocument)
+	t.Setenv("GEMSADS_TEST_REPAIRED_CONFIG", candidate)
+	editor := filepath.Join(dir, "editor")
+	put(t, editor, "#!/bin/sh\ncp \"$GEMSADS_TEST_REPAIRED_CONFIG\" \"$1\"\n")
+	if e := os.Chmod(editor, 0700); e != nil {
+		t.Fatal(e)
+	}
+	run := func() error {
+		cmd := NewCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"--config", path, "config", "edit", "--editor", editor, "--apply"})
+		return cmd.Execute()
+	}
+	if e := run(); e != nil {
+		t.Fatal(e)
+	}
+	if e := ValidateConfig(path, false); e != nil {
+		t.Fatal(e)
+	}
+	saved, _ := Read(path)
+	put(t, candidate, broken)
+	if e := run(); e == nil {
+		t.Fatal("invalid edited candidate accepted")
+	}
+	after, _ := Read(path)
+	if !bytes.Equal(saved, after) {
+		t.Fatal("invalid candidate replaced working config")
+	}
+	backups, e := filepath.Glob(path + ".bak.*")
+	if e != nil || len(backups) != 1 {
+		t.Fatal(backups, e)
+	}
+	original, _ := Read(backups[0])
+	if string(original) != broken {
+		t.Fatal("repair did not preserve original")
+	}
+}
