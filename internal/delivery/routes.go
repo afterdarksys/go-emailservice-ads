@@ -36,13 +36,13 @@ func ValidateRoutes(routes []Route) error {
 	seen := map[string]bool{}
 	for _, r := range routes {
 		d := strings.ToLower(r.Domain)
-		if d == "" || strings.ContainsAny(d, " /\r\n@") || seen[d+"|"+strings.ToLower(r.SenderDomain)] || len(r.NextHops) == 0 {
+		if d == "" || d == "*." || strings.ContainsAny(d, " /\r\n@") || seen[d+"|"+strings.ToLower(r.SenderDomain)] || len(r.NextHops) == 0 {
 			return fmt.Errorf("invalid or duplicate transport domain %q", r.Domain)
 		}
 		if strings.Contains(d, "*") && d != "*" && (!strings.HasPrefix(d, "*.") || strings.Contains(d[2:], "*")) {
 			return fmt.Errorf("invalid wildcard transport %q", d)
 		}
-		if r.SenderDomain != "" && (strings.ContainsAny(r.SenderDomain, " /\r\n@*") || r.Priority < 0) {
+		if r.Priority < 0 || strings.ContainsAny(r.SenderDomain, " /\r\n@*") {
 			return fmt.Errorf("invalid sender transport selector")
 		}
 		seen[d+"|"+strings.ToLower(r.SenderDomain)] = true

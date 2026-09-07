@@ -26,17 +26,17 @@ func TestGuardRuntimeOwnershipLoss(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "check")
 	proof := `{"volume":"/srv/mailhub","primary":true,"up_to_date":true,"quorum":true,"mounted":true}`
-	if e := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' '"+proof+"'\n"), 0700); e != nil {
+	if e := os.WriteFile(script, []byte(proof), 0700); e != nil {
 		t.Fatal(e)
 	}
-	g, e := New(Config{Enabled: true, Volume: "/srv/mailhub", CheckCommand: []string{script}})
+	g, e := New(Config{Enabled: true, Volume: "/srv/mailhub", CheckCommand: []string{"/bin/cat", script}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = g.Check(context.Background()); e != nil {
 		t.Fatal(e)
 	}
-	os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0700)
+	os.WriteFile(script, []byte("invalid proof"), 0600)
 	if e = g.Check(context.Background()); e == nil || g.Status().Safe {
 		t.Fatal("ownership loss ignored")
 	}

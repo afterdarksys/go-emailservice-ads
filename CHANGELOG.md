@@ -508,3 +508,12 @@ kubectl apply -f deploy/kubernetes/internal/
 - **Documentation**: See `/docs` and architecture markdown files
 - **Issues**: https://github.com/afterdarksys/go-emailservice-ads/issues
 - **Kubernetes Guide**: `deploy/kubernetes/README.md`
+
+## Extensions, administration and HA follow-up
+
+- Opt-in TLS gRPC management and web administration console.
+- Durable signed management webhooks and versioned external admission plugins.
+- Sender-domain and recipient-suffix transport selection.
+- Replicated-volume active/passive ownership guard and DRBD quorum checker.
+- Port 587 authenticated TLS submission defaults without shared bootstrap users;
+  relay/listener validation and migration-safe configuration reload.

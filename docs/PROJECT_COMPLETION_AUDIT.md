@@ -19,8 +19,7 @@ for the preceding package/race/build checks.
 The series follows the 12-commit plan plus two review-fix commits, within the
 requested 8–14 commits. Review fixes serialize account lifecycle writes, protect
 replacement accounts from stale SCIM deletes, preserve late DMARC observations,
-and invalidate old thread-related synchronization state once on upgrade. The
-Identity exports include persisted timestamps, metadata and entitlement notes. The
+and invalidate old thread-related synchronization state once on upgrade. Identity exports include persisted timestamps, metadata and entitlement notes. The
 privacy tool is packaged in the container and checked by the container CI job.
 
 ## Work that is still incomplete
@@ -74,3 +73,17 @@ Report: `/tmp/mailhub-completion-candidate.json`; log:
 use `/tmp/mailhub-completion-final14.json` and `/tmp/mailhub-completion-final14.log`
 and verify their revision/clean-tree fields against the final commit. CI status
 is authoritative for the eventual PR. Desktop/mobile UAT remains not performed.
+
+## Extensions and HA follow-up
+
+The follow-up implements TLS gRPC transport, a web administration console,
+durable signed management webhooks, external admission plugins, advanced
+transport selectors and DRBD replicated-volume ownership checks. See
+EXTENSIONS_ADMINISTRATION.md, HIGH_AVAILABILITY.md and CONFIGURATION_SAFETY.md.
+The current TODO has **14 open items**: eleven production qualification tasks,
+desktop/mobile sign-off, active-active ownership and advanced filtering scope.
+Earlier counts above describe the preceding series. Active/passive requires
+actual replicated devices, quorum witness and provider fencing qualification;
+active-active ownership has not been claimed. No real cluster or human client
+sign-off has been performed. The final follow-up release gate and PR checks must
+pass before merge; use their exact revision when recording qualification.
