@@ -129,7 +129,7 @@ func (j *JMAPServer) rememberSubmissions(ctx context.Context, user string, list 
 	if s, ok := j.store.(mailstate.SnapshotStore); ok && len(list) <= 10000 {
 		ids := []string{}
 		for _, r := range list {
-			ids = append(ids, r.ID)
+			ids = append(ids, receiptVersion(r))
 		}
 		if err := s.SaveSnapshot(ctx, user, "receipts", "", state, ids); err != nil {
 			return "", err
@@ -181,50 +181,54 @@ func (j *JMAPServer) submissionChanges(ctx context.Context, user string, args ma
 	if len(list) > 10000 {
 		return methodError("cannotCalculateChanges", id)
 	}
-	before, after := map[string]bool{}, map[string]bool{}
+	before, after := map[string]string{}, map[string]string{}
 	for _, v := range old {
-		before[v] = true
+		id, _, _ := strings.Cut(v, "\x00")
+		before[id] = v
 	}
 	for _, v := range list {
-		after[v.ID] = true
+		after[v.ID] = receiptVersion(v)
 	}
-	created, removed := []string{}, []string{}
+	created, removed, updated := []string{}, []string{}, []string{}
 	for _, v := range list {
-		if !before[v.ID] {
+		if previous, exists := before[v.ID]; !exists {
 			created = append(created, v.ID)
+		} else if previous != after[v.ID] {
+			updated = append(updated, v.ID)
 		}
 	}
-	for _, v := range old {
-		if !after[v] {
-			removed = append(removed, v)
+	for id := range before {
+		if _, exists := after[id]; !exists {
+			removed = append(removed, id)
 		}
 	}
-	more := len(created)+len(removed) > limit
+	sort.Strings(removed)
+	more := len(created)+len(removed)+len(updated) > limit
 	if more {
-		if len(removed) > limit {
-			removed = removed[:limit]
-			created = []string{}
-		} else {
-			created = created[:limit-len(removed)]
+		removed = removed[:min(len(removed), limit)]
+		left := limit - len(removed)
+		created = created[:min(len(created), left)]
+		left -= len(created)
+		updated = updated[:min(len(updated), left)]
+		for _, id := range removed {
+			delete(before, id)
 		}
-		for _, v := range removed {
-			delete(before, v)
+		for _, id := range append(append([]string{}, created...), updated...) {
+			before[id] = after[id]
 		}
-		for _, v := range created {
-			before[v] = true
+		versions := []string{}
+		for _, v := range before {
+			versions = append(versions, v)
 		}
-		ids := []string{}
-		for v := range before {
-			ids = append(ids, v)
-		}
-		sort.Strings(ids)
-		b, _ := json.Marshal([]interface{}{user, ids})
-		state = fmt.Sprintf("sp1:%x", sha256.Sum256(b))
-		if err = s.SaveSnapshot(ctx, user, "receipts", "", state, ids); err != nil {
+		sort.Strings(versions)
+		b, _ := json.Marshal([]interface{}{user, versions})
+		state = fmt.Sprintf("sp2:%x", sha256.Sum256(b))
+		if err = s.SaveSnapshot(ctx, user, "receipts", "", state, versions); err != nil {
 			return methodError("serverFail", id)
 		}
 	}
-	return MethodResponse{Name: "EmailSubmission/changes", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": since, "newState": state, "hasMoreChanges": more, "created": created, "updated": []string{}, "destroyed": removed}}
+	return MethodResponse{Name: "EmailSubmission/changes", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": since, "newState": state, "hasMoreChanges": more, "created": created, "updated": updated, "destroyed": removed}}
+
 }
 
 func (j *JMAPServer) submissionQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
@@ -382,4 +386,9 @@ func (j *JMAPServer) submissionQuery(ctx context.Context, user string, args map[
 		return methodError(kind, id)
 	}
 	return MethodResponse{Name: "EmailSubmission/query", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": can, "position": position, "ids": ids[start:end], "total": total}}
+}
+
+func receiptVersion(s mailstate.Submission) string {
+	b, _ := json.Marshal(s)
+	return fmt.Sprintf("%s\x00%x", s.ID, sha256.Sum256(b))
 }

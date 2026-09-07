@@ -113,3 +113,37 @@ func TestJMAPSubmitHonorsRejectAndDurableDiscard(t *testing.T) {
 		t.Fatal(records, err)
 	}
 }
+
+func TestScheduledSubmissionUsesAdmissionAndCanCancel(t *testing.T) {
+	q, store := newPersistenceTestQueue(t)
+	q.intQ = make(chan *Message, 4)
+	v := auth.NewValidator(zap.NewNop())
+	if err := v.GetUserStore().AddUser("alice", "test-password-123", "alice@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Server.Domain = "hub.example.test"
+	cfg.Server.MaxMessageBytes = 1024
+	srv := NewServerWithValidator(cfg, zap.NewNop(), q, nil, v)
+	ctx := context.Background()
+	sub, err := srv.SubmitAt(ctx, "alice", "127.0.0.1", "draft", "alice@example.test", []string{"bob@remote.test"}, []byte("From: alice@example.test\r\nBcc: bob@remote.test\r\n\r\nbody"), time.Now().Add(time.Hour))
+	if err != nil || sub.UndoStatus != "pending" {
+		t.Fatal(sub, err)
+	}
+	if len(q.intQ) != 0 || len(store.ListByStatus("scheduled", "")) != 1 {
+		t.Fatal("scheduled message dispatched early")
+	}
+	if err = srv.DestroySubmission(ctx, "alice", sub.ID); err == nil {
+		t.Fatal("deleted pending receipt")
+	}
+	if err = srv.CancelSubmission(ctx, "alice", sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.ListByStatus("scheduled", "")) != 0 {
+		t.Fatal("cancellation retained active payload")
+	}
+	records, err := srv.Submissions(ctx, "alice")
+	if err != nil || len(records) != 1 || records[0].UndoStatus != "canceled" {
+		t.Fatal(records, err)
+	}
+}

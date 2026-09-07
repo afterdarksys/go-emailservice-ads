@@ -51,6 +51,7 @@ const (
 
 // Message is a placeholder for the parsed email data and metadata
 type Message struct {
+	SendAt              time.Time
 	ExtraReceipts       []*storage.JournalEntry `json:"-"`
 	SubmissionReceipt   *storage.JournalEntry   `json:"-"`
 	DSNMail             smtp.MailOptions
@@ -759,6 +760,9 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	if msg.ID == "" {
 		msg.ID = uuid.NewString()
 	}
+	if !msg.SendAt.IsZero() && len(qm.platform.Compliance.Evaluate(msg.From, msg.To)) > 0 {
+		return fmt.Errorf("delayed submission conflicts with compliance custody rules")
+	}
 	held, err := qm.applyCompliance(msg)
 	if err != nil {
 		return fmt.Errorf("compliance preservation failed: %w", err)
@@ -810,9 +814,24 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 		Metadata:  map[string]string{"message": string(encoded), "client_ip": msg.ClientIP},
 	}
 
-	if msg.Quarantine {
-		entry.Status = "held"
+	if msg.SubmissionReceipt != nil && msg.SubmissionReceipt.Tier == "jmap_submission" {
+		msg.SubmissionReceipt.Metadata["queue_id"] = msg.ID
+		entry.Metadata["receipt_id"] = msg.SubmissionReceipt.MessageID
+		if !msg.SendAt.IsZero() {
+			entry.Status = "scheduled"
+		}
 	}
+	if msg.Quarantine {
+		if entry.Status == "scheduled" {
+			entry.Metadata["after_schedule"] = "held"
+		} else {
+			entry.Status = "held"
+			if err := finalizeReceipt(msg); err != nil {
+				return err
+			}
+		}
+	}
+
 	messageID, isDuplicate, err := qm.store.StoreWithReceipt(entry, append(msg.ExtraReceipts, msg.SubmissionReceipt)...)
 	if err != nil {
 		return fmt.Errorf("failed to store message: %w", err)
@@ -832,7 +851,7 @@ func (qm *QueueManager) Enqueue(msg *Message) error {
 	// Publish enqueued event to Elasticsearch
 	qm.publishEvent(elasticsearch.EventEnqueued, msg, nil)
 
-	if msg.Quarantine {
+	if msg.Quarantine || entry.Status == "scheduled" {
 		return nil
 	}
 	if ok, err := qm.store.Transition(msg.ID, "pending", "queued"); err != nil || !ok {
@@ -1139,6 +1158,11 @@ func (qm *QueueManager) ConfigurePlatform(cfg *config.Config, users *auth.UserSt
 			case <-qm.ctx.Done():
 				return
 			case <-ticker.C:
+				if count, err := qm.store.ExpireWorkflowRecords(time.Now(), time.Duration(cfg.Platform.SubmissionRetentionDays)*24*time.Hour, time.Duration(cfg.Platform.SieveRetentionDays)*24*time.Hour); err != nil {
+					qm.logger.Error("Workflow retention failed", zap.Error(err))
+				} else if count > 0 {
+					qm.logger.Info("Expired workflow records", zap.Int("count", count))
+				}
 				if err := qm.store.Compact(time.Duration(cfg.Platform.QuarantineRetentionDays) * 24 * time.Hour); err != nil {
 					qm.logger.Error("Storage compaction failed", zap.Error(err))
 				}

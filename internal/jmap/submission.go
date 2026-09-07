@@ -10,7 +10,9 @@ import (
 	"net/mail"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
 	"github.com/emersion/go-smtp"
@@ -220,6 +222,7 @@ func (j *JMAPServer) createSubmission(ctx context.Context, user string, v interf
 	if err != nil || len(froms) != 1 || !strings.EqualFold(froms[0].Address, identity) {
 		return fail("forbiddenFrom")
 	}
+	var scheduled time.Time
 	from := identity
 	to := []string{}
 	if v := obj["envelope"]; v != nil {
@@ -232,7 +235,44 @@ func (j *JMAPServer) createSubmission(ctx context.Context, user string, v interf
 				return fail("invalidProperties")
 			}
 		}
-		from, ok = envelopeAddress(envelope["mailFrom"])
+		sender, valid := envelope["mailFrom"].(map[string]interface{})
+		if !valid {
+			return fail("invalidProperties")
+		}
+		clean := map[string]interface{}{}
+		for k, v := range sender {
+			clean[k] = v
+		}
+		if raw := sender["parameters"]; raw != nil {
+			params, ok := raw.(map[string]interface{})
+			if !ok || len(params) != 1 {
+				return fail("invalidProperties")
+			}
+			for key, value := range params {
+				text, ok := value.(string)
+				if !ok {
+					return fail("invalidProperties")
+				}
+				switch strings.ToUpper(key) {
+				case "HOLDFOR":
+					seconds, err := strconv.ParseUint(text, 10, 32)
+					if err != nil || seconds > uint64(mailstate.MaxDelayedSend/time.Second) {
+						return fail("invalidProperties")
+					}
+					scheduled = time.Now().Add(time.Duration(seconds) * time.Second)
+				case "HOLDUNTIL":
+					var err error
+					scheduled, err = time.Parse("20060102T150405Z", text)
+					if err != nil || scheduled.After(time.Now().Add(mailstate.MaxDelayedSend)) {
+						return fail("invalidProperties")
+					}
+				default:
+					return fail("invalidProperties")
+				}
+			}
+			delete(clean, "parameters")
+		}
+		from, ok = envelopeAddress(clean)
 		if !ok {
 			return fail("invalidProperties")
 		}
@@ -283,7 +323,16 @@ func (j *JMAPServer) createSubmission(ctx context.Context, user string, v interf
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
-	result, err := j.submitter.Submit(ctx, user, ip, mid, from, to, blob.Data)
+	var result mailstate.Submission
+	if !scheduled.IsZero() {
+		scheduler, ok := j.submitter.(mailstate.ScheduledSubmitter)
+		if !ok {
+			return fail("forbiddenToSend")
+		}
+		result, err = scheduler.SubmitAt(ctx, user, ip, mid, from, to, blob.Data, scheduled)
+	} else {
+		result, err = j.submitter.Submit(ctx, user, ip, mid, from, to, blob.Data)
+	}
 	if err != nil {
 		var smtpErr *smtp.SMTPError
 		if errors.As(err, &smtpErr) && smtpErr.Code >= 500 {
@@ -391,10 +440,26 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 	for _, s := range list {
 		owned[s.ID] = s.EmailID
 	}
-	for key := range update {
+	updated := map[string]interface{}{}
+	for key, patch := range update {
 		kind := "notFound"
 		if owned[key] != "" {
-			kind = "cannotUnsend"
+			kind = "invalidProperties"
+			fields, ok := patch.(map[string]interface{})
+			if ok && len(fields) == 1 && fields["undoStatus"] == "canceled" {
+				kind = "cannotUnsend"
+				if manager, ok := j.submitter.(mailstate.ScheduledSubmitter); ok {
+					err := manager.CancelSubmission(ctx, user, key)
+					if err == nil {
+						updated[key] = nil
+						successful[key] = owned[key]
+						continue
+					}
+					if !errors.Is(err, mailstate.ErrCannotUnsend) {
+						kind = "serverFail"
+					}
+				}
+			}
 		}
 		nu[key] = map[string]interface{}{"type": kind}
 	}
@@ -410,6 +475,9 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 			if manager, ok := j.submitter.(mailstate.SubmissionManager); ok {
 				if err := manager.DestroySubmission(ctx, user, key); err != nil {
 					kind = "serverFail"
+					if errors.Is(err, mailstate.ErrCannotUnsend) {
+						kind = "forbidden"
+					}
 				} else {
 					destroyed = append(destroyed, key)
 					removed[key] = true
@@ -423,6 +491,9 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 	remaining := []mailstate.Submission{}
 	for _, r := range list {
 		if !removed[r.ID] {
+			if _, ok := updated[r.ID]; ok {
+				r.UndoStatus = "canceled"
+			}
 			remaining = append(remaining, r)
 		}
 	}
@@ -433,7 +504,7 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 		j.logger.Warn("Submission history checkpoint failed after committed mutation", zap.Error(err))
 	}
 
-	response := MethodResponse{Name: "EmailSubmission/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": old, "newState": newState, "created": created, "notCreated": nc, "updated": map[string]interface{}{}, "notUpdated": nu, "destroyed": destroyed, "notDestroyed": nd}}
+	response := MethodResponse{Name: "EmailSubmission/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": old, "newState": newState, "created": created, "notCreated": nc, "updated": updated, "notUpdated": nu, "destroyed": destroyed, "notDestroyed": nd}}
 
 	if args["onSuccessUpdateEmail"] != nil || args["onSuccessDestroyEmail"] != nil {
 		updates := map[string]interface{}{}

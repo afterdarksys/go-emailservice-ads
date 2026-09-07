@@ -27,6 +27,8 @@ type PlatformConfig struct {
 	ReputationDatabaseEnv      string                  `yaml:"reputation_database_env"`
 	RecipientDirectoryURL      string                  `yaml:"recipient_directory_url"`
 	RecipientDirectoryTokenEnv string                  `yaml:"recipient_directory_token_env"`
+	SubmissionRetentionDays    int                     `yaml:"submission_retention_days"`
+	SieveRetentionDays         int                     `yaml:"sieve_retention_days"`
 	QuarantineRetentionDays    int                     `yaml:"quarantine_retention_days"`
 	ARC                        bool                    `yaml:"arc"`
 	MTASTS                     bool                    `yaml:"mta_sts"`
@@ -105,6 +107,9 @@ func (c *Config) validatePlatform() error {
 	p.DataDir = filepath.Clean(p.DataDir)
 	if c.Auth.UserDatabaseURL == "" {
 		c.Auth.UserDatabaseURL = filepath.Join(p.DataDir, "users.db")
+	}
+	if p.SubmissionRetentionDays < 0 || p.SubmissionRetentionDays > 36500 || p.SieveRetentionDays < 0 || p.SieveRetentionDays > 36500 {
+		return fmt.Errorf("workflow retention days must be between 0 and 36500")
 	}
 	if p.QuarantineRetentionDays < 0 {
 		return fmt.Errorf("quarantine retention must not be negative")

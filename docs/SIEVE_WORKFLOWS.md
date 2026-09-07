@@ -89,7 +89,9 @@ still gets its own normal mailbox delivery during the suppression interval.
   copies or accepted forwards.
 - History growth: Sieve plans and completed-action records are durable journal
   metadata. They are excluded from pending-message quota, but consume disk and
-  backup capacity. Automatic plan/checkpoint expiry is not implemented. Retained
+  backup capacity. Opt-in platform.sieve_retention_days expires completed journal
+  plans/checkpoints hourly while protecting live sources, unexpired intervals and
+  legacy records without provenance (see CONFIGURATION.md). Retained
   plans may contain addresses, folder names and vacation text; include them in
   deployment retention/access controls. Never remove live retry checkpoints.
 

@@ -237,19 +237,48 @@ Structured Email/set creation also enforces a 10 MiB encoded-email and aggregate
 prepared-MIME limit per method. MIME creation/readback supports at most 128 nodes
 and 16 nesting levels; MIME reads also cap raw/decoded data at 64 MiB. These
 limits are fixed. Part blobs require ownership of the active source email; copied
-parts become independent bytes in the destination. The main executable enables immediate JMAP
+parts become independent bytes in the destination. The main executable enables immediate and delayed JMAP
 submission through the first submission-role SMTP backend, or the first SMTP
 backend when no such role is configured. Existing server message/recipient limits,
 sender quotas, policies, scanners and queue configuration apply. Keep JMAP behind
 trusted TLS termination; per-IP message limits see the proxy address. Submission
-receipts are durable journal metadata with no automatic expiry and do not consume
+receipts are durable journal metadata with opt-in expiry and do not consume
 pending-message quota. Plan disk/backup capacity for their growth. See
 [submission semantics and troubleshooting](JMAP_API.md#submission-and-acceptance-receipts).
 
 JMAP query/receipt synchronization retains 64 recent snapshots per account and
 snapshot kind in mailbox.db, with at most 10,000 IDs per snapshot. Receipt deletion
-is explicit through EmailSubmission/set; automatic expiry is not configured.
+is available through EmailSubmission/set; pending receipts must be canceled first.
 Sieve redirect/vacation/multiple-action checkpoints live in the journal and also
 survive restore. They do not count as pending mail, but require disk/backup capacity
 and retention planning. See [Sieve workflows](SIEVE_WORKFLOWS.md) for script paths,
 live replacement, suppression and retry behavior.
+
+### Workflow record retention
+
+```yaml
+platform:
+  submission_retention_days: 30
+  sieve_retention_days: 30
+```
+
+Both controls default to 0 (disabled), accept 0–36500 days, and require restart.
+The hourly maintenance loop journals expiry before normal compaction reclaims
+retired records. Age is measured from record creation, so an old protected record
+may expire at the next pass after its protection ends. Errors are logged as
+`Workflow retention failed`; successful removals log `Expired workflow records`
+with a count. A compaction failure can delay physical space reclamation.
+
+Submission retention removes only final/canceled receipts whose linked queue
+record is absent. Pending sends and any linked pending, queued, processing,
+scheduled, held or failed record are protected. Receipt expiry does not delete a
+mailbox email or cancel delivery; retained JMAP snapshots expose destroyed IDs.
+
+Sieve retention removes execution plans and per-message effect checkpoints only
+when their source queue record is absent. Vacation interval records additionally
+must be expired. Legacy records without source IDs or interpretable expiry remain
+retained; automatic cleanup cannot prove them safe. Mailbox metadata/tombstones,
+compliance evidence, logs and already-created backups are separate retention
+scopes and are not deleted by these controls. Do not delete checkpoints manually
+while a source message can still retry. Choose retention with your backup and
+privacy schedule; restoring an old backup restores its then-current records.

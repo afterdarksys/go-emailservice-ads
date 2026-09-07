@@ -88,6 +88,11 @@ func (rs *RetryScheduler) retryLoop() {
 
 // processRetries finds and retries eligible messages
 func (rs *RetryScheduler) processRetries() {
+	for _, entry := range rs.store.ListByStatus("scheduled", "") {
+		if _, err := rs.store.FinishScheduled(entry.Metadata["receipt_id"], "", false, time.Now()); err != nil {
+			rs.logger.Error("Scheduled release failed", zap.String("id", entry.MessageID), zap.Error(err))
+		}
+	}
 	pending := fairPending(rs.store.ListPending(""))
 
 	for _, entry := range pending {
@@ -124,7 +129,7 @@ func (rs *RetryScheduler) processRetries() {
 			base = entry.CreatedAt
 		}
 		nextRetry := rs.calculateNextRetry(entry.Attempts, base)
-		if time.Now().Before(nextRetry) {
+		if time.Now().Before(nextRetry) && !(entry.Metadata["receipt_id"] != "" && entry.Attempts == 0) {
 			continue // Not ready for retry yet
 		}
 
