@@ -11,12 +11,17 @@ import (
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
+	"github.com/emersion/go-smtp"
 	"github.com/google/uuid"
 )
 
 // Submit accepts an already authenticated mailbox identity, applying the same
 // envelope, policy, rate, scanner and durable queue path as SMTP submission.
 func (server *Server) Submit(ctx context.Context, user, ip, emailID, from string, to []string, data []byte) (mailstate.Submission, error) {
+	return server.SubmitAt(ctx, user, ip, emailID, from, to, data, time.Time{})
+}
+
+func (server *Server) SubmitAt(ctx context.Context, user, ip, emailID, from string, to []string, data []byte, at time.Time) (mailstate.Submission, error) {
 	out := mailstate.Submission{}
 	b := server.backend
 	if b == nil || b.qManager == nil {
@@ -43,6 +48,9 @@ func (server *Server) Submit(ctx context.Context, user, ip, emailID, from string
 	if len(to) == 0 {
 		return out, fmt.Errorf("no recipients")
 	}
+	if at.After(time.Now()) && len(b.qManager.platform.Compliance.Evaluate(from, to)) > 0 {
+		return out, &smtp.SMTPError{Code: 550, Message: "Delayed submission conflicts with compliance custody rules"}
+	}
 	session := &Session{logger: b.logger, qManager: b.qManager, validator: b.validator, dirClient: b.dirClient, policyEngine: b.policyEngine, dkimVerifier: b.dkimVerifier, policyManager: b.policyManager, spreadPrev: b.spreadPrev, ip: ip, ehlo: b.config.Server.Domain, authenticated: true, username: user, config: b.config, messageRates: b.messageRates}
 	if err = session.Mail(from, nil); err != nil {
 		return out, err
@@ -59,13 +67,31 @@ func (server *Server) Submit(ctx context.Context, user, ip, emailID, from string
 		recipients = append(recipients, map[string]interface{}{"email": address})
 	}
 	out = mailstate.Submission{ID: uuid.NewString(), EmailID: emailID, IdentityID: "primary", ThreadID: emailID, SendAt: time.Now().UTC().Format(time.RFC3339), UndoStatus: "final", Envelope: map[string]interface{}{"mailFrom": map[string]interface{}{"email": from}, "rcptTo": recipients}}
+	if !at.IsZero() {
+		if at.After(time.Now().Add(mailstate.MaxDelayedSend)) {
+			return out, fmt.Errorf("delay exceeds maximum")
+		}
+		if at.After(time.Now()) {
+			rounded := at.UTC().Truncate(time.Second)
+			if rounded.Before(at) {
+				rounded = rounded.Add(time.Second)
+			}
+			out.SendAt = rounded.Format(time.RFC3339)
+			out.UndoStatus = "pending"
+			session.msg.SendAt = at
+		}
+	}
 	encoded, err := json.Marshal(out)
 	if err != nil {
 		return out, err
 	}
 	session.msg.SubmissionReceipt = &storage.JournalEntry{MessageID: "jmap-submission-" + out.ID, Tier: "jmap_submission", Status: "jmap_submission", CreatedAt: time.Now(), Metadata: map[string]string{"username": user, "submission": string(encoded)}}
+	receipt := session.msg.SubmissionReceipt
 	// Bcc belongs to the private envelope, never the delivered message headers.
 	if err = session.Data(bytes.NewReader(removeHeader(data, "Bcc"))); err != nil {
+		return mailstate.Submission{}, err
+	}
+	if err = json.Unmarshal([]byte(receipt.Metadata["submission"]), &out); err != nil {
 		return mailstate.Submission{}, err
 	}
 	return out, nil
@@ -97,6 +123,9 @@ func (qm *QueueManager) persistSubmissionReceipt(msg *Message) error {
 	if msg.SubmissionReceipt == nil {
 		return nil
 	}
+	if err := finalizeReceipt(msg); err != nil {
+		return err
+	}
 	_, _, err := qm.store.StoreWithReceipt(msg.SubmissionReceipt, msg.ExtraReceipts...)
 	return err
 }
@@ -111,5 +140,37 @@ func (server *Server) DestroySubmission(ctx context.Context, user, id string) er
 	if err != nil || entry.Tier != "jmap_submission" || entry.Metadata["username"] != user {
 		return mailstate.ErrBlobNotFound
 	}
+	var sub mailstate.Submission
+	if err := json.Unmarshal([]byte(entry.Metadata["submission"]), &sub); err != nil {
+		return err
+	}
+	if sub.UndoStatus == "pending" {
+		return mailstate.ErrCannotUnsend
+	}
 	return store.UpdateStatus(entry.MessageID, "delivered", "")
+}
+
+func finalizeReceipt(msg *Message) error {
+	if msg.SubmissionReceipt == nil || msg.SubmissionReceipt.Tier != "jmap_submission" {
+		return nil
+	}
+	var sub mailstate.Submission
+	if err := json.Unmarshal([]byte(msg.SubmissionReceipt.Metadata["submission"]), &sub); err != nil {
+		return err
+	}
+	sub.UndoStatus = "final"
+	sub.SendAt = time.Now().UTC().Format(time.RFC3339)
+	data, err := json.Marshal(sub)
+	if err != nil {
+		return err
+	}
+	msg.SubmissionReceipt.Metadata["submission"] = string(data)
+	return nil
+}
+func (server *Server) CancelSubmission(ctx context.Context, user, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := server.backend.qManager.store.FinishScheduled("jmap-submission-"+id, user, true, time.Now())
+	return err
 }

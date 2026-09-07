@@ -49,9 +49,9 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Implement documented Sieve gaps: redirect, vacation, copy and multiple delivery actions with durable execution plans, retry checkpoints, loop limits and vacation suppression across restore.
 - [x] Add Email/query and EmailSubmission/query anchors, signed offsets and negative positions, with filtered/owner-scoped lookup and unchanged query snapshots across pages.
 - [x] Add bounded JMAP bodyStructure composition/readback, inline CID parts and owner-scoped MIME-part blob reuse, with independent copied bytes and restored-service qualification.
-- [ ] Add JMAP submission cancellation/delay.
+- [x] Add bounded JMAP delayed submission and atomic cancellation, with durable pending/final/canceled receipt changes and restored pending-send qualification.
 - [ ] Add JMAP thread collapsing and push.
-- [ ] Add automated receipt/Sieve-checkpoint retention if required. See docs/QA_UAT.md.
+- [x] Add opt-in automatic receipt/Sieve journal checkpoint retention, protecting pending sends, live retry sources and unexpired vacation intervals. Legacy unlinked checkpoints and mailbox tombstones remain retained. See docs/CONFIGURATION.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.

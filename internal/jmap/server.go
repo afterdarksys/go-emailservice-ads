@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 
 	"os"
 	"sort"
@@ -265,6 +266,9 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		session.Capabilities["urn:ietf:params:jmap:submission"] = map[string]interface{}{}
 		session.PrimaryAccounts["urn:ietf:params:jmap:submission"] = "primary"
 		session.Accounts["primary"].AccountCapabilities["urn:ietf:params:jmap:submission"] = map[string]interface{}{"maxDelayedSend": 0, "submissionExtensions": map[string]interface{}{}}
+		if _, ok := j.submitter.(mailstate.ScheduledSubmitter); ok {
+			session.Accounts["primary"].AccountCapabilities["urn:ietf:params:jmap:submission"] = map[string]interface{}{"maxDelayedSend": int(mailstate.MaxDelayedSend / time.Second), "submissionExtensions": map[string]interface{}{"FUTURERELEASE": []string{strconv.Itoa(int(mailstate.MaxDelayedSend / time.Second)), time.Now().Add(mailstate.MaxDelayedSend).UTC().Format("20060102T150405Z")}}}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(session)

@@ -41,9 +41,14 @@ def qualify(jmap_port, imap_port, tls):
     return {'id': mid, 'state': written['newState'], 'mailbox': qualify_mailboxes(jmap_port, imap_port, tls),
             'mutations': mutation_checks()['qualify'](request, jmap_port, imap_port, tls),
             'imports': import_checks()['qualify'](request, jmap_port, imap_port, tls),
+            'scheduled': schedule_checks()['qualify'](request, jmap_port),
             'composition': composition_checks()['qualify'](request, jmap_port, imap_port, tls),
             'workflows': workflow_checks()['qualify'](request, jmap_port),
             'mime': mime_checks()['qualify'](request, jmap_port)}
+
+
+def schedule_checks():
+    return runpy.run_path(str(pathlib.Path(__file__).with_name("jmap-scheduled.py")))
 
 
 def mime_checks():
@@ -82,6 +87,7 @@ def restored(jmap_port, checkpoint):
     assert method == 'Email/changes' and checkpoint['id'] in changes['updated'], changes
     method, result = request(jmap_port, 'Email/get', {'ids': [checkpoint['id']]})
     assert method == 'Email/get' and result['list'][0]['keywords'].get('$seen') and result['list'][0]['keywords'].get('$flagged'), result
+    schedule_checks()["restored"](request, jmap_port, checkpoint["scheduled"])
 
 
 def qualify_mailboxes(port, imap_port, tls):

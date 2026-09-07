@@ -250,8 +250,9 @@ acceptance can succeed while filing fails, and retrying the send would duplicate
 
 Without these arguments, the source email is unchanged. A malformed hook argument
 fails before sending; an unsupported email patch is reported by the implicit
-Email/set after acceptance. Delayed send and cancellation remain unsupported;
-updates to existing receipts return cannotUnsend. Identity mutation is unsupported.
+Email/set after acceptance. Success hooks run on accepted creation, including
+scheduled creation, and successful cancellation/deletion; they do not wait for
+actual delivery. Identity mutation remains unsupported. See delayed sending below.
 
 Destroying an owned receipt through EmailSubmission/set removes the receipt only.
 It neither cancels its independently queued mail nor deletes its source email,
@@ -262,8 +263,10 @@ use EmailSubmission/query pagination to find IDs in larger accounts.
 Receipts survive delivery, compaction, restart and backup restore and remain
 owner-scoped even after the email is deleted. They contain envelope addresses and
 email/identity IDs, but no MIME body. They consume disk, not pending-message quota.
-Automatic receipt expiry is not implemented; use explicit receipt deletion and include growth and retained
-metadata in capacity and retention planning. After an uncertain response, inspect
+Automatic expiry is opt-in through platform.submission_retention_days; zero
+retains indefinitely. Pending receipts and receipts linked to active queue records
+are protected. Explicit deletion of pending receipts is forbidden: cancel first.
+Include retained metadata in capacity and retention planning. After an uncertain response, inspect
 receipts and refresh state before retrying: an explicit retry with fresh state
 creates another send. There is no retry idempotency key.
 
@@ -279,6 +282,55 @@ Submission troubleshooting:
   and scanner logs. Temporary admission or persistence failures return serverFail.
 - Receipt exists but no mail arrives: inspect queue, quarantine, compliance hold,
   policy discard, routing and recipient Sieve. A receipt is not delivery status.
+
+## Delayed sending and cancellation
+
+The built-in submission backend advertises maxDelayedSend=2592000 (30 days) and
+FUTURERELEASE in its account submissionExtensions. Supply HOLDFOR (seconds as a
+string) or HOLDUNTIL (UTC `YYYYMMDDTHHMMSSZ`) in envelope.mailFrom.parameters.
+Exactly one parameter is supported; the visible From and envelope sender still
+must match Identity/get. A past release time sends immediately. sendAt is a
+server-set response property, not a writable scheduling argument.
+
+```json
+["EmailSubmission/set", {"create": {"later": {
+  "emailId": "DRAFT_EMAIL_ID", "identityId": "primary",
+  "envelope": {
+    "mailFrom": {"email": "you@example.test", "parameters": {"HOLDFOR": "300"}},
+    "rcptTo": [{"email": "recipient@example.test"}]
+  }
+}}}, "schedule"]
+```
+
+The accepted copy and its pending receipt commit together and survive restart,
+backup restore, and deletion of the source draft. Scheduling consumes spool quota.
+The retry scheduler checks every 30 seconds and releases due mail to normal
+delivery; it never releases before sendAt. Actual delivery can be later because
+of backpressure, scanner/policy decisions or recipient outages. Quarantined mail
+remains held after release. Delayed submissions matching compliance custody rules
+are rejected before custody side effects; use immediate submission for those
+routes. Admission checks/scanning run when the submission is accepted.
+
+Cancel a pending submission with:
+
+```json
+["EmailSubmission/set", {"update": {
+  "SUBMISSION_ID": {"undoStatus": "canceled"}
+}}, "cancel"]
+```
+
+Cancellation and release use one serialized durable transition. Successful
+cancellation removes the active delivery payload and preserves a canceled receipt;
+repeating cancellation is safe. Once released, cancellation returns cannotUnsend.
+Deleting a pending receipt returns forbidden, preserving its cancellation handle.
+After a successful cancellation, deletion removes only the receipt. Original
+journal/tier bytes are reclaimed by compaction, not necessarily at cancellation.
+
+EmailSubmission/changes reports updated IDs for pending/final/canceled transitions
+and destroyed IDs for receipt expiry/deletion. Retained query snapshots also track
+membership changes for undoStatus filters. Refresh state before retrying a stale
+mutation. Pre-upgrade snapshots may conservatively report existing receipts as
+updated. Existing snapshot limits and cannotCalculateChanges recovery still apply.
 
 ## Query pagination and troubleshooting
 
@@ -494,7 +546,7 @@ hasMoreChanges is true. Receipt states are recorded by get/query/set. Deleting
 receipts does not remove earlier membership snapshots; those age out under the
 same 64-snapshot bound. This is synchronization history, not an audit log.
 
-Arbitrary-header composition, deferred/cancellable submission, thread grouping and push remain
+Arbitrary-header composition, thread grouping and push remain
 unimplemented. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
 scripts/jmap-sync.py, scripts/jmap-email-mutations.py, scripts/jmap-import.py and

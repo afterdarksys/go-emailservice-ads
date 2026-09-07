@@ -139,3 +139,12 @@ type SnapshotStore interface {
 	SaveSnapshot(context.Context, string, string, string, string, []string) error
 	LoadSnapshot(context.Context, string, string, string, string) ([]string, error)
 }
+
+const MaxDelayedSend = 30 * 24 * time.Hour
+
+var ErrCannotUnsend = errors.New("cannotUnsend")
+
+type ScheduledSubmitter interface {
+	SubmitAt(context.Context, string, string, string, string, []string, []byte, time.Time) (Submission, error)
+	CancelSubmission(context.Context, string, string) error
+}
