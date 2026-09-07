@@ -58,7 +58,7 @@ func TestEmailGetDoesNotReturnAnotherUsersMessage(t *testing.T) {
 func TestHandleJMAPAPIRejectsTooManyMethodCalls(t *testing.T) {
 	calls := make([]MethodCall, maxJMAPCalls+1)
 	for i := range calls {
-		calls[i] = MethodCall{Name: "unknown", ID: "call"}
+		calls[i] = MethodCall{Name: "unknown", Arguments: map[string]interface{}{}, ID: "call"}
 	}
 	body, err := json.Marshal(Request{MethodCalls: calls})
 	if err != nil {

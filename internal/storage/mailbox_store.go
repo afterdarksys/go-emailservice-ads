@@ -45,6 +45,10 @@ func NewMailboxStore(adapter *IMAPAdapter, dbPath string) (*MailboxStore, error)
 		db.Close()
 		return nil, err
 	}
+	if err := initEmailSync(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize email synchronization: %w", err)
+	}
 
 	s := &MailboxStore{
 		adapter:    adapter,

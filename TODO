@@ -39,7 +39,9 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Cancel notification waits after logout; add concurrent APPEND/STORE and abrupt-IDLE reconnect regressions, live evidence reports and a preliminary UAT sign-off template.
 - [x] Implement transactional IMAP MOVE/UID MOVE, preserve metadata without extra quota usage, reject read-only moves, notify source/destination sessions and verify restored moved mail.
 - [ ] Execute the named desktop/mobile client acceptance rows in docs/PRELIMINARY_UAT.md and record candidate evidence and operator sign-off.
-- [ ] Qualify named desktop/mobile clients; implement writable JMAP, incremental synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
+- [x] Implement JMAP keyword updates with conditional state checks and durable paginated Email/changes, including SMTP/IMAP changes, bounded history and restored-service regressions.
+- [x] Correct JMAP method-call/response wire encoding to standard invocation arrays and include the real HTTP endpoint in release qualification.
+- [ ] Complete remaining JMAP writes (mailboxes, email create/import/destroy/move, upload/submission), mailbox/query synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.
