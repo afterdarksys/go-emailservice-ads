@@ -124,6 +124,11 @@ func (s *MessageStore) recover() error {
 // blobs may be introduced below this layer, but matching message bytes do not
 // make separate SMTP transactions duplicates.
 func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
+	return s.StoreWithReceipt(entry, nil)
+}
+
+// StoreWithReceipt journals queue acceptance and its receipt in one record batch.
+func (s *MessageStore) StoreWithReceipt(entry, receipt *JournalEntry) (string, bool, error) {
 	if entry.MessageID == "" {
 		entry.MessageID = uuid.NewString()
 	}
@@ -148,20 +153,38 @@ func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
 		s.indexMu.Unlock()
 		return "", false, err
 	}
-	if entry.Tier != "mailbox" && entry.Tier != "emergency" {
+	if entry.Tier != "mailbox" && entry.Tier != "emergency" && entry.Tier != "jmap_submission" {
 		if err := s.capacity(int64(len(entry.Data))); err != nil {
 			s.indexMu.Unlock()
 			return "", false, err
 		}
 	}
-	// Store in journal first (WAL pattern)
-	if err := s.journal.Write(entry); err != nil {
+	if receipt != nil {
+		if receipt.MessageID == "" || receipt.MessageID == entry.MessageID {
+			s.indexMu.Unlock()
+			return "", false, fmt.Errorf("invalid receipt ID")
+		}
+		if _, ok := s.index[receipt.MessageID]; ok {
+			s.indexMu.Unlock()
+			return "", false, fmt.Errorf("receipt already exists")
+		}
+	}
+	var err error
+	if receipt == nil {
+		err = s.journal.Write(entry)
+	} else {
+		err = s.journal.WriteBatch(entry, receipt)
+	}
+	if err != nil {
 		s.indexMu.Unlock()
 		return "", false, fmt.Errorf("failed to journal message: %w", err)
 	}
 
 	// Update in-memory index
 	s.index[entry.MessageID] = cloneEntry(entry)
+	if receipt != nil {
+		s.index[receipt.MessageID] = cloneEntry(receipt)
+	}
 	s.indexMu.Unlock()
 
 	// Write to tier-specific storage file for efficient recovery

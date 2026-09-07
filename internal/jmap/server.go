@@ -17,6 +17,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -46,6 +47,8 @@ type MailStore interface {
 
 // JMAPServer implements a JMAP server
 type JMAPServer struct {
+	submitter    mailstate.Submitter
+	submissionMu sync.Mutex
 	logger       *zap.Logger
 	config       *config.Config
 	validator    *auth.Validator
@@ -258,6 +261,11 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		EventSourceUrl: "",
 	}
 
+	if j.submitter != nil {
+		session.Capabilities["urn:ietf:params:jmap:submission"] = map[string]interface{}{}
+		session.PrimaryAccounts["urn:ietf:params:jmap:submission"] = "primary"
+		session.Accounts["primary"].AccountCapabilities["urn:ietf:params:jmap:submission"] = map[string]interface{}{"maxDelayedSend": 0, "submissionExtensions": map[string]interface{}{}}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(session)
 }
@@ -305,7 +313,8 @@ func (j *JMAPServer) handleJMAPAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process request scoped to the authenticated account.
-	resp := j.processRequest(r.Context(), &req)
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	resp := j.processRequest(context.WithValue(r.Context(), submissionIPKey{}, ip), &req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -323,12 +332,27 @@ func (j *JMAPServer) processRequest(ctx context.Context, req *Request) *Response
 
 	authUser := authUserFromContext(ctx)
 
+	ids := map[string]string{}
+	for key, id := range req.CreatedIds {
+		ids[key] = id
+	}
+	ctx = context.WithValue(ctx, creationIDsKey{}, ids)
 	// Process each method call
 	for _, call := range req.MethodCalls {
 		methodResp := j.processMethodCall(ctx, authUser, call)
 		resp.MethodResponses = append(resp.MethodResponses, methodResp)
+		if created, ok := methodResp.Arguments["created"].(map[string]interface{}); ok {
+			for key, v := range created {
+				if obj, ok := v.(map[string]interface{}); ok {
+					if id, ok := obj["id"].(string); ok {
+						ids[key] = id
+					}
+				}
+			}
+		}
 	}
 
+	resp.CreatedIds = ids
 	return resp
 }
 
@@ -357,6 +381,12 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return j.mailboxSet(ctx, authUser, args, callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
+	case "Identity/get":
+		return j.identityGet(ctx, authUser, args, callID)
+	case "EmailSubmission/get":
+		return j.submissionGet(ctx, authUser, args, callID)
+	case "EmailSubmission/set":
+		return j.submissionSet(ctx, authUser, args, callID)
 	case "Email/import":
 		return j.emailImport(ctx, authUser, args, callID)
 	case "Email/set":
@@ -606,3 +636,5 @@ type MethodResponse struct {
 	Arguments map[string]interface{} `json:"1"`
 	CallID    string                 `json:"2"`
 }
+
+func (j *JMAPServer) SetSubmitter(s mailstate.Submitter) { j.submitter = s }

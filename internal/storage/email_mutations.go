@@ -108,9 +108,12 @@ func setEmail(ctx context.Context, tx *sql.Tx, user, id string, p mailstate.Emai
 // SetEmails checks state under the common writer lock. Savepoints keep every
 // email's combined move/keyword change atomic while permitting partial success.
 func (s *MailboxStore) SetEmails(ctx context.Context, user, since string, patches map[string]mailstate.EmailPatch, destroy []string) (mailstate.EmailSetResult, error) {
+	return s.SetEmailsWithCreates(ctx, user, since, nil, patches, destroy)
+}
+func (s *MailboxStore) SetEmailsWithCreates(ctx context.Context, user, since string, create map[string]mailstate.EmailCreation, patches map[string]mailstate.EmailPatch, destroy []string) (mailstate.EmailSetResult, error) {
 	s.deliveryMu.Lock()
 	defer s.deliveryMu.Unlock()
-	out := mailstate.EmailSetResult{Updated: []string{}, Destroyed: []string{}, NotUpdated: map[string]string{}, NotDestroyed: map[string]string{}}
+	out := mailstate.EmailSetResult{Created: map[string]mailstate.ImportedEmail{}, NotCreated: map[string]string{}, Updated: []string{}, Destroyed: []string{}, NotUpdated: map[string]string{}, NotDestroyed: map[string]string{}}
 	if err := s.ensureUser(ctx, user); err != nil {
 		return out, err
 	}
@@ -129,6 +132,55 @@ func (s *MailboxStore) SetEmails(ctx context.Context, user, since string, patche
 	out.OldState = stateToken(prefix, rev)
 	if since != "" && since != out.OldState {
 		return out, mailstate.ErrStateMismatch
+	}
+
+	payloads := []string{}
+	committed := false
+	discard := func(id string) {
+		if id != "" {
+			if e := s.adapter.discardMessage(id); e != nil {
+				s.adapter.store.logger.Warn("Deferred JMAP creation cleanup", zap.Error(e))
+			}
+		}
+	}
+	defer func() {
+		if !committed {
+			for _, id := range payloads {
+				discard(id)
+			}
+		}
+	}()
+	createdFolders := map[string]bool{}
+	creationKeys := []string{}
+	for key := range create {
+		creationKeys = append(creationKeys, key)
+	}
+	sort.Strings(creationKeys)
+	for _, key := range creationKeys {
+		p := create[key]
+		if _, err = tx.ExecContext(ctx, `SAVEPOINT create_email`); err != nil {
+			return out, err
+		}
+		created, folder, kind, e := s.importData(ctx, tx, user, mailstate.EmailImport{MailboxID: p.MailboxID, Flags: p.Flags, ReceivedAt: p.ReceivedAt}, p.Data)
+		if created.ID != "" {
+			payloads = append(payloads, created.ID)
+		}
+		if e != nil {
+			kind = "serverFail"
+		}
+		if kind != "" {
+			if _, err = tx.ExecContext(ctx, `ROLLBACK TO create_email`); err != nil {
+				return out, err
+			}
+			discard(created.ID)
+			out.NotCreated[key] = kind
+		} else {
+			out.Created[key] = created
+			createdFolders[folder] = true
+		}
+		if _, err = tx.ExecContext(ctx, `RELEASE create_email`); err != nil {
+			return out, err
+		}
 	}
 	// Capture original sequence numbers before any removal, including cross moves.
 	before := map[string][]string{}
@@ -208,7 +260,8 @@ func (s *MailboxStore) SetEmails(ctx context.Context, user, since string, patche
 	if err = tx.Commit(); err != nil {
 		return out, err
 	}
-	removed, arrivals := map[string]bool{}, map[string]bool{}
+	committed = true
+	removed, arrivals := map[string]bool{}, createdFolders
 	for _, n := range notices {
 		if n.destroy || n.source != n.dest {
 			removed[n.id] = true

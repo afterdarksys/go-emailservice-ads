@@ -31,6 +31,7 @@ import (
 
 // Server wraps the emersion/go-smtp server configuration
 type Server struct {
+	backend    *Backend
 	smtpServer *smtp.Server
 	config     *config.Config
 	logger     *zap.Logger
@@ -150,7 +151,7 @@ func NewServerWithValidator(cfg *config.Config, logger *zap.Logger, qm *QueueMan
 	}
 
 	return &Server{
-		smtpServer:   s,
+		backend: be, smtpServer: s,
 		config:       cfg,
 		logger:       logger,
 		qManager:     qm,
@@ -913,6 +914,9 @@ func (s *Session) Data(r io.Reader) error {
 					s.logger.Info("Policy discarded message",
 						zap.String("from", s.msg.From))
 					// Silently discard - return success but don't queue
+					if err := s.qManager.persistSubmissionReceipt(s.msg); err != nil {
+						return &smtp.SMTPError{Code: 451, Message: "Cannot persist submission acceptance"}
+					}
 					s.msg = nil
 					return nil
 
