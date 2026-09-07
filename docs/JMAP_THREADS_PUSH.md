@@ -40,3 +40,13 @@ streams per account and 64 per server; excess connections receive 429 and
 Retry-After. Disabled accounts and expired Bearer tokens close on the next check.
 Slow writes time out after ten seconds; shutdown closes streams. This is direct
 SSE push, not third-party PushSubscription delivery.
+
+## Upgrade synchronization
+
+On the first upgrade from one-email-per-thread behavior, the mailbox database
+rotates Email and Mailbox synchronization epochs once and invalidates old Email
+query snapshots. Clients must fetch fresh object state when changes returns
+cannotCalculateChanges. This is necessary because existing emails gain grouped
+thread IDs and folder thread counts change. Subsequent restarts/restores of the
+migrated database preserve those epochs. Historic submission receipts keep their
+original immutable IDs; they are not rewritten by this migration.

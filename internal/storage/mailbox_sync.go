@@ -78,7 +78,11 @@ END;
 CREATE TRIGGER IF NOT EXISTS mailbox_count_delete AFTER DELETE ON message_flags WHEN OLD.expunged=0 BEGIN
  INSERT INTO mailbox_events(username,msg_id,kind) SELECT username,jmap_id,'updated' FROM mailbox_catalog WHERE username=OLD.username AND mailbox=OLD.mailbox AND jmap_id!='';
 END;
-UPDATE mailbox_catalog SET jmap_id=lower(hex(randomblob(16))),jmap_role=CASE WHEN mailbox IN ('INBOX','Sent','Drafts','Trash','Junk') THEN lower(mailbox) ELSE '' END WHERE jmap_id='';`)
+UPDATE mailbox_catalog SET jmap_id=lower(hex(randomblob(16))),jmap_role=CASE WHEN mailbox IN ('INBOX','Sent','Drafts','Trash','Junk') THEN lower(mailbox) ELSE '' END WHERE jmap_id='';
+UPDATE email_sync SET epoch=lower(hex(randomblob(16))) WHERE NOT EXISTS(SELECT 1 FROM email_sync_meta WHERE key='thread-identity-v1');
+UPDATE mailbox_sync SET epoch=lower(hex(randomblob(16))) WHERE NOT EXISTS(SELECT 1 FROM email_sync_meta WHERE key='thread-identity-v1');
+DELETE FROM jmap_snapshots WHERE kind IN ('Email','Thread') AND NOT EXISTS(SELECT 1 FROM email_sync_meta WHERE key='thread-identity-v1');
+INSERT OR IGNORE INTO email_sync_meta(key) VALUES('thread-identity-v1');`)
 	if err != nil {
 		return err
 	}

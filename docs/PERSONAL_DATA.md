@@ -1,6 +1,8 @@
 # Personal-data export and deletion
 
-Build `go build ./cmd/mailhub-privacy`. Operations are offline and acquire the
+Build `go build ./cmd/mailhub-privacy`, or use the packaged
+`/usr/local/bin/mailhub-privacy` container entrypoint with the stopped service
+data/configuration volumes mounted. Operations are offline and acquire the
 same exclusive spool lock as mailhub; stop the service first. Use the deployment
 configuration so the correct mailbox and user databases are selected. Export
 files and deletion cases are created with mode 0600 and must not already exist.

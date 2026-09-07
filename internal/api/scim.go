@@ -246,7 +246,7 @@ func (s *Server) handleSCIM(w http.ResponseWriter, r *http.Request) {
 			scimError(w, 405, "", "User ID required")
 			return
 		}
-		if err := s.userStore.DeleteUser(existing.Username); err != nil {
+		if err := s.userStore.DeleteSCIM(id); err != nil {
 			scimError(w, 500, "", "Unable to delete account")
 			return
 		}

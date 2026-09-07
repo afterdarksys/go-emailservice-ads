@@ -201,7 +201,7 @@ def run(binary, backup):
                 except subprocess.TimeoutExpired:
                     process.kill();process.wait();raise RuntimeError('restored service shutdown timed out')
             assert process.returncode==0,process.returncode
-        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
+        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
@@ -213,7 +213,7 @@ if __name__=='__main__':
     if args.report:
         report = {
             'schema_version': 1,
-            'scope': 'isolated live SMTP/IMAP, JMAP composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
+            'scope': 'isolated live SMTP/IMAP, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
             'status': 'running',
             'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'binary_sha256': hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),

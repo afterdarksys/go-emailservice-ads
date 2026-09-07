@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net"
 	"net/mail"
@@ -62,6 +63,7 @@ type DMARCReason struct {
 	Comment string `xml:"comment,omitempty"`
 }
 type DMARCReport struct {
+	Sealed   bool     `xml:"-"`
 	XMLName  xml.Name `xml:"feedback" json:"-"`
 	Version  string   `xml:"version"`
 	Metadata struct {
@@ -104,19 +106,30 @@ func (t *DurableDMARCReports) Record(at time.Time, e DMARCEvaluation, ip, header
 	start := at.UTC().Truncate(24 * time.Hour)
 	policy, _ := json.Marshal([]interface{}{e.Published, e.RUA})
 	id := fmt.Sprintf("%s-%x", start.Format("20060102"), sha256.Sum256(policy))
-	path := filepath.Join(t.dir, id+".json")
-	r := DMARCReport{Version: "1.0", Published: e.Published, RUA: e.RUA, Sent: map[string]bool{}}
-	r.Metadata.Org = t.org
-	r.Metadata.Email = "postmaster@" + t.org
-	r.Metadata.ID = id
-	r.Metadata.Range.Begin = start.Unix()
-	r.Metadata.Range.End = start.Add(24*time.Hour - time.Second).Unix()
-	if raw, err := os.ReadFile(path); err == nil {
-		if err = json.Unmarshal(raw, &r); err != nil {
+	baseID := id
+	var path string
+	var r DMARCReport
+	for generation := 0; ; generation++ {
+		if generation > 0 {
+			id = fmt.Sprintf("%s-%d", baseID, generation)
+		}
+		path = filepath.Join(t.dir, id+".json")
+		r = DMARCReport{Version: "1.0", Published: e.Published, RUA: e.RUA, Sent: map[string]bool{}}
+		r.Metadata.Org = t.org
+		r.Metadata.Email = "postmaster@" + t.org
+		r.Metadata.ID = id
+		r.Metadata.Range.Begin = start.Unix()
+		r.Metadata.Range.End = start.Add(24*time.Hour - time.Second).Unix()
+		if raw, err := os.ReadFile(path); err == nil {
+			if err = json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
 			return err
 		}
-	} else if !os.IsNotExist(err) {
-		return err
+		if !r.Sealed && len(r.Sent) == 0 {
+			break
+		}
 	}
 	row := DMARCRow{}
 	row.Row.IP = ip
@@ -222,9 +235,27 @@ func (t *DurableDMARCReports) SendPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, r := range reports {
 		if r.Metadata.Range.End >= time.Now().Unix() {
 			continue
+		}
+		// Freeze the exact closed-day contents before sending. An observation that
+		// arrived late is written to a successor report instead of being overwritten
+		// by this report's destination acknowledgement.
+		t.mu.Lock()
+		path := filepath.Join(t.dir, r.Metadata.ID+".json")
+		raw, sealErr := os.ReadFile(path)
+		if sealErr == nil {
+			sealErr = json.Unmarshal(raw, &r)
+		}
+		if sealErr == nil && !r.Sealed {
+			r.Sealed = true
+			sealErr = atomicJSON(path, &r)
+		}
+		t.mu.Unlock()
+		if sealErr != nil {
+			return sealErr
 		}
 		for _, uri := range strings.Split(r.RUA, ",") {
 			if r.Sent[uri] {
@@ -235,7 +266,8 @@ func (t *DurableDMARCReports) SendPending(ctx context.Context) error {
 			}
 			address, err := t.AuthorizedDestination(ctx, r.Published.Domain, uri)
 			if err != nil {
-				return err
+				failures = append(failures, fmt.Errorf("report %s: %w", r.Metadata.ID, err))
+				continue
 			}
 			b, err := xml.MarshalIndent(r, "", "  ")
 			if err != nil {
@@ -245,7 +277,8 @@ func (t *DurableDMARCReports) SendPending(ctx context.Context) error {
 				return fmt.Errorf("DMARC sender unavailable")
 			}
 			if err = t.SendMail(ctx, address, r.Metadata.ID, append([]byte(xml.Header), b...)); err != nil {
-				return err
+				failures = append(failures, err)
+				continue
 			}
 			if r.Sent == nil {
 				r.Sent = map[string]bool{}
@@ -259,5 +292,5 @@ func (t *DurableDMARCReports) SendPending(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }

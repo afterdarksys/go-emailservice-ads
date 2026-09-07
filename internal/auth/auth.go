@@ -144,6 +144,11 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		return err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[username]; exists {
+		return ErrAccountConflict
+	}
 	user := &User{
 		Username:     username,
 		PasswordHash: string(hash),
@@ -164,9 +169,7 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		}
 	}
 
-	s.mu.Lock()
 	s.users[username] = user
-	s.mu.Unlock()
 	return nil
 }
 
@@ -469,7 +472,11 @@ func (s *UserStore) GetUser(username string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	user, exists := s.users[username]
-	return user, exists
+	if !exists {
+		return nil, false
+	}
+	copy := *user
+	return &copy, true
 }
 
 // ListUsers returns a snapshot of all users sorted by username. The returned
@@ -491,9 +498,9 @@ func (s *UserStore) ListUsers() []User {
 // The persisted copy is updated first so a failed write never leaves memory
 // and database out of sync in favor of the unsaved value.
 func (s *UserStore) UpdateEmail(username, email string) error {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	user, exists := s.users[username]
-	s.mu.RUnlock()
 	if !exists {
 		return ErrUserNotFound
 	}
@@ -513,9 +520,7 @@ func (s *UserStore) UpdateEmail(username, email string) error {
 		}
 	}
 
-	s.mu.Lock()
 	s.users[username] = &updated
-	s.mu.Unlock()
 	return nil
 }
 
@@ -524,9 +529,9 @@ func (s *UserStore) UpdateEmail(username, email string) error {
 // The database delete runs first so a failed persistence layer never leaves
 // a user deleted in memory but resurrected on the next restart.
 func (s *UserStore) DeleteUser(username string) error {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, exists := s.users[username]
-	s.mu.RUnlock()
 	if !exists {
 		return ErrUserNotFound
 	}
@@ -543,9 +548,7 @@ func (s *UserStore) DeleteUser(username string) error {
 		}
 	}
 
-	s.mu.Lock()
 	delete(s.users, username)
-	s.mu.Unlock()
 	return nil
 }
 

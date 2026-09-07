@@ -57,3 +57,49 @@ func TestDMARCAggregationRestartAndExternalAuthorization(t *testing.T) {
 		t.Fatal(sent, err)
 	}
 }
+
+func TestDMARCLateObservationAndIndependentDestinations(t *testing.T) {
+	r, err := NewDurableDMARCReports(t.TempDir(), "receiver.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := DMARCEvaluation{Published: DMARCPolicySnapshot{Domain: "sender.example"}, RUA: "mailto:bad@external.test,mailto:good@sender.example"}
+	at := time.Now().Add(-48 * time.Hour)
+	record := func() {
+		if err := r.Record(at, e, "192.0.2.1", "sender.example", "sender.example", "pass", "mfrom", "none", "", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record()
+	r.lookup = func(context.Context, string) ([]string, error) { return nil, nil }
+	calls := 0
+	r.SendMail = func(_ context.Context, to, id string, raw []byte) error {
+		calls++
+		if to != "good@sender.example" {
+			t.Fatal(to)
+		}
+		if calls == 1 {
+			record()
+		}
+		return nil
+	}
+	if err = r.SendPending(context.Background()); err == nil {
+		t.Fatal("missing external authorization failure")
+	}
+	if calls != 1 {
+		t.Fatal("one destination prevented another", calls)
+	}
+	reports, err := r.List()
+	if err != nil || len(reports) != 2 {
+		t.Fatal(reports, err)
+	}
+	count := int64(0)
+	for _, v := range reports {
+		for _, row := range v.Records {
+			count += row.Row.Count
+		}
+	}
+	if count != 2 {
+		t.Fatal("late event lost", count)
+	}
+}

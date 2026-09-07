@@ -72,3 +72,23 @@ func (r *UserRepository) SecureDeleteUser(ctx context.Context, user string) erro
 	}
 	return nil
 }
+
+// DeleteSCIM resolves the immutable identity under the write lock. A stale
+// request must never delete a newly created account reusing the same username.
+func (s *UserStore) DeleteSCIM(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name, u := range s.users {
+		if u.SCIMID == id && id != "" {
+			if s.repository == nil {
+				return errors.New("SCIM requires persistent user storage")
+			}
+			if err := s.repository.DeleteUser(context.Background(), name); err != nil {
+				return err
+			}
+			delete(s.users, name)
+			return nil
+		}
+	}
+	return ErrUserNotFound
+}

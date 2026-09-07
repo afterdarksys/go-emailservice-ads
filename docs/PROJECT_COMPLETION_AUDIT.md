@@ -16,8 +16,11 @@ unit, API, persistence and race checks accompany the features. The full release
 gate must pass for the final candidate; its live-stage JSON is not a substitute
 for the preceding package/race/build checks.
 
-The series follows the 12-commit plan. Additional verification fixes, if necessary,
-remain within the requested 8–14 commits. Commit authorship follows the existing repository configuration.
+The series follows the 12-commit plan plus one review-fix commit, within the
+requested 8–14 commits. Review fixes serialize account lifecycle writes, protect
+replacement accounts from stale SCIM deletes, preserve late DMARC observations,
+and invalidate old thread-related synchronization state once on upgrade. The
+privacy tool is packaged in the container and checked by the container CI job.
 
 ## Work that is still incomplete
 
@@ -59,3 +62,14 @@ and experimental managers remain proposals outside the supported paths.
 No pending PR was left unmerged at audit time. This feature branch itself must be
 reviewed and its required checks completed before merging. Human sign-off is
 still pending; no UAT or production certification has been fabricated.
+
+## Qualification record
+
+The clean 12th-commit candidate `397d5032c4be11a4c5862f3dd3b42014dbc35823`
+passed the complete local release gate on 7 September 2026. Its live stage ran
+17:17:06–17:18:21 UTC, including reload, thread/push and restored-service checks.
+Report: `/tmp/mailhub-completion-candidate.json`; log:
+`/tmp/mailhub-completion-candidate.log`. Review fixes require a fresh final run;
+use `/tmp/mailhub-completion-final.json` and `/tmp/mailhub-completion-final.log`
+and verify their revision/clean-tree fields against the final commit. CI status
+is authoritative for the eventual PR. Desktop/mobile UAT remains not performed.
