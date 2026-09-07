@@ -2134,6 +2134,222 @@
         },
         "x-required-permission": "replication:write"
       }
+    },
+    "/api/v1/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "operationId": "scimGetServiceProviderConfig",
+        "summary": "GET SCIM ServiceProviderConfig",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users": {
+      "get": {
+        "operationId": "scimGetUsers",
+        "summary": "GET SCIM Users",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      },
+      "post": {
+        "operationId": "scimPostUsers",
+        "summary": "POST SCIM Users",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          },
+          "201": {
+            "description": "Created; Location identifies immutable SCIM resource"
+          },
+          "409": {
+            "description": "Username already exists"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "scimGetUser",
+        "summary": "GET SCIM {id}",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      },
+      "put": {
+        "operationId": "scimPutUser",
+        "summary": "PUT SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "scimPatchUser",
+        "summary": "PATCH SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "scimDeleteUser",
+        "summary": "DELETE SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          },
+          "204": {
+            "description": "Account removed; retained mail governed by privacy workflow"
+          }
+        }
+      }
     }
   },
   "components": {

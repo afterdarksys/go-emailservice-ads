@@ -31,6 +31,8 @@ var (
 
 // User represents an authenticated user
 type User struct {
+	SCIMID       string
+	ExternalID   string
 	Username     string
 	PasswordHash string
 	Email        string

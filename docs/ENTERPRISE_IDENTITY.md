@@ -92,3 +92,32 @@ assertion tests require that actual deployment; local tests cover Mailhub's JWT
 issuer/audience/expiry boundary. Do not claim native SAML endpoint support.
 
 Broker reference: [Keycloak SAML identity-provider configuration](https://github.com/keycloak/keycloak/blob/main/docs/documentation/server_admin/topics/identity-broker/saml.adoc).
+
+## SCIM provisioning profile
+
+Base URL: `https://mailhub.example.net/api/v1/scim/v2/`. Configure a dedicated
+Bearer key with `scim:read` and `scim:write`, or corresponding introspected OAuth
+scopes. Use TLS and the API source-IP allowlist. Existing mailbox API keys do not
+implicitly gain SCIM authority. Persistent user storage is mandatory.
+
+- `GET ServiceProviderConfig` describes supported operations.
+- `POST Users` requires the core User schema and `userName`; accepts `externalId`,
+  `active` (default true), and zero or one email. Email defaults to userName.
+  Creation returns 201 and an immutable UUID ID. Existing usernames return 409;
+  SCIM cannot adopt an existing local account implicitly.
+- `GET Users` supports `userName eq "value"` or `externalId eq "value"`,
+  one-based `startIndex`, and `count` (maximum 200). Only SCIM-managed users appear.
+- `GET Users/{id}` returns a resource. `PUT` replaces email, externalId and active;
+  userName is immutable. Renaming mailbox ownership requires a migration.
+- `PATCH Users/{id}` accepts atomic add/replace of boolean `active`, either by
+  path or a pathless object. Other patch paths and unsupported attributes fail
+  explicitly; passwords, groups, roles, bulk, sorting and ETags are not supported.
+- `DELETE Users/{id}` removes login identity and entitlements. It does not claim
+  erasure of retained mail, evidence, logs or backups; use the privacy workflow.
+
+SCIM-created accounts have no usable local password. Use LDAP, federated JMAP
+login, or explicitly issue credentials through the mailbox-management workflow.
+An `active:false` update is durable before acknowledgement. Configure providers to
+use disablement for routine offboarding and reserve DELETE for approved identity
+removal. Validate the provider against this Users profile before enabling sync;
+unsupported full-directory/group synchronization must not be silently enabled.

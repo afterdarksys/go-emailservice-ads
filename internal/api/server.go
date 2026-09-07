@@ -156,6 +156,7 @@ func (s *Server) buildMux() *http.ServeMux {
 		s.jsonResponse(w, 200, s.store.ListByStatus("bounce_report", "bounce_reports"))
 	}))
 	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
+	mux.HandleFunc("/api/v1/scim/v2/", s.authMiddleware(s.handleSCIM))
 	return mux
 }
 
