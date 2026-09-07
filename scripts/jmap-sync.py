@@ -42,7 +42,12 @@ def qualify(jmap_port, imap_port, tls):
             'mutations': mutation_checks()['qualify'](request, jmap_port, imap_port, tls),
             'imports': import_checks()['qualify'](request, jmap_port, imap_port, tls),
             'composition': composition_checks()['qualify'](request, jmap_port, imap_port, tls),
-            'workflows': workflow_checks()['qualify'](request, jmap_port)}
+            'workflows': workflow_checks()['qualify'](request, jmap_port),
+            'mime': mime_checks()['qualify'](request, jmap_port)}
+
+
+def mime_checks():
+    return runpy.run_path(str(pathlib.Path(__file__).with_name("jmap-mime.py")))
 
 
 def workflow_checks():
@@ -62,6 +67,7 @@ def import_checks():
 
 
 def restored(jmap_port, checkpoint):
+    mime_checks()["restored"](request, jmap_port, checkpoint["mime"])
     workflow_checks()["restored"](request, jmap_port, checkpoint["workflows"])
     composition_checks()["restored"](request, jmap_port, checkpoint["composition"])
     import_checks()["restored"](request, jmap_port, checkpoint["imports"])

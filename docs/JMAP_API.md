@@ -76,7 +76,8 @@ The importer preserves raw MIME bytes, including UTF-8 headers and attachments.
 Duplicate content is allowed and creates independent emails, so retrying after
 an uncertain response can create a duplicate. Use ifInState and reconcile
 Email/changes before retrying. Existing owned raw email blob IDs can also be
-imported; MIME-part blob import remains unsupported.
+imported. Owned MIME-part blobs may be imported only when their decoded content
+is itself a complete valid RFC 5322 email; a text/image attachment is not an email.
 
 Each import is atomic: mailbox metadata, UID allocation and both change feeds
 commit together. Failed metadata writes discard orphan payloads; startup recovery
@@ -106,18 +107,63 @@ Use EmailSubmission/set or SMTP to send.
 
 Email/set create accepts mailboxIds (exactly one owned destination), keywords,
 receivedAt, from/to/cc/bcc/replyTo address arrays, subject, sentAt, messageId,
-inReplyTo, references, textBody, htmlBody, bodyValues and attachments. Address
+inReplyTo, references, bodyStructure, textBody, htmlBody, bodyValues and attachments. Address
 objects accept email and optional name. Dates use UTC RFC3339 ending in Z;
 sentAt and Message-ID default to server time and a generated identifier.
 
 Use at most one UTF-8 text/plain part and one UTF-8 text/html part. Each part's
 partId references a bodyValues entry containing value. Optional isTruncated and
 isEncodingProblem must be false. Omitted bodies produce an empty text part.
-Attachments accept an owned uploaded/raw-email blobId, optional MIME type and
-name, and disposition attachment. They are encoded into the independent durable
-email, so temporary-blob expiry does not remove the attachment. bodyStructure,
-inline CID parts, arbitrary headers and MIME-part attachment blob IDs are not
-supported. Header injection and unsupported fields return invalidProperties.
+Attachments accept an owned uploaded, raw-email or MIME-part blobId, optional
+MIME type and name, and disposition attachment or inline. For an embedded image,
+set disposition inline and cid (without angle brackets), then reference
+`cid:YOUR_CONTENT_ID` in HTML. Convenience bodies and inline attachments are
+wrapped in multipart/related; ordinary attachments use an outer multipart/mixed.
+
+For an explicit MIME tree, supply bodyStructure instead of textBody, htmlBody and
+attachments. Supported containers are multipart/mixed, multipart/alternative and
+multipart/related, each with a nonempty subParts array. Leaves supply exactly one
+of partId (text from bodyValues) or blobId (transfer-decoded bytes). Set type on
+text parts; other leaves default to application/octet-stream. A partId produces
+UTF-8 text; omit charset (the existing explicit utf-8 value is also accepted).
+Blob-backed text may specify its original charset. Optional name, disposition,
+cid, language and location map to MIME headers. Size is accepted and ignored only
+for blob-backed parts. Arbitrary headers and client-supplied transfer encodings
+remain unsupported; the server generates MIME boundaries and base64 encoding.
+
+```json
+["Email/set", {"create": {"draft": {
+  "mailboxIds": {"DRAFTS_MAILBOX_ID": true},
+  "bodyStructure": {
+    "type": "multipart/related",
+    "subParts": [
+      {"type": "text/html", "partId": "html"},
+      {"type": "image/png", "blobId": "OWNED_IMAGE_BLOB_ID",
+       "disposition": "inline", "cid": "logo@example.test", "name": "logo.png"}
+    ]
+  },
+  "bodyValues": {"html": {"value": "<img src=\"cid:logo@example.test\">"}}
+}}}, "compose"]
+```
+
+Email/get returns bodyStructure and leaf descriptors containing cid, disposition,
+charset and owned blobId values. Inline images appear in attachments, never in
+textBody/bodyValues. Downloading or reusing a MIME-part blob decodes transfer
+encoding but preserves the original charset bytes; bodyValues separately converts
+text for display. Use returned blob IDs rather than deriving part numbers.
+
+Copied parts are encoded into the new durable email. Upload expiry or deletion
+of the source email does not remove that copy. Source-part blobs stop resolving
+when the owner no longer has the source email; foreign sources always fail.
+Header injection, duplicate partIds/CIDs, unused bodyValues, conflicting body
+representations and unsupported fields return invalidProperties.
+
+Creation permits at most 128 MIME nodes and 16 nesting levels, including generated
+convenience containers. Reads use the same tree bounds plus a 64 MiB raw/decoded
+budget. Malformed or excessive trees return serverFail for Email/get and text
+queries rather than a misleading empty body; inspect the raw message through
+its original blob or IMAP. Part downloads return an error for unreadable MIME.
+These are bounded supported subsets, not a claim of complete RFC 8621 support.
 
 Each encoded email and the total prepared MIME in one Email/set are limited to
 10 MiB; exceeding either returns tooLarge for the affected creation. Creation
@@ -448,7 +494,7 @@ hasMoreChanges is true. Receipt states are recorded by get/query/set. Deleting
 receipts does not remove earlier membership snapshots; those age out under the
 same 64-snapshot bound. This is synchronization history, not an audit log.
 
-Advanced composition/submission options above, thread grouping and push remain
+Arbitrary-header composition, deferred/cancellable submission, thread grouping and push remain
 unimplemented. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
 scripts/jmap-sync.py, scripts/jmap-email-mutations.py, scripts/jmap-import.py and

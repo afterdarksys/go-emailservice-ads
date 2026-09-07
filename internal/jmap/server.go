@@ -481,7 +481,11 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 				notFound = append(notFound, id)
 				continue
 			}
-			list = append(list, emailObject(id, data, owned[id]))
+			object := emailObject(id, data, owned[id])
+			if object == nil {
+				return methodError("serverFail", callID)
+			}
+			list = append(list, object)
 		}
 	} else {
 		if len(owned) > maxJMAPObjects {
@@ -497,7 +501,11 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 			if err != nil {
 				return methodError("serverFail", callID)
 			}
-			list = append(list, emailObject(id, data, owned[id]))
+			object := emailObject(id, data, owned[id])
+			if object == nil {
+				return methodError("serverFail", callID)
+			}
+			list = append(list, object)
 		}
 
 	}
