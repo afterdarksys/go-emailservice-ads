@@ -27,6 +27,9 @@ func TestUnsupportedMailboxMutationsFailExplicitly(t *testing.T) {
 	if !errors.Is(mailbox.CopyMessages(false, nil, "Archive"), errMailboxMutationUnsupported) {
 		t.Fatal("COPY must fail explicitly")
 	}
+	if !errors.Is(mailbox.MoveMessages(false, nil, "Archive"), errMailboxMutationUnsupported) {
+		t.Fatal("MOVE must fail explicitly")
+	}
 }
 
 type testLiteral struct{ *bytes.Reader }

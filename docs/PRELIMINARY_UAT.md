@@ -38,6 +38,7 @@ named application and human-visible observations.
 | A2 | Three selected sessions | APPEND counts, IDLE FLAGS, silent STORE and EXPUNGE reach intended sessions; another account receives none. | Included in A1 |
 | A3 | Two concurrent writers | Sixteen messages have unique UIDs; both added keywords persist on all messages. | Included in A1 |
 | A4 | Drop an IDLE connection | Remaining sessions mutate; reconnect preserves UIDVALIDITY, omits the deleted UID and exposes a new, higher UID. | Included in A1 |
+| A5 | MOVE/UID MOVE | Selected messages move atomically; unrelated deleted messages remain; source/destination sessions update; moved payload/metadata survive restore. | Included in A1 |
 | C1 | Add two accounts in the target client | TLS/authentication work; accounts see only their own folders/messages. | Pending |
 | C2 | Send/receive a reply with attachment | Recipient, subject, body and attachment are intact; Sent placement matches configuration. | Pending |
 | C3 | Folder lifecycle | Create, subscribe, rename, move/copy, delete and reconnect show durable state. | Pending |
@@ -45,7 +46,7 @@ named application and human-visible observations.
 | C5 | Offline/reconnect | Change mail while offline, reconnect; messages and flags reconcile without loss or duplication. | Pending |
 | C6 | API and supported Sieve | Operator manages accounts/policies and verifies a routing/flag rule on delivered mail. | Pending |
 
-Test the actual client's move behavior in C3. Protocol COPY/EXPUNGE coverage does
+Test the actual client's move behavior in C3. Protocol MOVE/COPY/EXPUNGE coverage does
 not prove every advertised client workflow works. A failing action used by the
 target client is an in-scope defect, not a waived pass.
 
