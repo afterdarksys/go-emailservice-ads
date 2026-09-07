@@ -16,7 +16,7 @@ mailhub-privacy --operation delete --config /etc/mailhub/config.yaml --account a
 ```
 
 Inventory/export covers account identity (excluding password hashes), domain
-entitlements/quota, owned mailbox payloads, flags/folders/sync history, JMAP
+entitlements/quota including timestamps, grant notes and persisted identity metadata, owned mailbox payloads, flags/folders/sync history, JMAP
 uploads/query snapshots/submission receipts, owned Sieve plans/effects and script,
 related queue/quarantine/compliance records, and matching local audit records.
 The ZIP includes JSON inventory, RFC 5322 payload files, and a SHA-256 manifest.
@@ -51,7 +51,8 @@ against the original export/case record.
 
 Completion requires disposition of **every** remaining obligation: external
 LDAP/SCIM/SSO identities, shared mail and retained evidence, external logs/search
-and scanner records, backups/replicas/object locks, aliases/policies, audit chains,
+and scanner records, backups/replicas/object locks, aliases/policies, ancillary
+local state (including mailstorm circuits), audit chains,
 exports and the case itself. Assign owner, disposition/expiry, and evidence for
 each. Local erasure is not proof that remote systems or backup media were erased.
 Filesystem snapshots, SSD remnants and recovery keys require storage-layer

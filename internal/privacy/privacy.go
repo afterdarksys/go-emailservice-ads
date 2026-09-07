@@ -110,13 +110,18 @@ func (s *Session) Inventory(ctx context.Context) (Inventory, error) {
 		return Inventory{}, err
 	}
 	identity["quota"] = quota
+	persisted, err := s.users.PersonalData(ctx, s.user)
+	if err != nil {
+		return Inventory{}, err
+	}
+	identity["database_rows"] = persisted
 
 	out := Inventory{Identity: identity, Account: s.user, Email: s.email, Created: time.Now().UTC(), Records: s.raw.PersonalRecords(s.user, s.email), Tables: map[string][]map[string]interface{}{}, Status: "inventoried", Obligations: []string{
 		"Remove account from identity provider/LDAP/SCIM and bootstrap configuration; prevent automatic reprovisioning.",
 		"Review shared mail copies and compliance records; legal holds and retention require independent disposition.",
 		"Dispose of external log/search/scanner/directory records according to approved retention; local export cannot enumerate external systems.",
 		"Retire or expire backups, replicas, exports and object-locked copies; replay deletion after any older restore before serving clients.",
-		"Review aliases, policy files, domain entitlements, legacy Sieve suppression markers and historical metadata without explicit ownership.",
+		"Review aliases, policy files, mailstorm circuit state, ancillary local files, legacy Sieve suppression markers and historical metadata without explicit ownership; these shared files are not automatically erased.",
 		"Audit chains and the privacy case itself retain minimal accountability data; record retention and disposal separately.",
 		"Filesystem snapshots, SSD remnants and database server/WAL backups require storage-layer disposal or key retirement; logical deletion is not physical-media erasure.",
 	}}
