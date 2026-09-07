@@ -679,3 +679,6 @@ type MethodResponse struct {
 }
 
 func (j *JMAPServer) SetSubmitter(s mailstate.Submitter) { j.submitter = s }
+
+// ValidatePublicKey validates a configured key without starting a listener.
+func ValidatePublicKey(path string) error { _, err := loadPublicKey(path); return err }

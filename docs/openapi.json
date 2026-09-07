@@ -2495,6 +2495,30 @@
           }
         }
       }
+    },
+    "/api/v1/config/reload": {
+      "post": {
+        "operationId": "reloadConfiguration",
+        "summary": "Validate configuration file and request graceful process replacement",
+        "x-required-permission": "config:write",
+        "responses": {
+          "202": {
+            "description": "Accepted; verify readiness after process replacement"
+          },
+          "409": {
+            "description": "Validation failed or another reload pending; current configuration remains active"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reload controller unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
