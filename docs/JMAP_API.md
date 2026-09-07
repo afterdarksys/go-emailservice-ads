@@ -428,8 +428,9 @@ remain pageable but require full reconciliation. Pass the queryState plus the
 same filter/sort to the corresponding queryChanges method. Remove returned IDs
 first, then insert each added ID at its returned index. calculateTotal=true adds
 the new total. maxChanges is bounded to 500; tooManyChanges means refresh the
-query, not an incomplete successful delta. Anchors, upToId and thread collapsing
-are not implemented and fail explicitly. Email/changes remains the independent
+query, not an incomplete successful delta. Query pagination supports anchors as
+described above; queryChanges does not accept pagination anchors. upToId and
+thread collapsing are not implemented and fail explicitly. Email/changes remains the independent
 object change feed.
 
 The mailbox database retains 64 distinct recently used snapshots per account for
