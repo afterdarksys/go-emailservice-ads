@@ -116,7 +116,7 @@ func (j *JMAPServer) mutateEmails(ctx context.Context, user, since string, updat
 	}
 	created := map[string]interface{}{}
 	for key, e := range r.Created {
-		created[key] = map[string]interface{}{"id": e.ID, "blobId": e.ID, "threadId": e.ID, "size": e.Size}
+		created[key] = map[string]interface{}{"id": e.ID, "blobId": e.ID, "threadId": mailstate.ThreadID(e.ID, creations[key].Data), "size": e.Size}
 	}
 	for key, kind := range r.NotCreated {
 		nc[key] = map[string]interface{}{"type": kind}

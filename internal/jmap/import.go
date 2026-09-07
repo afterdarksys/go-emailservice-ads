@@ -174,7 +174,11 @@ func (j *JMAPServer) emailImport(ctx context.Context, user string, args map[stri
 	}
 	created := map[string]interface{}{}
 	for key, e := range r.Created {
-		created[key] = map[string]interface{}{"id": e.ID, "blobId": e.ID, "threadId": e.ID, "size": e.Size}
+		raw, fetchErr := j.store.FetchMessage(ctx, e.ID)
+		if fetchErr != nil {
+			return methodError("serverFail", id)
+		}
+		created[key] = map[string]interface{}{"id": e.ID, "blobId": e.ID, "threadId": mailstate.ThreadID(e.ID, raw), "size": e.Size}
 	}
 	for key, kind := range r.NotCreated {
 		nc[key] = map[string]interface{}{"type": kind}

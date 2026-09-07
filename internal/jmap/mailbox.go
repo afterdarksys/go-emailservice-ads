@@ -52,6 +52,27 @@ func (j *JMAPServer) durableMailboxGet(ctx context.Context, user string, args ma
 	if !explicit && len(boxes) > maxJMAPObjects {
 		return methodError("tooManyObjectsInGet", id)
 	}
+	owned, _, err := j.emailSnapshot(ctx, user)
+	if err != nil {
+		return methodError("serverFail", id)
+	}
+	totals, unread := map[string]map[string]bool{}, map[string]map[string]bool{}
+	for mid, meta := range owned {
+		raw, err := j.store.FetchMessage(ctx, mid)
+		if err != nil {
+			return methodError("serverFail", id)
+		}
+		box := messageMailboxID(meta)
+		tid := mailstate.ThreadID(mid, raw)
+		if totals[box] == nil {
+			totals[box] = map[string]bool{}
+			unread[box] = map[string]bool{}
+		}
+		totals[box][tid] = true
+		if !keywords(meta.Flags)["$seen"] {
+			unread[box][tid] = true
+		}
+	}
 	paths := map[string]string{}
 	for _, m := range boxes {
 		paths[m.Path] = m.ID
@@ -72,7 +93,7 @@ func (j *JMAPServer) durableMailboxGet(ctx context.Context, user string, args ma
 		if m.Role != "" {
 			role = m.Role
 		}
-		obj := map[string]interface{}{"id": m.ID, "name": name, "parentId": parent, "role": role, "sortOrder": m.SortOrder, "isSubscribed": m.Subscribed, "totalEmails": m.Total, "unreadEmails": m.Unread, "totalThreads": m.Total, "unreadThreads": m.Unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": j.emailMutations(), "mayRemoveItems": j.emailMutations(), "maySetSeen": j.keywordWrites(), "maySetKeywords": j.keywordWrites(), "mayCreateChild": true, "mayRename": m.Path != "INBOX", "mayDelete": m.Path != "INBOX", "maySubmit": j.submitter != nil}}
+		obj := map[string]interface{}{"id": m.ID, "name": name, "parentId": parent, "role": role, "sortOrder": m.SortOrder, "isSubscribed": m.Subscribed, "totalEmails": m.Total, "unreadEmails": m.Unread, "totalThreads": len(totals[m.ID]), "unreadThreads": len(unread[m.ID]), "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": j.emailMutations(), "mayRemoveItems": j.emailMutations(), "maySetSeen": j.keywordWrites(), "maySetKeywords": j.keywordWrites(), "mayCreateChild": true, "mayRename": m.Path != "INBOX", "mayDelete": m.Path != "INBOX", "maySubmit": j.submitter != nil}}
 		if project {
 			for key := range obj {
 				if !properties[key] {

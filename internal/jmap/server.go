@@ -384,6 +384,10 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return j.mailboxGet(ctx, authUser, args, callID)
 	case "Mailbox/set":
 		return j.mailboxSet(ctx, authUser, args, callID)
+	case "Thread/get":
+		return j.threadGet(ctx, authUser, call.Arguments, call.ID)
+	case "Thread/changes":
+		return j.threadChanges(ctx, authUser, call.Arguments, call.ID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/queryChanges":
