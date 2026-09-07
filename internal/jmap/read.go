@@ -189,7 +189,7 @@ func keywords(flags []string) map[string]bool {
 	return out
 }
 func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]interface{} {
-	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": id, "mailboxIds": map[string]bool{messageMailboxID(meta): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}, "bodyStructure": nil}
+	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": mailstate.ThreadID(id, raw), "mailboxIds": map[string]bool{messageMailboxID(meta): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}, "bodyStructure": nil}
 	reader, _ := messagemail.CreateReader(bytes.NewReader(raw))
 	if reader == nil {
 		return nil
@@ -215,12 +215,17 @@ func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]int
 func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
 	for key := range args {
 		switch key {
-		case "accountId", "filter", "sort", "position", "anchor", "anchorOffset", "limit", "calculateTotal":
+		case "accountId", "filter", "sort", "position", "anchor", "anchorOffset", "limit", "calculateTotal", "collapseThreads":
 		default:
 			return methodError("invalidArguments", id)
 		}
 	}
 
+	if v := args["collapseThreads"]; v != nil {
+		if _, ok := v.(bool); !ok {
+			return methodError("invalidArguments", id)
+		}
+	}
 	owned, state, err := j.emailSnapshot(ctx, user)
 	if err != nil {
 		return methodError("serverFail", id)
@@ -248,12 +253,37 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 		meta MessageOwnedSummary
 	}
 	entries := []entry{}
+	threadIDs := map[string]string{}
 	for mid, meta := range owned {
-		raw, err := j.store.FetchMessage(ctx, mid)
-		if err != nil {
-			return methodError("serverFail", id)
+		var raw []byte
+		var msg *mail.Message
+		needsBody := false
+		for key := range filter {
+			if key == "subject" || key == "from" || key == "to" || key == "text" {
+				needsBody = true
+			}
 		}
-		msg, _ := mail.ReadMessage(bytes.NewReader(raw))
+		// Filter metadata before fetching body, even for expensive text queries.
+		if box, ok := filter["inMailbox"].(string); ok && messageMailboxID(meta) != box {
+			continue
+		}
+		if key, ok := filter["hasKeyword"].(string); ok && !keywords(meta.Flags)[key] {
+			continue
+		}
+		if key, ok := filter["notKeyword"].(string); ok && keywords(meta.Flags)[key] {
+			continue
+		}
+		threadIDs[mid] = meta.ThreadID
+		if needsBody || (args["collapseThreads"] == true && meta.ThreadID == "") {
+			raw, err = j.store.FetchMessage(ctx, mid)
+			if err != nil {
+				return methodError("serverFail", id)
+			}
+			msg, _ = mail.ReadMessage(bytes.NewReader(raw))
+			if meta.ThreadID == "" {
+				threadIDs[mid] = mailstate.ThreadID(mid, raw)
+			}
+		}
 		match := true
 		for key, v := range filter {
 			want := v.(string)
@@ -299,14 +329,21 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 		return entries[a].meta.Date.After(entries[b].meta.Date)
 	})
 	allIDs := []string{}
+	seenThreads := map[string]bool{}
 	for _, entry := range entries {
+		if args["collapseThreads"] == true {
+			if seenThreads[threadIDs[entry.id]] {
+				continue
+			}
+			seenThreads[threadIDs[entry.id]] = true
+		}
 		allIDs = append(allIDs, entry.id)
 	}
 	state, can, err := j.rememberQuery(ctx, user, "Email", state, args, allIDs)
 	if err != nil {
 		return methodError("serverFail", id)
 	}
-	total := len(entries)
+	total := len(allIDs)
 	position, start, end, kind := queryPage(args, allIDs)
 	if kind != "" {
 		return methodError(kind, id)

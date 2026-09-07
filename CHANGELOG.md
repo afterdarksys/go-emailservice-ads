@@ -8,9 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- JMAP immutable thread grouping, collapsed queries, Thread/get/changes and authenticated SSE push.
+- LDAP/AD verification for provisioned accounts, scoped SCIM Users provisioning and audience-bound federated JMAP tokens.
+- Durable DMARC aggregate XML reporting with external destination authorization, plus active operational statistics APIs.
+- Validated general configuration reload through graceful process replacement.
+- Offline personal-data export/deletion with retained-evidence and external-disposition records.
+- Measured metadata-only mailbox listing, cached thread identity and bounded DNS negative caching.
 - `--check-config` validates configuration without creating defaults, opening listeners, acquiring storage locks or starting delivery.
 
 ### Fixed
+- Local identity disablement applies before external authentication; SSO requires provisioning.
+- Storage deletion removes payloads from the live index before compaction, and SCIM account metadata preserves quota lookup behavior.
 - Unknown YAML fields and additional configuration documents now fail loading instead of being silently ignored.
 - Mailbox create/update rejects passwords longer than bcrypt's 72-byte limit with HTTP 400 before changing account state.
 

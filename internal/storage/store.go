@@ -15,6 +15,7 @@ import (
 
 // MessageStore provides persistent storage for delivery transactions and mailbox blobs.
 type MessageStore struct {
+	threadIDs map[string]string
 	audit     *auditlog.Log
 	lockFile  *os.File
 	limits    Limits
@@ -256,8 +257,9 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 	}
 
 	// Remove from index if delivered
-	if status == "delivered" {
+	if status == "delivered" || status == "deleted" {
 		delete(s.index, messageID)
+		delete(s.threadIDs, messageID)
 	}
 
 	s.indexMu.Unlock()

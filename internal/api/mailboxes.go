@@ -93,6 +93,10 @@ func (s *Server) handleMailboxes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.userStore.AddUser(req.Username, req.Password, req.Email); err != nil {
+			if errors.Is(err, auth.ErrAccountConflict) {
+				http.Error(w, "Mailbox already exists", 409)
+				return
+			}
 			s.logger.Error("Failed to create mailbox", zap.String("username", req.Username), zap.Error(err))
 			http.Error(w, "Failed to create mailbox", http.StatusInternalServerError)
 			return
@@ -164,7 +168,11 @@ func (s *Server) handleMailbox(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to update mailbox", http.StatusInternalServerError)
 			return
 		}
-		user, _ = s.userStore.GetUser(username)
+		user, exists = s.userStore.GetUser(username)
+		if !exists {
+			http.Error(w, "Mailbox no longer exists", 404)
+			return
+		}
 		s.logger.Info("Mailbox updated via API", zap.String("username", username))
 		s.jsonResponse(w, http.StatusOK, mailboxResponse{Username: username, Email: email, Enabled: user.Enabled})
 

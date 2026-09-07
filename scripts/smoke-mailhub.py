@@ -36,7 +36,7 @@ def run(binary, backup):
             'server': {'addr':f'127.0.0.1:{smtp_port}', 'domain':'mail.test', 'local_domains':['mail.test'], 'require_auth':True, 'require_tls':True, 'tls':{'cert':str(cert),'key':str(key)}, 'spf':{'enabled':False}, 'dmarc':{'enabled':False}, 'dane':{'enabled':False}},
             'imap': {'addr':f'127.0.0.1:{imap_port}', 'tls_mode':'starttls','tls':{'cert':str(cert),'key':str(key)}},
             'jmap': {'enabled': True, 'addr': f'127.0.0.1:{jmap_port}'},
-            'api': {'rest_addr':f'127.0.0.1:{api_port}', 'tls':{'cert':str(cert),'key':str(key)}, 'api_keys':[{'name':'qa-admin','key':'qa-isolated-admin','permissions':['mailboxes:read','mailboxes:write','queue:read','policies:read','policies:write']},{'name':'qa-reader','key':'qa-isolated-reader','permissions':['queue:read']}]},
+            'api': {'rest_addr':f'127.0.0.1:{api_port}', 'tls':{'cert':str(cert),'key':str(key)}, 'api_keys':[{'name':'qa-admin','key':'qa-isolated-admin','permissions':['mailboxes:read','mailboxes:write','queue:read','policies:read','policies:write','config:write']},{'name':'qa-reader','key':'qa-isolated-reader','permissions':['queue:read']}]},
             'platform': {'data_dir':str(root/'data'),'policy_path':str(policies)},
             'auth': {'default_users':[{'username':'probe@mail.test','email':'probe@mail.test','password':'isolated-test-password'}]},
             'logging': {'level':'warn','format':'json'},
@@ -137,6 +137,24 @@ def run(binary, backup):
                     ok(client.close());ok(client.delete('Bulk'))
                 runpy.run_path(str(pathlib.Path(__file__).with_name('imap-multisession.py')))['qualify']('localhost', imap_port, tls)
                 runpy.run_path(str(pathlib.Path(__file__).with_name('imap-move.py')))['qualify']('localhost', imap_port, tls)
+                # Invalid reload must leave the current service usable.
+                path.write_text('invalid: [')
+                api('POST','config/reload',expected=409)
+                api('GET','queue/stats')
+                config['api']['api_keys'].append({'name':'reload-reader','key':'qa-reloaded-reader','permissions':['queue:read']})
+                path.write_text(json.dumps(config))
+                api('POST','config/reload',expected=202)
+                deadline=time.monotonic()+45
+                while time.monotonic()<deadline:
+                    if process.poll() is not None:
+                        log.seek(0); raise RuntimeError(log.read())
+                    try:
+                        api('GET','queue/stats',token='qa-reloaded-reader')
+                        break
+                    except (OSError, AssertionError): time.sleep(.2)
+                else: raise RuntimeError('configuration reload did not activate new API key')
+                # Existing durable account survived process replacement.
+                api('GET','mailboxes/qa%40mail.test')
                 jmap_checkpoint = jmap_checks['qualify'](jmap_port, imap_port, tls)
                 sieve_checks = runpy.run_path(str(pathlib.Path(__file__).with_name('sieve-workflows.py')))
                 sieve_checks['qualify'](jmap_checks['request'], jmap_port, smtp_port, tls, root/'data')
@@ -183,7 +201,7 @@ def run(binary, backup):
                 except subprocess.TimeoutExpired:
                     process.kill();process.wait();raise RuntimeError('restored service shutdown timed out')
             assert process.returncode==0,process.returncode
-        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
+        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, flags/search, shutdown and live restored-service verification')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
@@ -195,7 +213,7 @@ if __name__=='__main__':
     if args.report:
         report = {
             'schema_version': 1,
-            'scope': 'isolated live SMTP/IMAP, JMAP composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
+            'scope': 'isolated live SMTP/IMAP, JMAP threads/SSE reconnect, configuration reload, composition/submission, success hooks, query/receipt synchronization, uploads and mailbox/email mutations, Sieve multi-delivery/redirect/vacation, REST and backup/restore qualification',
             'status': 'running',
             'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'binary_sha256': hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),

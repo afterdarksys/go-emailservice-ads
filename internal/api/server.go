@@ -28,14 +28,15 @@ import (
 
 // Server encapsulates the API servers
 type Server struct {
-	config     *config.Config
-	logger     *zap.Logger
-	store      *storage.MessageStore
-	qm         *smtpd.QueueManager
-	replicator *replication.Replicator
-	metrics    *metrics.Metrics
-	policyMgr  *policy.Manager
-	userStore  *auth.UserStore
+	configReload func() error
+	config       *config.Config
+	logger       *zap.Logger
+	store        *storage.MessageStore
+	qm           *smtpd.QueueManager
+	replicator   *replication.Replicator
+	metrics      *metrics.Metrics
+	policyMgr    *policy.Manager
+	userStore    *auth.UserStore
 
 	lifecycleMu sync.Mutex
 	listener    net.Listener
@@ -156,6 +157,13 @@ func (s *Server) buildMux() *http.ServeMux {
 		s.jsonResponse(w, 200, s.store.ListByStatus("bounce_report", "bounce_reports"))
 	}))
 	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
+	mux.HandleFunc("/api/v1/scim/v2/", s.authMiddleware(s.handleSCIM))
+	mux.HandleFunc("/api/v1/dmarc/reports", s.authMiddleware(s.handleDMARC))
+	mux.HandleFunc("/api/v1/dmarc/reports/", s.authMiddleware(s.handleDMARC))
+	mux.HandleFunc("/api/v1/security/stats", s.authMiddleware(s.handleOperationalStats))
+	mux.HandleFunc("/api/v1/dns/stats", s.authMiddleware(s.handleOperationalStats))
+	mux.HandleFunc("/api/v1/greylisting/stats", s.authMiddleware(s.handleOperationalStats))
+	mux.HandleFunc("/api/v1/config/reload", s.authMiddleware(s.handleConfigReload))
 	return mux
 }
 

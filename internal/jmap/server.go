@@ -48,6 +48,11 @@ type MailStore interface {
 
 // JMAPServer implements a JMAP server
 type JMAPServer struct {
+	pushMu       sync.Mutex
+	pushUsers    map[string]int
+	pushTotal    int
+	pushDone     chan struct{}
+	pushStop     sync.Once
 	submitter    mailstate.Submitter
 	submissionMu sync.Mutex
 	logger       *zap.Logger
@@ -68,6 +73,7 @@ func NewJMAPServer(logger *zap.Logger, cfg *config.Config, validator *auth.Valid
 		validator:  validator,
 		store:      store,
 		requestSem: make(chan struct{}, maxJMAPConcurrent),
+		pushDone:   make(chan struct{}),
 	}
 
 	if cfg.JMAP.JWTPublicKeyPath != "" {
@@ -129,6 +135,7 @@ func (j *JMAPServer) Start(addr string) error {
 
 	// RFC 8621 - Upload endpoint for binary data
 	mux.HandleFunc("/jmap/upload/", j.handleUpload)
+	mux.HandleFunc("/jmap/events/", j.handleEvents)
 
 	j.httpServer = &http.Server{
 		Addr:         addr,
@@ -152,6 +159,11 @@ func (j *JMAPServer) Start(addr string) error {
 // Shutdown gracefully stops the JMAP server
 func (j *JMAPServer) Shutdown(ctx context.Context) error {
 	j.logger.Info("Stopping JMAP server...")
+	j.pushStop.Do(func() {
+		if j.pushDone != nil {
+			close(j.pushDone)
+		}
+	})
 	if j.httpServer != nil {
 		return j.httpServer.Shutdown(ctx)
 	}
@@ -259,7 +271,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		APIUrl:         fmt.Sprintf("https://%s/jmap/api/", r.Host),
 		DownloadUrl:    fmt.Sprintf("https://%s/jmap/download/{accountId}/{blobId}/{name}?type={type}", r.Host),
 		UploadUrl:      fmt.Sprintf("https://%s/jmap/upload/{accountId}/", r.Host),
-		EventSourceUrl: "",
+		EventSourceUrl: fmt.Sprintf("https://%s/jmap/events/?types={types}&closeafter={closeafter}&ping={ping}", r.Host),
 	}
 
 	if j.submitter != nil {
@@ -384,6 +396,10 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 		return j.mailboxGet(ctx, authUser, args, callID)
 	case "Mailbox/set":
 		return j.mailboxSet(ctx, authUser, args, callID)
+	case "Thread/get":
+		return j.threadGet(ctx, authUser, call.Arguments, call.ID)
+	case "Thread/changes":
+		return j.threadChanges(ctx, authUser, call.Arguments, call.ID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/queryChanges":
@@ -575,6 +591,9 @@ func (j *JMAPServer) bearerSubject(authHeader string) (string, bool) {
 	}
 
 	opts := []jwt.ParserOption{jwt.WithExpirationRequired()}
+	if j.config.JMAP.JWTAudience != "" {
+		opts = append(opts, jwt.WithAudience(j.config.JMAP.JWTAudience))
+	}
 	if j.config.JMAP.JWTIssuer != "" {
 		opts = append(opts, jwt.WithIssuer(j.config.JMAP.JWTIssuer))
 	}
@@ -660,3 +679,6 @@ type MethodResponse struct {
 }
 
 func (j *JMAPServer) SetSubmitter(s mailstate.Submitter) { j.submitter = s }
+
+// ValidatePublicKey validates a configured key without starting a listener.
+func ValidatePublicKey(path string) error { _, err := loadPublicKey(path); return err }

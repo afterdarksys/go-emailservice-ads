@@ -100,7 +100,8 @@ type Config struct {
 		Enabled          bool   `yaml:"enabled"`             // Start the JMAP HTTP service
 		Addr             string `yaml:"addr"`                // JMAP HTTP listen address
 		JWTPublicKeyPath string `yaml:"jwt_public_key_path"` // PEM RSA/ECDSA public key for Bearer token validation
-		JWTIssuer        string `yaml:"jwt_issuer"`          // Expected iss claim (empty = skip check)
+		JWTAudience      string `yaml:"jwt_audience"`
+		JWTIssuer        string `yaml:"jwt_issuer"` // Expected iss claim (empty = skip check)
 	} `yaml:"jmap"`
 
 	API struct {
@@ -114,6 +115,7 @@ type Config struct {
 	} `yaml:"api"`
 
 	Auth struct {
+		LDAP         LDAPConfig   `yaml:"ldap"`
 		DefaultUsers []UserConfig `yaml:"default_users"`
 		// UserDatabaseURL enables the persistent user store. Empty defaults
 		// to platform.data_dir/users.db. A postgres:// URL uses PostgreSQL; anything
@@ -469,6 +471,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("server.ip_filter: %w", err)
 	}
 	if err := cfg.validatePlatform(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Auth.LDAP.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

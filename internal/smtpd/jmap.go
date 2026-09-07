@@ -66,7 +66,7 @@ func (server *Server) SubmitAt(ctx context.Context, user, ip, emailID, from stri
 		}
 		recipients = append(recipients, map[string]interface{}{"email": address})
 	}
-	out = mailstate.Submission{ID: uuid.NewString(), EmailID: emailID, IdentityID: "primary", ThreadID: emailID, SendAt: time.Now().UTC().Format(time.RFC3339), UndoStatus: "final", Envelope: map[string]interface{}{"mailFrom": map[string]interface{}{"email": from}, "rcptTo": recipients}}
+	out = mailstate.Submission{ID: uuid.NewString(), EmailID: emailID, IdentityID: "primary", ThreadID: mailstate.ThreadID(emailID, data), SendAt: time.Now().UTC().Format(time.RFC3339), UndoStatus: "final", Envelope: map[string]interface{}{"mailFrom": map[string]interface{}{"email": from}, "rcptTo": recipients}}
 	if !at.IsZero() {
 		if at.After(time.Now().Add(mailstate.MaxDelayedSend)) {
 			return out, fmt.Errorf("delay exceeds maximum")

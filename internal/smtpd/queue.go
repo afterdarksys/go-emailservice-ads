@@ -85,17 +85,21 @@ type Message struct {
 // QueueManager handles the multi-tier queuing system
 // Designed for high volume concurrency using buffered channels and worker pools.
 type QueueManager struct {
-	sieveMu      sync.Mutex
-	destinations *delivery.DestinationThrottle
-	reputationDB *filtering.PremailReputation
-	platform     config.PlatformConfig
-	abuse        abuseLimits
-	StormGuard   *mailstorm.Guard
-	users        *auth.UserStore
-	dataDir      string
-	logger       *zap.Logger
-	store        *storage.MessageStore
-	imapStore    *storage.MailboxStore
+	statsMu        sync.RWMutex
+	statsSources   map[string]func() map[string]interface{}
+	securityCounts map[string]uint64
+	DMARCReports   *security.DurableDMARCReports
+	sieveMu        sync.Mutex
+	destinations   *delivery.DestinationThrottle
+	reputationDB   *filtering.PremailReputation
+	platform       config.PlatformConfig
+	abuse          abuseLimits
+	StormGuard     *mailstorm.Guard
+	users          *auth.UserStore
+	dataDir        string
+	logger         *zap.Logger
+	store          *storage.MessageStore
+	imapStore      *storage.MailboxStore
 
 	emergency chan *Message
 	msa       chan *Message
@@ -1122,6 +1126,32 @@ func (qm *QueueManager) ConfigurePlatform(cfg *config.Config, users *auth.UserSt
 		qm.mailDelivery.SetDANEValidator(dane.NewDANEValidator(qm.logger, cfg.Server.DANE.DNSServers, cfg.Server.DANE.StrictMode))
 	}
 	qm.imapStore.SetQuota(cfg.Platform.MailboxQuotaBytes)
+	if cfg.Platform.DMARCReporting {
+		reports, err := security.NewDurableDMARCReports(filepath.Join(cfg.Platform.DataDir, "dmarc-reports"), qm.hostname)
+		if err != nil {
+			return err
+		}
+		qm.DMARCReports = reports
+		reports.SendMail = qm.enqueueDMARCReport
+		qm.wg.Add(1)
+		go func() {
+			defer qm.wg.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-qm.ctx.Done():
+					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(qm.ctx, 5*time.Minute)
+					if err := reports.SendPending(ctx); err != nil {
+						qm.logger.Error("DMARC report delivery failed", zap.Error(err))
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 	if cfg.Platform.TLSReporting {
 		reports, err := security.NewDurableTLSReports(filepath.Join(cfg.Platform.DataDir, "tls-reports"), qm.hostname)
 		if err != nil {

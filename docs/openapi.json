@@ -2134,6 +2134,391 @@
         },
         "x-required-permission": "replication:write"
       }
+    },
+    "/api/v1/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "operationId": "scimGetServiceProviderConfig",
+        "summary": "GET SCIM ServiceProviderConfig",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users": {
+      "get": {
+        "operationId": "scimGetUsers",
+        "summary": "GET SCIM Users",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      },
+      "post": {
+        "operationId": "scimPostUsers",
+        "summary": "POST SCIM Users",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          },
+          "201": {
+            "description": "Created; Location identifies immutable SCIM resource"
+          },
+          "409": {
+            "description": "Username already exists"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "scimGetUser",
+        "summary": "GET SCIM {id}",
+        "x-required-permission": "scim:read",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        }
+      },
+      "put": {
+        "operationId": "scimPutUser",
+        "summary": "PUT SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "scimPatchUser",
+        "summary": "PATCH SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/scim+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "scimDeleteUser",
+        "summary": "DELETE SCIM {id}",
+        "x-required-permission": "scim:write",
+        "description": "SCIM Users profile. See docs/ENTERPRISE_IDENTITY.md for supported attributes, filtering and lifecycle semantics.",
+        "responses": {
+          "200": {
+            "description": "SCIM resource or list"
+          },
+          "400": {
+            "description": "SCIM Error: unsupported or invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "404": {
+            "description": "Unknown resource"
+          },
+          "204": {
+            "description": "Account removed; retained mail governed by privacy workflow"
+          }
+        }
+      }
+    },
+    "/api/v1/dmarc/reports": {
+      "get": {
+        "operationId": "dmarcList",
+        "summary": "DMARC aggregate report read",
+        "x-required-permission": "dmarc:read",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
+    },
+    "/api/v1/dmarc/reports/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "dmarcExport",
+        "summary": "DMARC aggregate report read",
+        "x-required-permission": "dmarc:read",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
+    },
+    "/api/v1/dmarc/reports/send": {
+      "post": {
+        "operationId": "dmarcSend",
+        "summary": "DMARC aggregate report send pending",
+        "x-required-permission": "dmarc:write",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
+    },
+    "/api/v1/security/stats": {
+      "get": {
+        "operationId": "securityStatistics",
+        "summary": "Read active security statistics",
+        "x-required-permission": "security:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/dns/stats": {
+      "get": {
+        "operationId": "dnsStatistics",
+        "summary": "Read active dns statistics",
+        "x-required-permission": "dns:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/greylisting/stats": {
+      "get": {
+        "operationId": "greylistingStatistics",
+        "summary": "Read active greylisting statistics",
+        "x-required-permission": "greylisting:read",
+        "responses": {
+          "200": {
+            "description": "Process-lifetime counters and per-listener state snapshots; see docs/OPERATIONS_STATISTICS.md"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Statistics source unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/config/reload": {
+      "post": {
+        "operationId": "reloadConfiguration",
+        "summary": "Validate configuration file and request graceful process replacement",
+        "x-required-permission": "config:write",
+        "responses": {
+          "202": {
+            "description": "Accepted; verify readiness after process replacement"
+          },
+          "409": {
+            "description": "Validation failed or another reload pending; current configuration remains active"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reload controller unavailable"
+          }
+        }
+      }
     }
   },
   "components": {

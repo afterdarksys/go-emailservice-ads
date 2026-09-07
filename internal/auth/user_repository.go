@@ -172,6 +172,10 @@ func (r *UserRepository) initSchema() error {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
 
+	if _, err := r.db.Exec(`CREATE TABLE IF NOT EXISTS scim_identities (
+ id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE REFERENCES users(username) ON DELETE CASCADE, external_id TEXT NOT NULL DEFAULT '')`); err != nil {
+		return err
+	}
 	r.logger.Info("User database schema initialized")
 	return nil
 }
@@ -190,11 +194,24 @@ func (r *UserRepository) SaveUser(ctx context.Context, user *User) error {
 			updated_at = EXCLUDED.updated_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query, user.Username, user.PasswordHash, user.Email, user.Enabled, time.Now().UTC())
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, query, user.Username, user.PasswordHash, user.Email, user.Enabled, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to save user: %w", err)
 	}
 
+	if user.SCIMID != "" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO scim_identities(id,username,external_id) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET external_id=EXCLUDED.external_id`, user.SCIMID, user.Username, user.ExternalID); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
 	r.logger.Info("Saved user to database", zap.String("username", user.Username))
 	return nil
 }
@@ -202,9 +219,9 @@ func (r *UserRepository) SaveUser(ctx context.Context, user *User) error {
 // GetUser retrieves a user by username
 func (r *UserRepository) GetUser(ctx context.Context, username string) (*User, error) {
 	query := `
-		SELECT username, password_hash, email, enabled
-		FROM users
-		WHERE username = $1
+		SELECT u.username, u.password_hash, u.email, u.enabled, COALESCE(i.id,''), COALESCE(i.external_id,'')
+		FROM users u LEFT JOIN scim_identities i ON i.username=u.username
+		WHERE u.username = $1
 	`
 
 	var user User
@@ -212,7 +229,7 @@ func (r *UserRepository) GetUser(ctx context.Context, username string) (*User, e
 		&user.Username,
 		&user.PasswordHash,
 		&user.Email,
-		&user.Enabled,
+		&user.Enabled, &user.SCIMID, &user.ExternalID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -228,9 +245,9 @@ func (r *UserRepository) GetUser(ctx context.Context, username string) (*User, e
 // ListUsers returns all users
 func (r *UserRepository) ListUsers(ctx context.Context) ([]*User, error) {
 	query := `
-		SELECT username, password_hash, email, enabled
-		FROM users
-		ORDER BY username
+		SELECT u.username, u.password_hash, u.email, u.enabled, COALESCE(i.id,''), COALESCE(i.external_id,'')
+		FROM users u LEFT JOIN scim_identities i ON i.username=u.username
+		ORDER BY u.username
 	`
 
 	rows, err := r.db.QueryContext(ctx, query)
@@ -242,7 +259,7 @@ func (r *UserRepository) ListUsers(ctx context.Context) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.Enabled); err != nil {
+		if err := rows.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.Enabled, &user.SCIMID, &user.ExternalID); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, &user)

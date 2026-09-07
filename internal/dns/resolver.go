@@ -2,18 +2,27 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // Resolver provides DNS resolution with caching
 type Resolver struct {
-	mailServers []string
-	logger      *zap.Logger
-	resolver    *net.Resolver
+	lookupGroup  singleflight.Group
+	negativeHits atomic.Uint64
+	hits         atomic.Uint64
+	misses       atomic.Uint64
+	failures     atomic.Uint64
+	mailServers  []string
+	logger       *zap.Logger
+	resolver     lookupResolver
 
 	// Cache for MX records
 	mxCache   map[string]*mxCacheEntry
@@ -29,11 +38,13 @@ type Resolver struct {
 }
 
 type mxCacheEntry struct {
+	err       error
 	records   []*net.MX
 	expiresAt time.Time
 }
 
 type txtCacheEntry struct {
+	err       error
 	records   []string
 	expiresAt time.Time
 }
@@ -61,87 +72,134 @@ func NewResolver(logger *zap.Logger) *Resolver {
 // LookupMX performs MX record lookup with caching
 // RFC 5321 Section 5 - Address Resolution
 func (r *Resolver) LookupMX(ctx context.Context, domain string) ([]*net.MX, error) {
-	// Check cache first
-	r.mxCacheMu.RLock()
-	if entry, exists := r.mxCache[domain]; exists {
-		if time.Now().Before(entry.expiresAt) {
-			r.mxCacheMu.RUnlock()
-			r.logger.Debug("MX cache hit", zap.String("domain", domain))
-			return entry.records, nil
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	cached := func() ([]*net.MX, error, bool) {
+		r.mxCacheMu.RLock()
+		entry, ok := r.mxCache[domain]
+		r.mxCacheMu.RUnlock()
+		if ok && time.Now().Before(entry.expiresAt) {
+			r.hits.Add(1)
+			if entry.err != nil {
+				r.negativeHits.Add(1)
+			}
+			return cloneMX(entry.records), cloneDNSError(entry.err), true
 		}
+		return nil, nil, false
 	}
-	r.mxCacheMu.RUnlock()
-
-	// Cache miss or expired - perform lookup
-	r.logger.Debug("MX cache miss, performing lookup", zap.String("domain", domain))
-
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	records, err := r.resolver.LookupMX(ctx, domain)
-	if err != nil {
-		r.logger.Warn("MX lookup failed",
-			zap.String("domain", domain),
-			zap.Error(err))
-		return nil, err
+	if records, err, ok := cached(); ok {
+		return records, err
 	}
-
-	// Update cache
-	r.mxCacheMu.Lock()
-	r.mxCache[domain] = &mxCacheEntry{
-		records:   records,
-		expiresAt: time.Now().Add(r.cacheTTL),
+	result := r.lookupGroup.DoChan("MX:"+domain, func() (interface{}, error) {
+		if records, err, ok := cached(); ok {
+			return records, err
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+		r.misses.Add(1)
+		records, err := r.resolver.LookupMX(lookupCtx, domain)
+		ttl := r.cacheTTL
+		if err != nil {
+			r.failures.Add(1)
+			var dnsErr *net.DNSError
+			if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound || dnsErr.IsTimeout || dnsErr.IsTemporary {
+				return nil, err
+			}
+			ttl = 30 * time.Second
+		}
+		r.mxCacheMu.Lock()
+		if len(r.mxCache) >= 4096 {
+			for key := range r.mxCache {
+				delete(r.mxCache, key)
+				break
+			}
+		}
+		r.mxCache[domain] = &mxCacheEntry{records: cloneMX(records), expiresAt: time.Now().Add(ttl), err: cloneDNSError(err)}
+		r.mxCacheMu.Unlock()
+		return records, err
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case v := <-result:
+		if v.Err != nil {
+			return nil, cloneDNSError(v.Err)
+		}
+		return cloneMX(v.Val.([]*net.MX)), nil
 	}
-	r.mxCacheMu.Unlock()
-
-	r.logger.Debug("MX lookup successful",
-		zap.String("domain", domain),
-		zap.Int("mx_count", len(records)))
-
-	return records, nil
 }
-
-// LookupTXT performs TXT record lookup with caching
-// Used for SPF, DKIM, and DMARC lookups
 func (r *Resolver) LookupTXT(ctx context.Context, domain string) ([]string, error) {
-	// Check cache first
-	r.txtCacheMu.RLock()
-	if entry, exists := r.txtCache[domain]; exists {
-		if time.Now().Before(entry.expiresAt) {
-			r.txtCacheMu.RUnlock()
-			r.logger.Debug("TXT cache hit", zap.String("domain", domain))
-			return entry.records, nil
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	cached := func() ([]string, error, bool) {
+		r.txtCacheMu.RLock()
+		entry, ok := r.txtCache[domain]
+		r.txtCacheMu.RUnlock()
+		if ok && time.Now().Before(entry.expiresAt) {
+			r.hits.Add(1)
+			if entry.err != nil {
+				r.negativeHits.Add(1)
+			}
+			return cloneTXT(entry.records), cloneDNSError(entry.err), true
+		}
+		return nil, nil, false
+	}
+	if records, err, ok := cached(); ok {
+		return records, err
+	}
+	result := r.lookupGroup.DoChan("TXT:"+domain, func() (interface{}, error) {
+		if records, err, ok := cached(); ok {
+			return records, err
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+		r.misses.Add(1)
+		records, err := r.resolver.LookupTXT(lookupCtx, domain)
+		ttl := r.cacheTTL
+		if err != nil {
+			r.failures.Add(1)
+			var dnsErr *net.DNSError
+			if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound || dnsErr.IsTimeout || dnsErr.IsTemporary {
+				return nil, err
+			}
+			ttl = 30 * time.Second
+		}
+		r.txtCacheMu.Lock()
+		if len(r.txtCache) >= 4096 {
+			for key := range r.txtCache {
+				delete(r.txtCache, key)
+				break
+			}
+		}
+		r.txtCache[domain] = &txtCacheEntry{records: cloneTXT(records), expiresAt: time.Now().Add(ttl), err: cloneDNSError(err)}
+		r.txtCacheMu.Unlock()
+		return records, err
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case v := <-result:
+		if v.Err != nil {
+			return nil, cloneDNSError(v.Err)
+		}
+		return cloneTXT(v.Val.([]string)), nil
+	}
+}
+func cloneMX(records []*net.MX) []*net.MX {
+	out := make([]*net.MX, len(records))
+	for i, v := range records {
+		if v != nil {
+			copy := *v
+			out[i] = &copy
 		}
 	}
-	r.txtCacheMu.RUnlock()
-
-	// Cache miss or expired - perform lookup
-	r.logger.Debug("TXT cache miss, performing lookup", zap.String("domain", domain))
-
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	records, err := r.resolver.LookupTXT(ctx, domain)
-	if err != nil {
-		r.logger.Warn("TXT lookup failed",
-			zap.String("domain", domain),
-			zap.Error(err))
-		return nil, err
+	return out
+}
+func cloneTXT(records []string) []string { return append([]string(nil), records...) }
+func cloneDNSError(err error) error {
+	if e, ok := err.(*net.DNSError); ok {
+		copy := *e
+		return &copy
 	}
-
-	// Update cache
-	r.txtCacheMu.Lock()
-	r.txtCache[domain] = &txtCacheEntry{
-		records:   records,
-		expiresAt: time.Now().Add(r.cacheTTL),
-	}
-	r.txtCacheMu.Unlock()
-
-	r.logger.Debug("TXT lookup successful",
-		zap.String("domain", domain),
-		zap.Int("record_count", len(records)))
-
-	return records, nil
+	return err
 }
 
 // LookupAddr performs reverse DNS lookup (PTR record)
@@ -251,4 +309,15 @@ func (r *Resolver) cleanupExpiredEntries() {
 		}
 	}
 	r.txtCacheMu.Unlock()
+}
+
+func (r *Resolver) Statistics() map[string]interface{} {
+	return map[string]interface{}{"cache": r.GetCacheStats(), "hits": r.hits.Load(), "misses": r.misses.Load(), "failures": r.failures.Load(), "negative_hits": r.negativeHits.Load(), "scope": "MX/TXT lookups"}
+}
+
+type lookupResolver interface {
+	LookupMX(context.Context, string) ([]*net.MX, error)
+	LookupTXT(context.Context, string) ([]string, error)
+	LookupAddr(context.Context, string) ([]string, error)
+	LookupIP(context.Context, string, string) ([]net.IP, error)
 }

@@ -71,7 +71,8 @@ Lists filter inaccessible cases/rules; individual inaccessible cases return 404.
 Build and run `mailhub-authcheck` as described in
 [deployment qualification](docs/DEPLOYMENT_QUALIFICATION.md) with the actual
 provider and valid/revoked tokens. API introspection support does not imply SMTP
-OAuth, SAML login, SCIM provisioning, or a token-issuing endpoint.
+OAuth or a token-issuing endpoint. SCIM Users provisioning and SAML-broker
+integration are documented in [enterprise identity](docs/ENTERPRISE_IDENTITY.md).
 
 ## Error handling
 
@@ -81,3 +82,6 @@ may also return 401. Read the plain-text response before diagnosing. Expired
 credentials, unavailable introspection, wrong scopes and TLS errors need operator
 review. There is no uniform JSON error envelope. See
 [troubleshooting](docs/TROUBLESHOOTING.md) for concrete checks.
+
+Dedicated operational scopes: `security:read`, `dns:read`, `greylisting:read`,
+`dmarc:read`, `dmarc:write`, `scim:read`, `scim:write`, and `config:write`.

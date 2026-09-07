@@ -18,7 +18,7 @@ func querySignature(args map[string]interface{}) string {
 	if filter == nil {
 		filter = map[string]interface{}{}
 	}
-	b, _ := json.Marshal(map[string]interface{}{"filter": filter, "sort": args["sort"]})
+	b, _ := json.Marshal(map[string]interface{}{"filter": filter, "sort": args["sort"], "collapseThreads": args["collapseThreads"]})
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 func (j *JMAPServer) rememberQuery(ctx context.Context, user, kind, state string, args map[string]interface{}, ids []string) (string, bool, error) {
@@ -45,7 +45,7 @@ func numericLimit(args map[string]interface{}, key string, defaultValue int) (in
 func (j *JMAPServer) queryChanges(ctx context.Context, user, kind string, args map[string]interface{}, id string) MethodResponse {
 	for key := range args {
 		switch key {
-		case "accountId", "filter", "sort", "sinceQueryState", "maxChanges", "calculateTotal":
+		case "accountId", "filter", "sort", "sinceQueryState", "maxChanges", "calculateTotal", "collapseThreads":
 		default:
 			return methodError("invalidArguments", id)
 		}
@@ -77,11 +77,15 @@ func (j *JMAPServer) queryChanges(ctx context.Context, user, kind string, args m
 	if err != nil {
 		return methodError("serverFail", id)
 	}
-	queryArgs := map[string]interface{}{"filter": args["filter"], "sort": args["sort"], "limit": float64(0)}
+	queryArgs := map[string]interface{}{"filter": args["filter"], "sort": args["sort"], "limit": float64(0), "collapseThreads": args["collapseThreads"]}
 	var r MethodResponse
 	if kind == "Email" {
 		r = j.emailQuery(ctx, user, queryArgs, id)
 	} else {
+		if args["collapseThreads"] != nil {
+			return methodError("invalidArguments", id)
+		}
+		delete(queryArgs, "collapseThreads")
 		r = j.submissionQuery(ctx, user, queryArgs, id)
 	}
 	if r.Name == "error" {

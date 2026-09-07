@@ -102,7 +102,7 @@ func (qm *QueueManager) executeSieve(msg *Message, user, rcpt string, action *po
 			data := removeHeader(removeHeader(msg.Data, "Return-Path"), "Bcc")
 			data = append([]byte("Received: by "+qm.hostname+" with Sieve; "+time.Now().Format(time.RFC1123Z)+"\r\n"), data...)
 			child := &Message{From: msg.From, To: []string{a.Target}, Data: data, Tier: TierOut, ClientIP: msg.ClientIP, ParentTraceID: msg.TraceID, Quarantine: msg.Quarantine, QuarantineFolder: msg.QuarantineFolder}
-			if err = qm.enqueueSieveOnce(child, sieveKey("redirect", msg.ID, user, strings.ToLower(a.Target)), "", time.Time{}, msg.ID); err != nil {
+			if err = qm.enqueueSieveOnce(child, sieveKey("redirect", msg.ID, user, strings.ToLower(a.Target)), "", time.Time{}, msg.ID, user); err != nil {
 				return err
 			}
 		case policy.ActionVacation:
@@ -146,6 +146,9 @@ func (qm *QueueManager) enqueueSieveOnce(child *Message, key, interval string, u
 	if len(source) > 0 {
 		metadata["source_id"] = source[0]
 	}
+	if len(source) > 1 {
+		metadata["username"] = source[1]
+	}
 	marker := sieveRecord(key, metadata)
 	if interval != "" {
 		if old, err := qm.store.Get(interval); err == nil {
@@ -161,7 +164,7 @@ func (qm *QueueManager) enqueueSieveOnce(child *Message, key, interval string, u
 				return err
 			}
 		}
-		child.ExtraReceipts = []*storage.JournalEntry{sieveRecord(interval, map[string]string{"until": until.Format(time.RFC3339Nano)})}
+		child.ExtraReceipts = []*storage.JournalEntry{sieveRecord(interval, map[string]string{"until": until.Format(time.RFC3339Nano), "username": metadata["username"]})}
 	}
 	child.SubmissionReceipt = marker
 	return qm.Enqueue(child)
@@ -282,5 +285,5 @@ func (qm *QueueManager) sieveVacation(msg *Message, user, rcpt string, v *policy
 	key := sieveKey("vacation", msg.ID, user, handle)
 	interval := sieveKey("vacation-interval", user, strings.ToLower(from.Address), handle)
 	child := &Message{From: "", To: []string{from.Address}, Data: data.Bytes(), Tier: TierOut, IsBounce: true, ParentTraceID: msg.TraceID, Quarantine: msg.Quarantine, QuarantineFolder: msg.QuarantineFolder}
-	return qm.enqueueSieveOnce(child, key, interval, time.Now().Add(time.Duration(v.Days)*24*time.Hour), msg.ID)
+	return qm.enqueueSieveOnce(child, key, interval, time.Now().Add(time.Duration(v.Days)*24*time.Hour), msg.ID, user)
 }

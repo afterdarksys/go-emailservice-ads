@@ -93,6 +93,10 @@ func (s *MailboxStore) EmailSnapshot(ctx context.Context, user string) (map[stri
 		}
 		m.Date = time.Unix(date, 0)
 		m.Deleted = deleted != 0
+		m.ThreadID, err = s.adapter.store.ThreadIdentity(m.ID)
+		if err != nil {
+			return nil, "", err
+		}
 		out[m.ID] = m
 	}
 	return out, stateToken(prefix, revision), rows.Err()

@@ -33,7 +33,21 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/storage"
 )
 
+var replaceProcess bool
+
 func main() {
+	runMain()
+	if replaceProcess {
+		executable, err := os.Executable()
+		if err == nil {
+			err = syscall.Exec(executable, os.Args, os.Environ())
+		}
+		fmt.Fprintln(os.Stderr, "Configuration reload process replacement failed:", err)
+		os.Exit(1)
+	}
+}
+
+func runMain() {
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	checkConfig := flag.Bool("check-config", false, "Validate configuration without starting services or writing files")
 	showVersion := flag.Bool("version", false, "Print release version")
@@ -277,6 +291,13 @@ func main() {
 		}
 	}
 
+	if cfg.Auth.LDAP.Enabled {
+		provider, err := auth.NewLDAPProvider(cfg.Auth.LDAP)
+		if err != nil {
+			logger.Fatal("Invalid LDAP configuration", zap.Error(err))
+		}
+		imapUserStore.SetLDAPProvider(provider)
+	}
 	// Initialize SSO for IMAP if enabled
 	if cfg.SSO.Enabled {
 		ssoProvider := auth.NewSSOProvider(cfg, logger)
@@ -304,7 +325,19 @@ func main() {
 	}
 	retryScheduler.Start()
 	// Start API Servers with full dependencies
+	reloadRequests := make(chan struct{}, 1)
 	apiServer := api.NewServer(cfg, logger, store, queueManager, replicator, metricsCollector, policyMgr, imapUserStore)
+	apiServer.SetConfigReload(func() error {
+		if err := validateReloadConfig(*configPath); err != nil {
+			return err
+		}
+		select {
+		case reloadRequests <- struct{}{}:
+			return nil
+		default:
+			return fmt.Errorf("reload already pending")
+		}
+	})
 	if err := apiServer.Start(); err != nil {
 		logger.Fatal("API startup failed", zap.Error(err))
 	}
@@ -382,8 +415,25 @@ func main() {
 
 	// Graceful Shutdown Handling
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(quit)
+waitForStop:
+	for {
+		select {
+		case sig := <-quit:
+			if sig != syscall.SIGHUP {
+				break waitForStop
+			}
+		case <-reloadRequests:
+		}
+		if err := validateReloadConfig(*configPath); err != nil {
+			logger.Error("Configuration reload rejected; current configuration remains active", zap.Error(err))
+			continue
+		}
+		replaceProcess = true
+		logger.Info("Configuration reload validated; draining services before process replacement")
+		break
+	}
 
 	logger.Info("Received shutdown signal, shutting down systems...")
 

@@ -31,6 +31,8 @@ var (
 
 // User represents an authenticated user
 type User struct {
+	SCIMID       string
+	ExternalID   string
 	Username     string
 	PasswordHash string
 	Email        string
@@ -47,8 +49,9 @@ type failureRecord struct {
 
 // UserStore manages user authentication with account lockout protection
 type UserStore struct {
-	users map[string]*User
-	mu    sync.RWMutex
+	directory directoryAuthenticator
+	users     map[string]*User
+	mu        sync.RWMutex
 
 	// Account lockout tracking
 	failuresByUsername map[string]*failureRecord
@@ -141,6 +144,11 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		return err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[username]; exists {
+		return ErrAccountConflict
+	}
 	user := &User{
 		Username:     username,
 		PasswordHash: string(hash),
@@ -161,9 +169,7 @@ func (s *UserStore) AddUser(username, password, email string) error {
 		}
 	}
 
-	s.mu.Lock()
 	s.users[username] = user
-	s.mu.Unlock()
 	return nil
 }
 
@@ -190,8 +196,26 @@ func (s *UserStore) AuthenticateWithIP(username, password, ip string) (*User, er
 		}
 	}
 
+	// Local disablement is authoritative even when credentials are external.
+	local, exists := s.GetUser(username)
+	if exists && !local.Enabled {
+		s.recordFailure(username, ip, now)
+		return nil, ErrInvalidCredentials
+	}
+	if s.directory != nil && s.directory.Matches(username) {
+		if !exists || s.directory.Authenticate(username, password) != nil {
+			s.recordFailure(username, ip, now)
+			return nil, ErrInvalidCredentials
+		}
+		s.clearFailures(username, ip)
+		return local, nil
+	}
 	// Try SSO authentication first for @msgs.global users
 	if s.ssoProvider != nil && strings.HasSuffix(strings.ToLower(username), "@msgs.global") {
+		if !exists {
+			s.recordFailure(username, ip, now)
+			return nil, ErrInvalidCredentials
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -448,7 +472,11 @@ func (s *UserStore) GetUser(username string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	user, exists := s.users[username]
-	return user, exists
+	if !exists {
+		return nil, false
+	}
+	copy := *user
+	return &copy, true
 }
 
 // ListUsers returns a snapshot of all users sorted by username. The returned
@@ -470,9 +498,9 @@ func (s *UserStore) ListUsers() []User {
 // The persisted copy is updated first so a failed write never leaves memory
 // and database out of sync in favor of the unsaved value.
 func (s *UserStore) UpdateEmail(username, email string) error {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	user, exists := s.users[username]
-	s.mu.RUnlock()
 	if !exists {
 		return ErrUserNotFound
 	}
@@ -492,9 +520,7 @@ func (s *UserStore) UpdateEmail(username, email string) error {
 		}
 	}
 
-	s.mu.Lock()
 	s.users[username] = &updated
-	s.mu.Unlock()
 	return nil
 }
 
@@ -503,9 +529,9 @@ func (s *UserStore) UpdateEmail(username, email string) error {
 // The database delete runs first so a failed persistence layer never leaves
 // a user deleted in memory but resurrected on the next restart.
 func (s *UserStore) DeleteUser(username string) error {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, exists := s.users[username]
-	s.mu.RUnlock()
 	if !exists {
 		return ErrUserNotFound
 	}
@@ -522,9 +548,7 @@ func (s *UserStore) DeleteUser(username string) error {
 		}
 	}
 
-	s.mu.Lock()
 	delete(s.users, username)
-	s.mu.Unlock()
 	return nil
 }
 

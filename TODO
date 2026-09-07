@@ -50,18 +50,18 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Add Email/query and EmailSubmission/query anchors, signed offsets and negative positions, with filtered/owner-scoped lookup and unchanged query snapshots across pages.
 - [x] Add bounded JMAP bodyStructure composition/readback, inline CID parts and owner-scoped MIME-part blob reuse, with independent copied bytes and restored-service qualification.
 - [x] Add bounded JMAP delayed submission and atomic cancellation, with durable pending/final/canceled receipt changes and restored pending-send qualification.
-- [ ] Add JMAP thread collapsing and push.
+- [x] Add immutable JMAP thread grouping, Thread/get/changes, collapsed queries and bounded authenticated SSE push. See docs/JMAP_THREADS_PUSH.md.
 - [x] Add opt-in automatic receipt/Sieve journal checkpoint retention, protecting pending sends, live retry sources and unexpired vacation intervals. Legacy unlinked checkpoints and mailbox tombstones remain retained. See docs/CONFIGURATION.md.
-- [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
+- [x] Reconcile M3: add provisioned-account LDAP/AD password authentication, scoped durable SCIM Users provisioning, and audience-bound JMAP tokens for a SAML identity broker. Native SAML browser endpoints and SMTP/IMAP OAuth are not claimed; provider qualification remains operational. See docs/ENTERPRISE_IDENTITY.md.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
-- [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.
-- [ ] Add dedicated security/DNS/greylisting statistics APIs if needed; these legacy proposed routes are not registered by the active REST server.
+- [x] Implement durable daily DMARC XML aggregation, verified external mailto destinations, outbound delivery and administrative export/retry APIs. See docs/DMARC_REPORTING.md.
+- [x] Expose actual listener security/DNS/greylisting statistics through scoped active REST routes. See docs/OPERATIONS_STATISTICS.md.
 - [x] Add docs/openapi.json for the active management API, with CI checks for document structure/references, routes, permissions, JSON field drift and representative handler responses.
-- [ ] Implement general configuration reload if needed. Policies, TLS material and file-backed API keys have specific live-update mechanisms; other settings require restart.
-- [ ] Evaluate message compression, streaming/lazy listing and DNS negative-cache/prefetch optimizations using measured bottlenecks.
-- [ ] Define comprehensive personal-data export/deletion coverage, including mailbox data, evidence, logs and retained backups. Existing compliance APIs are not a complete privacy workflow.
+- [x] Add validated SIGHUP/API configuration reload through graceful process replacement, with read-only preflight and explicit reconnect/runtime-dependency boundaries. See docs/CONFIGURATION_RELOAD.md.
+- [x] Measure and optimize storage header reads, metadata-only listings and bounded/coalesced DNS negative caching. Compression and speculative prefetch were evaluated as deferred alternatives, not silently enabled. See docs/PERFORMANCE_MEASUREMENTS.md.
+- [x] Add offline personal-data inventory/export and staged local deletion, with shared/evidence protection, database cleanup, and explicit external log/backup/disposition obligations. Final request closure requires those obligations to be verified. See docs/PERSONAL_DATA.md.
 - [ ] Scope optional gRPC management API, webhooks, plugin interfaces, web admin UI and advanced routing extensions before implementation. The old placeholder management gRPC listener was removed.
-- [ ] Audit historical feature guides and experimental subsystems before promoting additional capabilities to the supported platform. Source TODO comments are not all on the active mail path.
+- [x] Audit historical feature claims and inactive prototypes; archive the unfinished OAuth web-session prototype and document all remaining scope in docs/PROJECT_COMPLETION_AUDIT.md.
 
 ## Implemented and reconciled from older lists
 
@@ -93,4 +93,5 @@ filtering is a scanner/model integration decision, not evidence of a built-in
 trained classifier. Retention/compaction exists, but comprehensive automated DLQ
 and backup disposal remains operational/engineering work. Encryption at rest is
 a deployment requirement; no built-in encrypted journal is claimed. Extension
-work and performance optimizations remain deferred rather than silently closed.
+work remains scoped separately. Measured performance improvements and privacy
+workflow coverage are recorded above; production validation remains open.
