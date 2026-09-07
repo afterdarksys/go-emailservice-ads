@@ -1,4 +1,4 @@
-# JMAP API: reads, keyword writes and email changes
+# JMAP API: mailbox management and email synchronization
 
 The optional JMAP listener uses its configured address. Put it behind a trusted
 TLS terminator as described in CONFIGURATION.md. Authentication accepts shared
@@ -10,8 +10,9 @@ Method calls and responses use standard three-element arrays
 
 Discover URLs with `GET /.well-known/jmap`. Use the discovered `primary` account
 ID for `POST /jmap/api`. With the durable mailbox store, the account allows keyword
-writes and mailbox rights advertise `maySetSeen`/`maySetKeywords`. Other mutation
-rights remain false. A custom backend without the synchronization interface stays
+writes and mailbox management. Mailbox rights advertise keyword updates and
+child creation; rename/delete are enabled except for INBOX. Message add/remove
+and submission rights remain false. A custom backend without the synchronization interface stays
 read-only. Request bodies, method counts and get/set/query results are bounded.
 
 | Operation | Current behavior |
@@ -22,9 +23,55 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | Email/set | Update keywords using replacement or patch syntax; conditional writes with ifInState; per-object notFound/invalidProperties errors. Creation/destruction return per-object forbidden errors. Other email properties cannot be changed. |
 | Email/changes | Durable, account-scoped created/updated/destroyed IDs, bounded pagination and restart/restore continuity. |
 | GET download URL | Owner-scoped raw message or decoded MIME part; another account gets 404. |
-| Mailbox/set | forbidden with the durable store; accountReadOnly with a read-only custom backend. |
-| Mailbox/changes | cannotCalculateChanges; retrieve current mailbox state. |
+| Mailbox/set | Create, rename/reparent, subscribe/unsubscribe, sort order and empty-mailbox deletion; conditional state checks and per-object errors. |
+| Mailbox/changes | Durable, account-scoped created/updated/destroyed mailbox IDs, including count and IMAP changes. |
 | Upload | HTTP 501. |
+
+## Mailbox management
+
+Mailbox IDs are opaque and survive renames, reparenting, restart and backup
+restore. Use IDs returned by Mailbox/get for parentId, Email/get mailboxIds and
+Email/query inMailbox; never derive an ID from a folder name.
+
+Mailbox/set accepts create/update objects with name, parentId, isSubscribed and
+sortOrder. Name is a single path component; the full IMAP path must fit 255 bytes
+and ten levels. parentId null means top-level. Creation defaults to unsubscribed
+with sortOrder 0; role assignment is automatic for standard folders and cannot
+be changed through this API. Within one request, parentId may reference a create
+key as `#key`; cyclic or missing references fail with invalidProperties.
+
+```json
+["Mailbox/set", {
+  "accountId": "primary",
+  "ifInState": "STATE_FROM_MAILBOX_GET",
+  "create": {
+    "projects": {"name": "Projects", "isSubscribed": true},
+    "active": {"name": "Active", "parentId": "#projects"}
+  }
+}, "folders"]
+```
+
+Use update keyed by mailbox ID to rename or reparent, and destroy as an array of
+IDs. INBOX cannot be renamed, reparented or deleted. Deletion rejects nonempty
+mailboxes with mailboxHasEmail and parents with remaining children with
+mailboxHasChild; children requested for deletion are processed first.
+onDestroyRemoveEmails must be absent or false. Each mailbox mutation commits
+atomically, while a batch can partly succeed: inspect notCreated, notUpdated and
+notDestroyed. ifInState is checked before any mutations under the shared write
+lock; stale stateMismatch requests make no changes. IMAP sessions selected on a
+renamed/deleted mailbox receive BYE and must reconnect.
+
+Mailbox/changes uses the same paging/recovery procedure as Email/changes, with
+its own state from Mailbox/get and separate 10,000-event history per account.
+updatedProperties is null: fetch complete updated mailbox objects. Counts,
+subscriptions and hierarchy changes through SMTP/IMAP also advance this feed.
+
+**Upgrade:** back up before starting the new binary. Startup migrates mailbox.db
+once, replacing the old path-derived mailbox IDs with persistent IDs. Refresh
+Mailbox/get and cached Email/get mailboxIds after upgrading; the migration also
+emits email update events for existing messages. Old mailbox hash states return
+cannotCalculateChanges. Deleting and recreating a folder assigns a new ID.
+The SQLite backup includes both change journals and stable mailbox identities.
 
 ## Keyword updates
 
@@ -85,7 +132,7 @@ unsupportedFilter. Email/query still reports canCalculateChanges=false:
 Email/queryChanges is not implemented. Email/changes is an object change feed,
 not incremental query membership or ordering.
 
-Mailbox writes, email creation/import/destruction, JMAP moves, upload, thread
+Email creation/import/destruction, JMAP moves, upload, thread
 grouping, submission and push remain unimplemented. Use SMTP/IMAP for these
 supported mail workflows. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and

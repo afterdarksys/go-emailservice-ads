@@ -35,6 +35,7 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Message reading | BODY.PEEK and EXAMINE preserve unread state; BODY in a writable selection sets Seen. |
 | Search | Header, decoded body, wildcard UID and sent-date criteria select matching messages. |
 | Recovery | Credentials, folders, copied message isolation, flags and internal dates survive restored-service startup. |
+| JMAP mailbox management | Create/rename/reparent/subscription and protected empty deletion agree with IMAP; stable IDs and Mailbox/changes survive backup restore. |
 | JMAP keyword synchronization | Email/set updates appear in IMAP; stale states and foreign-owned IDs are rejected; Email/changes tracks IMAP updates through backup restore. |
 
 Go regressions additionally cover quota-atomic COPY, account isolation, deleted
@@ -88,8 +89,8 @@ text, not RFC 5322 headers. Flags and the selected folder persist together.
 
 ## Remaining acceptance boundaries
 
-The optional JMAP listener supports reads, keyword updates and durable
-Email/changes; see [JMAP API](JMAP_API.md). Mailbox writes, other email mutations,
+The optional JMAP listener supports reads, keyword updates, mailbox management and durable
+Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Other email mutations,
 mailbox/query synchronization and broader Sieve extensions remain open work.
 
 Production OAuth, public DNS/signing, external scanner behavior, Object Lock and

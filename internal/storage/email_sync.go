@@ -74,7 +74,7 @@ func (s *MailboxStore) EmailSnapshot(ctx context.Context, user string) (map[stri
 	if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT msg_id,mailbox,uid,flags,sender,subject,size,sent_at,deleted FROM message_flags WHERE username=? AND expunged=0`, user)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.msg_id,m.mailbox,COALESCE(c.jmap_id,''),m.uid,m.flags,m.sender,m.subject,m.size,m.sent_at,m.deleted FROM message_flags m LEFT JOIN mailbox_catalog c ON c.username=m.username AND c.mailbox=m.mailbox WHERE m.username=? AND m.expunged=0`, user)
 	if err != nil {
 		return nil, "", err
 	}
@@ -85,7 +85,7 @@ func (s *MailboxStore) EmailSnapshot(ctx context.Context, user string) (map[stri
 		var flags string
 		var date int64
 		var deleted int
-		if err = rows.Scan(&m.ID, &m.Folder, &m.UID, &flags, &m.From, &m.Subject, &m.Size, &date, &deleted); err != nil {
+		if err = rows.Scan(&m.ID, &m.Folder, &m.MailboxID, &m.UID, &flags, &m.From, &m.Subject, &m.Size, &date, &deleted); err != nil {
 			return nil, "", err
 		}
 		if flags != "" {

@@ -233,7 +233,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 				MaxSizeMailboxName:         255,
 				MaxSizeAttachmentsPerEmail: 50 * 1024 * 1024,
 				EmailQuerySortOptions:      []string{},
-				MayCreateTopLevelMailbox:   false,
+				MayCreateTopLevelMailbox:   j.mailboxWrites(),
 			},
 		},
 		Accounts: map[string]Account{
@@ -352,10 +352,7 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 	case "Mailbox/get":
 		return j.mailboxGet(ctx, authUser, args, callID)
 	case "Mailbox/set":
-		if j.keywordWrites() {
-			return methodError("forbidden", callID)
-		}
-		return methodError("accountReadOnly", callID)
+		return j.mailboxSet(ctx, authUser, args, callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/set":
@@ -365,7 +362,7 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 	case "Email/changes":
 		return j.emailChanges(ctx, authUser, args, callID)
 	case "Mailbox/changes":
-		return methodError("cannotCalculateChanges", callID)
+		return j.mailboxChanges(ctx, authUser, args, callID)
 	default:
 		return MethodResponse{
 			Name: "error",
