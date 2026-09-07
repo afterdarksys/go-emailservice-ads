@@ -2692,6 +2692,14 @@
           },
           "ForceSecondServer": {
             "type": "string"
+          },
+          "Actions": {
+            "type": "array",
+            "nullable": true,
+            "description": "Per-recipient Sieve execution plan. Null for non-Sieve policy actions.",
+            "items": {
+              "$ref": "#/components/schemas/PolicyAction"
+            }
           }
         }
       },

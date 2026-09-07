@@ -3,6 +3,7 @@ package jmap
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,9 @@ type recordingSubmitter struct {
 func (s *recordingSubmitter) Submit(ctx context.Context, user, ip, mid, from string, to []string, data []byte) (mailstate.Submission, error) {
 	s.calls++
 	r := mailstate.Submission{ID: "receipt", EmailID: mid, IdentityID: "primary", ThreadID: mid, SendAt: "2026-01-01T00:00:00Z", UndoStatus: "final"}
+	if s.calls > 1 {
+		r.ID = fmt.Sprint("receipt-", s.calls)
+	}
 	s.records[user] = append(s.records[user], r)
 	return r, nil
 }
@@ -171,7 +175,7 @@ func TestSubmissionCreationReferenceAuthorizationAndState(t *testing.T) {
 		kind string
 	}{
 		{"alice", map[string]interface{}{"ifInState": "stale", "create": map[string]interface{}{"send": valid}}, "stateMismatch"},
-		{"alice", map[string]interface{}{"create": map[string]interface{}{"send": valid}, "onSuccessDestroyEmail": []interface{}{"#send"}}, "invalidArguments"},
+		{"alice", map[string]interface{}{"create": map[string]interface{}{"send": valid}, "onSuccessDestroyEmail": true}, "invalidArguments"},
 		{"bob", map[string]interface{}{"create": map[string]interface{}{"send": valid}}, "invalidProperties"},
 	} {
 		got := call(tc.user, "EmailSubmission/set", tc.args)

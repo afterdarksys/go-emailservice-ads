@@ -32,7 +32,7 @@ func (s *MessageStore) capacity(add int64) error {
 	var size int64
 	count := 0
 	for _, e := range s.index {
-		if e.Tier != "mailbox" && e.Tier != "jmap_submission" {
+		if e.Tier != "mailbox" && e.Tier != "jmap_submission" && e.Tier != "sieve_effect" {
 			size += int64(len(e.Data))
 			count++
 		}

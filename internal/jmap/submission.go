@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
 	"github.com/emersion/go-smtp"
+	"go.uber.org/zap"
 )
 
 type submissionIPKey struct{}
@@ -117,7 +119,10 @@ func (j *JMAPServer) submissionGet(ctx context.Context, user string, args map[st
 	if err != nil {
 		return methodError("serverFail", id)
 	}
-	state := submissionState(user, list)
+	state, err := j.rememberSubmissions(ctx, user, list)
+	if err != nil {
+		return methodError("serverFail", id)
+	}
 	objects := []map[string]interface{}{}
 	for _, s := range list {
 		data, _ := json.Marshal(s)
@@ -294,7 +299,7 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 	}
 	for key := range args {
 		switch key {
-		case "accountId", "ifInState", "create", "update", "destroy":
+		case "accountId", "ifInState", "create", "update", "destroy", "onSuccessUpdateEmail", "onSuccessDestroyEmail":
 		default:
 			return methodError("invalidArguments", id)
 		}
@@ -319,13 +324,42 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 	if len(create)+len(update)+len(destroy) > maxJMAPObjects {
 		return methodError("tooManyObjectsInSet", id)
 	}
+	successUpdates := map[string]interface{}{}
+	if v := args["onSuccessUpdateEmail"]; v != nil {
+		var ok bool
+		successUpdates, ok = v.(map[string]interface{})
+		if !ok {
+			return methodError("invalidArguments", id)
+		}
+		for _, p := range successUpdates {
+			if _, ok := p.(map[string]interface{}); !ok {
+				return methodError("invalidArguments", id)
+			}
+		}
+	}
+	successDestroy := []string{}
+	if v := args["onSuccessDestroyEmail"]; v != nil {
+		successDestroy = toStringSlice(v)
+		if successDestroy == nil {
+			return methodError("invalidArguments", id)
+		}
+	}
+	if len(successUpdates)+len(successDestroy) > maxJMAPObjects {
+		return methodError("tooManyObjectsInSet", id)
+	}
+	if (len(successUpdates)+len(successDestroy) > 0) && !j.emailMutations() {
+		return methodError("invalidArguments", id)
+	}
 	j.submissionMu.Lock()
 	defer j.submissionMu.Unlock()
 	list, err := j.submitter.Submissions(ctx, user)
 	if err != nil {
 		return methodError("serverFail", id)
 	}
-	old := submissionState(user, list)
+	old, err := j.rememberSubmissions(ctx, user, list)
+	if err != nil {
+		return methodError("serverFail", id)
+	}
 	if v := args["ifInState"]; v != nil {
 		since, ok := v.(string)
 		if !ok {
@@ -336,6 +370,7 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 		}
 	}
 	created, nc, nu, nd := map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}
+	successful := map[string]string{}
 	keys := []string{}
 	for key := range create {
 		keys = append(keys, key)
@@ -347,26 +382,88 @@ func (j *JMAPServer) submissionSet(ctx context.Context, user string, args map[st
 			nc[key] = e
 		} else {
 			list = append(list, s)
+			successful["#"+key] = s.EmailID
+			successful[s.ID] = s.EmailID
 			created[key] = map[string]interface{}{"id": s.ID, "sendAt": s.SendAt, "undoStatus": s.UndoStatus, "deliveryStatus": nil, "threadId": s.ThreadID, "dsnBlobIds": []string{}, "mdnBlobIds": []string{}}
 		}
 	}
-	owned := map[string]bool{}
+	owned := map[string]string{}
 	for _, s := range list {
-		owned[s.ID] = true
+		owned[s.ID] = s.EmailID
 	}
 	for key := range update {
 		kind := "notFound"
-		if owned[key] {
+		if owned[key] != "" {
 			kind = "cannotUnsend"
 		}
 		nu[key] = map[string]interface{}{"type": kind}
 	}
+	destroyed := []string{}
+	removed := map[string]bool{}
 	for _, key := range destroy {
+		if removed[key] {
+			continue
+		}
 		kind := "notFound"
-		if owned[key] {
+		if owned[key] != "" {
 			kind = "forbidden"
+			if manager, ok := j.submitter.(mailstate.SubmissionManager); ok {
+				if err := manager.DestroySubmission(ctx, user, key); err != nil {
+					kind = "serverFail"
+				} else {
+					destroyed = append(destroyed, key)
+					removed[key] = true
+					successful[key] = owned[key]
+					continue
+				}
+			}
 		}
 		nd[key] = map[string]interface{}{"type": kind}
 	}
-	return MethodResponse{Name: "EmailSubmission/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": old, "newState": submissionState(user, list), "created": created, "notCreated": nc, "updated": map[string]interface{}{}, "notUpdated": nu, "destroyed": []string{}, "notDestroyed": nd}}
+	remaining := []mailstate.Submission{}
+	for _, r := range list {
+		if !removed[r.ID] {
+			remaining = append(remaining, r)
+		}
+	}
+	newState := submissionState(user, remaining)
+	// Acceptance/deletion has already committed: history failure cannot turn it
+	// into a method error that invites an accidental duplicate send.
+	if _, err := j.rememberSubmissions(ctx, user, remaining); err != nil && j.logger != nil {
+		j.logger.Warn("Submission history checkpoint failed after committed mutation", zap.Error(err))
+	}
+
+	response := MethodResponse{Name: "EmailSubmission/set", CallID: id, Arguments: map[string]interface{}{"accountId": "primary", "oldState": old, "newState": newState, "created": created, "notCreated": nc, "updated": map[string]interface{}{}, "notUpdated": nu, "destroyed": destroyed, "notDestroyed": nd}}
+
+	if args["onSuccessUpdateEmail"] != nil || args["onSuccessDestroyEmail"] != nil {
+		updates := map[string]interface{}{}
+		remove := []interface{}{}
+		hookKeys := []string{}
+		for key := range successUpdates {
+			hookKeys = append(hookKeys, key)
+		}
+		sort.Strings(hookKeys)
+		for _, key := range hookKeys {
+			if mid := successful[key]; mid != "" {
+				merged, ok := updates[mid].(map[string]interface{})
+				if !ok {
+					merged = map[string]interface{}{}
+				}
+				for property, value := range successUpdates[key].(map[string]interface{}) {
+					if old, exists := merged[property]; exists && !reflect.DeepEqual(old, value) {
+						merged["conflictingSuccessHooks"] = true
+					}
+					merged[property] = value
+				}
+				updates[mid] = merged
+			}
+		}
+		for _, key := range successDestroy {
+			if mid := successful[key]; mid != "" {
+				remove = append(remove, mid)
+			}
+		}
+		response.Followups = []MethodResponse{j.processMethodCall(ctx, user, MethodCall{Name: "Email/set", ID: id, Arguments: map[string]interface{}{"update": updates, "destroy": remove}})}
+	}
+	return response
 }

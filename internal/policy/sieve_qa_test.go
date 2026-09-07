@@ -13,7 +13,7 @@ func TestSieveRejectsInvalidAndUnsupportedPrograms(t *testing.T) {
 	}
 	for _, script := range []string{
 		`if imaginary { discard; }`, `unknown_action;`, `keep`, `fileinto;`,
-		`require "vacation";`, `require "copy";`, `fileinto :copy "Archive";`,
+		`require "enotify";`, `vacation "away";`, `fileinto :copy "Archive";`,
 		`if header :unknown "Subject" "x" { discard; }`,
 		`if header "Subject" { keep; }`, `fileinto "unterminated`, `/* unterminated`,
 		`if size :over 999999999999999999999999 { keep; }`, `if size :over 9223372036854775807G { keep; }`, `keep; }`, `if true { keep;`, `require ["fileinto" "reject"];`,
@@ -43,8 +43,8 @@ func TestSieveRoutingFlagsEnvelopeAndFailureSemantics(t *testing.T) {
 	if _, err = engine.Evaluate(ctx, email, `discard;`); err == nil {
 		t.Fatal("ignored cancellation")
 	}
-	if _, err = engine.Evaluate(context.Background(), email, `fileinto "A"; fileinto "B";`); err == nil {
-		t.Fatal("silently dropped a delivery action")
+	if action, err = engine.Evaluate(context.Background(), email, `fileinto "A"; fileinto "B";`); err != nil || len(action.Actions) != 2 {
+		t.Fatal("lost a delivery action", action, err)
 	}
 	explosive := `require "variables"; set "x" "xxxxxxxx";` + strings.Repeat(`set "x" "${x}${x}";`, 30) + `keep;`
 	if _, err = engine.Evaluate(context.Background(), email, explosive); err == nil {

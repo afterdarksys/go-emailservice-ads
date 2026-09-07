@@ -128,7 +128,7 @@ func (s *MessageStore) Store(entry *JournalEntry) (string, bool, error) {
 }
 
 // StoreWithReceipt journals queue acceptance and its receipt in one record batch.
-func (s *MessageStore) StoreWithReceipt(entry, receipt *JournalEntry) (string, bool, error) {
+func (s *MessageStore) StoreWithReceipt(entry *JournalEntry, receipts ...*JournalEntry) (string, bool, error) {
 	if entry.MessageID == "" {
 		entry.MessageID = uuid.NewString()
 	}
@@ -153,14 +153,19 @@ func (s *MessageStore) StoreWithReceipt(entry, receipt *JournalEntry) (string, b
 		s.indexMu.Unlock()
 		return "", false, err
 	}
-	if entry.Tier != "mailbox" && entry.Tier != "emergency" && entry.Tier != "jmap_submission" {
+	if entry.Tier != "mailbox" && entry.Tier != "emergency" && entry.Tier != "jmap_submission" && entry.Tier != "sieve_effect" {
 		if err := s.capacity(int64(len(entry.Data))); err != nil {
 			s.indexMu.Unlock()
 			return "", false, err
 		}
 	}
-	if receipt != nil {
-		if receipt.MessageID == "" || receipt.MessageID == entry.MessageID {
+	batch := []*JournalEntry{entry}
+	seen := map[string]bool{entry.MessageID: true}
+	for _, receipt := range receipts {
+		if receipt == nil {
+			continue
+		}
+		if receipt.MessageID == "" || seen[receipt.MessageID] {
 			s.indexMu.Unlock()
 			return "", false, fmt.Errorf("invalid receipt ID")
 		}
@@ -168,12 +173,14 @@ func (s *MessageStore) StoreWithReceipt(entry, receipt *JournalEntry) (string, b
 			s.indexMu.Unlock()
 			return "", false, fmt.Errorf("receipt already exists")
 		}
+		seen[receipt.MessageID] = true
+		batch = append(batch, receipt)
 	}
 	var err error
-	if receipt == nil {
+	if len(batch) == 1 {
 		err = s.journal.Write(entry)
 	} else {
-		err = s.journal.WriteBatch(entry, receipt)
+		err = s.journal.WriteBatch(batch...)
 	}
 	if err != nil {
 		s.indexMu.Unlock()
@@ -181,9 +188,8 @@ func (s *MessageStore) StoreWithReceipt(entry, receipt *JournalEntry) (string, b
 	}
 
 	// Update in-memory index
-	s.index[entry.MessageID] = cloneEntry(entry)
-	if receipt != nil {
-		s.index[receipt.MessageID] = cloneEntry(receipt)
+	for _, record := range batch {
+		s.index[record.MessageID] = cloneEntry(record)
 	}
 	s.indexMu.Unlock()
 

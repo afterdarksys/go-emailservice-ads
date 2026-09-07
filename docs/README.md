@@ -17,10 +17,12 @@ the active `cmd/goemailservices` executable as reviewed on 2026-09-06.
 | Write policies and configure IP admission | [Starlark filters](STARLARK_FILTERS.md) and [IP filtering](IP_FILTERING.md) |
 | Execute QA/UAT and configure Sieve | [QA/UAT guide](QA_UAT.md) and [Sieve flags](SIEVE_FLAGS.md) |
 | Record preliminary acceptance and candidate evidence | [Preliminary UAT](PRELIMINARY_UAT.md) |
-| Integrate JMAP reads, keyword writes and email changes | [JMAP API](JMAP_API.md) |
+| Integrate JMAP composition, send workflows and synchronization | [JMAP API](JMAP_API.md) |
 | See outstanding work | [TODO](../TODO) |
 
 The REST API reference takes precedence over older CLI/router examples. Source
 packages for experimental administration, cluster coordination or protocols do
 not by themselves establish support in the main executable. Historical design
 plans under `.planning/phases` remain proposals unless reconciled in TODO.
+
+Per-user forwarding, vacation replies and multi-folder delivery: [Sieve workflows](SIEVE_WORKFLOWS.md).

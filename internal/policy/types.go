@@ -40,6 +40,7 @@ const (
 
 // Action represents the result of policy evaluation
 type Action struct {
+	Actions  []*Action  // Per-recipient Sieve execution plan; nil for other policy engines.
 	Trace    []string   // Bounded diagnostics from Starlark print/log calls.
 	Type     ActionType // Action to take
 	Reason   string     // Human-readable reason (for reject/defer)
@@ -72,11 +73,15 @@ type Header struct {
 
 // Vacation represents vacation responder settings
 type Vacation struct {
-	Subject  string
-	Message  string
-	Days     int
-	FromDate time.Time
-	ToDate   time.Time
+	From      string
+	Addresses []string
+	Handle    string
+	MIME      bool
+	Subject   string
+	Message   string
+	Days      int
+	FromDate  time.Time
+	ToDate    time.Time
 }
 
 // Notify represents notification settings

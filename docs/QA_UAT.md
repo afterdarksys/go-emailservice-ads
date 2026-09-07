@@ -35,8 +35,10 @@ the restored service and verifies persisted state. Temporary files are removed.
 | Message reading | BODY.PEEK and EXAMINE preserve unread state; BODY in a writable selection sets Seen. |
 | Search | Header, decoded body, wildcard UID and sent-date criteria select matching messages. |
 | Recovery | Credentials, folders, copied message isolation, flags and internal dates survive restored-service startup. |
+| Query/receipt lifecycle | Query deltas and receipt deletion survive restore; deleting source/receipt does not cancel accepted delivery. |
+| Sieve workflows | Multiple folder copies retain their flags, redirects deliver once, and vacation suppression persists across restore. |
 | JMAP upload/import | Owner-scoped upload/download, MIME/attachment preservation, stale/foreign rejection, selected IMAP arrival and temporary-blob/import restore continuity. |
-| JMAP composition/submission | Text/HTML/attachment creation, selected IMAP arrival, authenticated local delivery with Bcc removed, owner/state checks, explicit Sent filing and receipt/message restore continuity. |
+| JMAP composition/submission | Text/HTML/attachment creation, selected IMAP arrival, authenticated local delivery with Bcc removed, owner/state checks, automatic Sent filing and receipt/message restore continuity. |
 | JMAP email move/delete | Combined mailboxIds/keyword updates are atomic; only requested emails are destroyed; selected IMAP sessions and both change feeds reconcile through restore. |
 | JMAP mailbox management | Create/rename/reparent/subscription and protected empty deletion agree with IMAP; stable IDs and Mailbox/changes survive backup restore. |
 | JMAP keyword synchronization | Email/set updates appear in IMAP; stale states and foreign-owned IDs are rejected; Email/changes tracks IMAP updates through backup restore. |
@@ -82,22 +84,22 @@ if body :contains "project" {
 }
 ```
 
-Supported declared extensions are fileinto, reject, envelope, body, variables and
-imap4flags. See [Sieve flags](SIEVE_FLAGS.md) for `:flags`, named flag sets,
-comparators, captures and required declarations. Unsupported capabilities/tags/actions are rejected. Vacation, redirect
-and multiple delivery actions are not implemented. A rejection after SMTP
-acceptance generates a DSN subject to normal DSN preferences and loop protection;
-`discard` intentionally consumes the message. Body tests inspect decoded MIME
-text, not RFC 5322 headers. Flags and the selected folder persist together.
+Supported declared extensions are fileinto, reject, envelope, body, variables,
+imap4flags, copy and vacation; redirect is a base action. See [Sieve flags](SIEVE_FLAGS.md)
+and [Sieve workflows](SIEVE_WORKFLOWS.md) for multiple actions, implicit keep,
+redirect loop limits, vacation suppression and retry semantics. Unsupported
+capabilities/tags/actions fail explicitly. Recipient rejection after SMTP
+acceptance generates a DSN subject to normal loop protection. Body tests inspect
+decoded MIME text. Flags and each selected-folder delivery persist together.
 
 ## Remaining acceptance boundaries
 
 The optional JMAP listener supports reads, uploads/imports, structured composition,
 immediate submission, keyword updates, email move/delete, mailbox management and
 durable Email/changes and Mailbox/changes; see [JMAP API](JMAP_API.md). Advanced
-composition, submission cancellation/delay and automatic success email updates,
-receipt query/changes/disposal, query synchronization and broader Sieve extensions
-remain open work. Acceptance receipts do not establish delivery or client UAT.
+composition, submission cancellation/delay, query anchors/thread collapsing/push,
+and automatic receipt/checkpoint expiry remain open work. Success email hooks,
+query/receipt synchronization and documented Sieve workflows are implemented. Acceptance receipts do not establish delivery or client UAT.
 
 Production OAuth, public DNS/signing, external scanner behavior, Object Lock and
 provider fencing require the actual deployment dependencies. Execute

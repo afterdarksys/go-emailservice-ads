@@ -213,6 +213,8 @@ type svBranch struct {
 }
 
 type svActionCmd struct {
+	copy          bool
+	vacation      *Vacation
 	name          string
 	flags         []string
 	explicitFlags bool
@@ -463,24 +465,96 @@ func (p *svParser) actionCmd() (*svActionCmd, error) {
 			}
 			p.capabilities[cap] = true
 		}
-	case "keep", "fileinto":
-		if p.peek().kind == svTokTag {
-			if p.adv().val != "flags" {
+	case "keep", "fileinto", "redirect":
+		seen := map[string]bool{}
+		for p.peek().kind == svTokTag {
+			tag := p.adv().val
+			if seen[tag] {
+				return nil, fmt.Errorf("duplicate delivery tag")
+			}
+			seen[tag] = true
+			switch tag {
+			case "flags":
+				if name == "redirect" {
+					return nil, fmt.Errorf("redirect does not accept flags")
+				}
+				if err := p.needCapability("imap4flags"); err != nil {
+					return nil, err
+				}
+				cmd.explicitFlags = true
+				cmd.flags = p.strList()
+			case "copy":
+				if name == "keep" {
+					return nil, fmt.Errorf("keep does not accept copy")
+				}
+				if err := p.needCapability("copy"); err != nil {
+					return nil, err
+				}
+				cmd.copy = true
+			default:
 				return nil, fmt.Errorf("unsupported Sieve delivery tag")
 			}
-			if err := p.needCapability("imap4flags"); err != nil {
-				return nil, err
-			}
-			cmd.explicitFlags = true
-			cmd.flags = p.strList()
 		}
-		if name == "fileinto" {
+		if name != "keep" {
 			arg, err := p.expect(svTokString)
 			if err != nil {
 				return nil, err
 			}
 			cmd.args = []string{arg.val}
 		}
+	case "vacation":
+		if err := p.needCapability("vacation"); err != nil {
+			return nil, err
+		}
+		v := &Vacation{Days: 7}
+		cmd.vacation = v
+		seen := map[string]bool{}
+		for p.peek().kind == svTokTag {
+			tag := p.adv().val
+			if seen[tag] {
+				return nil, fmt.Errorf("duplicate vacation tag")
+			}
+			seen[tag] = true
+			switch tag {
+			case "days":
+				n, err := p.expect(svTokNumber)
+				if err != nil {
+					return nil, err
+				}
+				days := n.num
+				if days < 1 {
+					days = 1
+				}
+				if days > 365 {
+					days = 365
+				}
+				v.Days = int(days)
+			case "addresses":
+				v.Addresses = p.strList()
+			case "mime":
+				v.MIME = true
+			case "subject", "from", "handle":
+				arg, err := p.expect(svTokString)
+				if err != nil {
+					return nil, err
+				}
+				switch tag {
+				case "subject":
+					v.Subject = arg.val
+				case "from":
+					v.From = arg.val
+				case "handle":
+					v.Handle = arg.val
+				}
+			default:
+				return nil, fmt.Errorf("unsupported vacation tag")
+			}
+		}
+		arg, err := p.expect(svTokString)
+		if err != nil {
+			return nil, err
+		}
+		v.Message = arg.val
 	case "setflag", "addflag", "removeflag":
 		if err := p.needCapability("imap4flags"); err != nil {
 			return nil, err
@@ -796,7 +870,7 @@ func (p *svParser) strList() []string {
 
 func svCapability(name string) bool {
 	switch name {
-	case "fileinto", "reject", "envelope", "body", "variables", "imap4flags":
+	case "fileinto", "reject", "envelope", "body", "variables", "imap4flags", "copy", "vacation":
 		return true
 	}
 	return false

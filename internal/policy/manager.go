@@ -217,7 +217,7 @@ func (m *Manager) Evaluate(ctx context.Context, emailCtx *EmailContext) (*Action
 		}
 		if action != nil {
 			headers = append(headers, action.Headers...)
-			if action.Type != ActionKeep && action.Type != ActionAccept {
+			if len(action.Actions) > 1 || action.Type != ActionKeep && action.Type != ActionAccept {
 				action.Headers = headers
 				return action, nil
 			}

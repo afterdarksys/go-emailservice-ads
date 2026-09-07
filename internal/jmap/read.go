@@ -252,6 +252,14 @@ func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]int
 	return obj
 }
 func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
+	for key := range args {
+		switch key {
+		case "accountId", "filter", "sort", "position", "limit", "calculateTotal":
+		default:
+			return methodError("invalidArguments", id)
+		}
+	}
+
 	owned, state, err := j.emailSnapshot(ctx, user)
 	if err != nil {
 		return methodError("serverFail", id)
@@ -342,6 +350,14 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 		}
 		return entries[a].meta.Date.After(entries[b].meta.Date)
 	})
+	allIDs := []string{}
+	for _, entry := range entries {
+		allIDs = append(allIDs, entry.id)
+	}
+	state, can, err := j.rememberQuery(ctx, user, "Email", state, args, allIDs)
+	if err != nil {
+		return methodError("serverFail", id)
+	}
 	total := len(entries)
 	if position > total {
 		position = total
@@ -354,7 +370,7 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 	for _, entry := range entries[position:end] {
 		ids = append(ids, entry.id)
 	}
-	return MethodResponse{Name: "Email/query", Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": false, "position": position, "ids": ids, "total": total}, CallID: id}
+	return MethodResponse{Name: "Email/query", Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": can, "position": position, "ids": ids, "total": total}, CallID: id}
 
 }
 

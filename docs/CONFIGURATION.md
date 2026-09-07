@@ -242,3 +242,11 @@ trusted TLS termination; per-IP message limits see the proxy address. Submission
 receipts are durable journal metadata with no automatic expiry and do not consume
 pending-message quota. Plan disk/backup capacity for their growth. See
 [submission semantics and troubleshooting](JMAP_API.md#submission-and-acceptance-receipts).
+
+JMAP query/receipt synchronization retains 64 recent snapshots per account and
+snapshot kind in mailbox.db, with at most 10,000 IDs per snapshot. Receipt deletion
+is explicit through EmailSubmission/set; automatic expiry is not configured.
+Sieve redirect/vacation/multiple-action checkpoints live in the journal and also
+survive restore. They do not count as pending mail, but require disk/backup capacity
+and retention planning. See [Sieve workflows](SIEVE_WORKFLOWS.md) for script paths,
+live replacement, suppression and retry behavior.

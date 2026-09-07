@@ -2,7 +2,9 @@
 
 Install per-user scripts as described in [QA/UAT](QA_UAT.md). Scripts are read
 on delivery; replace them atomically with service-account ownership. Invalid
-programs defer delivery for retry. No restart is needed to replace a script.
+programs defer delivery for retry. No restart is needed to replace a script. Once an incoming message has an evaluated
+execution plan, retries retain that plan; replacements apply to new messages. See
+[Sieve workflows](SIEVE_WORKFLOWS.md) for multiple actions and recovery.
 
 Declare `imap4flags` before using flag operations and `variables` before using
 named flag sets or `set`. All `require` statements must precede other commands.

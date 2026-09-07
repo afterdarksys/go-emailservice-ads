@@ -45,7 +45,9 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Add JMAP email move and destruction with atomic keyword/membership updates, owner/state checks, IMAP notifications and durable change-feed restore coverage.
 - [x] Add owner-scoped bounded uploads and atomic Email/import, with expiry/eviction, quota/state protection, raw MIME preservation, IMAP arrival and backup/restore coverage.
 - [x] Add bounded structured Email/set creation and authenticated EmailSubmission/set/get with primary Identity/get, shared SMTP admission, durable acceptance receipts, MIME/Bcc privacy and restore qualification.
-- [ ] Complete advanced JMAP composition (bodyStructure, inline CID and MIME-part blob reuse), submission cancellation/delay, automatic success email updates, receipt query/changes and disposal, query synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
+- [x] Add JMAP submission success email updates/destruction, durable email/receipt query synchronization, paginated receipt changes and owner-scoped receipt deletion, including restore qualification.
+- [x] Implement documented Sieve gaps: redirect, vacation, copy and multiple delivery actions with durable execution plans, retry checkpoints, loop limits and vacation suppression across restore.
+- [ ] Complete advanced JMAP composition (bodyStructure, inline CID and MIME-part blob reuse), submission cancellation/delay, query anchors/thread collapsing/push and automated receipt/Sieve-checkpoint retention if required. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.
