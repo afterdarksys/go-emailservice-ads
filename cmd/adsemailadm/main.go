@@ -39,25 +39,11 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "adsemailadm",
 		Short: "Admin utility for go-emailservice-ads",
-		Long: `adsemailadm - Administrative utility for go-emailservice-ads
 
-A comprehensive CLI tool for managing your email service:
-  • Queue management and visibility
-  • Monitoring and statistics
-  • Mailbox and delivery management
-  • TLS/SSL certificate management
-  • Directory service configuration
-  • Policy management
-  • System configuration
-
-Examples:
-  adsemailadm queue stats              # Show queue statistics
-  adsemailadm mailbox list              # List all mailboxes
-  adsemailadm policy test spam.star     # Test a policy
-  adsemailadm tls status                # Check TLS configuration
-  adsemailadm monitor realtime          # Real-time monitoring
-`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if apiKey == "" {
+				apiKey = os.Getenv("ADS_API_KEY")
+			}
 			// Setup runs before every command
 			if apiEndpoint == "" {
 				apiEndpoint = os.Getenv("ADS_API_ENDPOINT")
@@ -67,30 +53,24 @@ Examples:
 			}
 			if apiUser == "" {
 				apiUser = os.Getenv("ADS_API_USER")
-				if apiUser == "" {
-					apiUser = "admin"
-				}
 			}
 			if apiPassword == "" {
 				apiPassword = os.Getenv("ADS_API_PASSWORD")
-				if apiPassword == "" {
-					apiPassword = "changeme"
-				}
 			}
 		},
 	}
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&apiEndpoint, "api", "", "API endpoint (default: http://localhost:8080)")
-	rootCmd.PersistentFlags().StringVar(&apiUser, "user", "", "API username (default: admin)")
-	rootCmd.PersistentFlags().StringVar(&apiPassword, "password", "", "API password (default: changeme)")
+	rootCmd.PersistentFlags().StringVar(&apiUser, "user", "", "API username (or ADS_API_USER)")
+	rootCmd.PersistentFlags().StringVar(&apiPassword, "password", "", "API password (prefer ADS_API_PASSWORD)")
 	rootCmd.PersistentFlags().StringVar(&apiKey, "api-key", "", "API key for Bearer token auth (overrides --user/--password)")
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "Config file path")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "JSON output format")
 
 	// Add subcommands
-	rootCmd.AddCommand(queueCmd())
+	rootCmd.AddCommand(queueCmd(), genericAPICmd())
 	rootCmd.AddCommand(mailboxCmd())
 	rootCmd.AddCommand(policyCmd())
 	rootCmd.AddCommand(tlsCmd())

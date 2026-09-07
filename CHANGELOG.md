@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `gemsads-conf` for validated JSON/YAML/configuration edits, SQLite snapshots and offline maintenance, TLS diagnostics and RCPT-only relay probes.
+- Packaged `adsemailadm`, generic scoped API calls and queue command regression coverage.
 - JMAP immutable thread grouping, collapsed queries, Thread/get/changes and authenticated SSE push.
 - LDAP/AD verification for provisioned accounts, scoped SCIM Users provisioning and audience-bound federated JMAP tokens.
 - Durable DMARC aggregate XML reporting with external destination authorization, plus active operational statistics APIs.
@@ -17,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--check-config` validates configuration without creating defaults, opening listeners, acquiring storage locks or starting delivery.
 
 ### Fixed
+- Admin CLI queue response handling, bulk DLQ retry, readiness failure exits and real configuration reload; removed fabricated monitoring/security/TLS/directory/cluster success output.
+- Admin API requests reject non-2xx responses and remote plaintext endpoints; removed shared CLI credential defaults.
 - Local identity disablement applies before external authentication; SSO requires provisioning.
 - Storage deletion removes payloads from the live index before compaction, and SCIM account metadata preserves quota lookup behavior.
 - Unknown YAML fields and additional configuration documents now fail loading instead of being silently ignored.

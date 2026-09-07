@@ -28,6 +28,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-preserve ./cmd/mailhub-preserve
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/mailhub-authcheck ./cmd/mailhub-authcheck
 
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/adsemailadm ./cmd/adsemailadm
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /build/bin/gemsads-conf ./cmd/gemsads-conf
+
 # Final stage
 FROM alpine:latest
 
@@ -52,6 +55,9 @@ COPY --from=builder /build/bin/mailhub-ha-check /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-log /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-preserve /usr/local/bin/
 COPY --from=builder /build/bin/mailhub-authcheck /usr/local/bin/
+
+COPY --from=builder /build/bin/adsemailadm /usr/local/bin/
+COPY --from=builder /build/bin/gemsads-conf /usr/local/bin/
 
 # Copy default configuration
 COPY config.yaml /opt/goemailservices/config.yaml

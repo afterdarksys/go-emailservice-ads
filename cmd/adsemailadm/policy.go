@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"go.starlark.net/syntax"
 )
 
 func policyCmd() *cobra.Command {
@@ -253,7 +254,7 @@ func policyStatsCmd() *cobra.Command {
 func policyValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <policy-file>",
-		Short: "Validate a policy file",
+		Short: "Check Starlark syntax",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile(args[0])
@@ -263,8 +264,10 @@ func policyValidateCmd() *cobra.Command {
 
 			fmt.Printf("Validating %s...\n", args[0])
 			fmt.Printf("Size: %d bytes\n", len(data))
-			fmt.Println("✓ Syntax valid")
-			fmt.Println("✓ Validation passed")
+			if _, err := syntax.Parse(args[0], data, 0); err != nil {
+				return err
+			}
+			fmt.Println("Starlark syntax valid; runtime policy behavior was not evaluated")
 
 			return nil
 		},

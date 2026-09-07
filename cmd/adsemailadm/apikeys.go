@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
+	"github.com/afterdarksys/go-emailservice-ads/internal/confadmin"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -126,7 +128,11 @@ func apikeysCreateCmd() *cobra.Command {
 				"description": description,
 			}
 			if expiry != "" {
-				entry["expires"] = expiry
+				expires, err := time.Parse("2006-01-02", expiry)
+				if err != nil {
+					return fmt.Errorf("expiry must be YYYY-MM-DD: %w", err)
+				}
+				entry["expires_at"] = expires.UTC()
 			}
 
 			keys = append(keys, entry)
@@ -143,7 +149,7 @@ func apikeysCreateCmd() *cobra.Command {
 			if description != "" {
 				fmt.Printf("  Description: %s\n", description)
 			}
-			fmt.Println("\nStore this key securely — it will not be shown again.")
+			fmt.Println("\nStore this key securely. Reload configuration and verify access before ending this session.")
 			return nil
 		},
 	}
@@ -217,11 +223,14 @@ func apikeysRevokeCmd() *cobra.Command {
 }
 
 // loadConfigRaw reads config.yaml as a raw map to preserve unknown fields.
+var configOriginal []byte
+
 func loadConfigRaw() (map[string]interface{}, error) {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config %s: %w", configFile, err)
 	}
+	configOriginal = append([]byte(nil), data...)
 	var cfg map[string]interface{}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
@@ -238,7 +247,8 @@ func saveConfigRaw(cfg map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return os.WriteFile(configFile, data, 0600)
+	_, err = confadmin.Replace(configFile, configOriginal, data, func(p string) error { return confadmin.ValidateConfig(p, false) })
+	return err
 }
 
 // redactKey shows only the prefix and last 4 chars.

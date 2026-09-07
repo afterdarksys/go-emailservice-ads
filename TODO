@@ -26,6 +26,9 @@ external gates. No production rollout is implied by the implementation checklist
 
 ## Engineering gaps and deferred enhancements
 
+- [x] Add gemsads-conf validated file editing, SQLite maintenance and relay probes; repair adsemailadm real API behavior and remove fabricated results. See docs/CLI_ADMINISTRATION.md.
+- [ ] Implement general queued-message hold/release, full deferred-queue flush and requeue if required; current queue CLI is not full Postfix parity.
+
 - [x] Align mailbox API password validation with bcrypt’s 72-byte limit; oversized create/update requests fail before persistence.
 - [x] Reject unknown YAML fields and extra documents; provide `--check-config` without startup side effects.
 
