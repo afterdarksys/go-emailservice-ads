@@ -420,13 +420,17 @@ func (p *PolicyEngine) VerifyDMARC(
 // EvaluateDMARC verifies DMARC and returns the effective policy and its pct=
 // rollout percentage. Callers must apply that percentage before enforcing a
 // failing policy (RFC 7489 §6.3).
-func (p *PolicyEngine) EvaluateDMARC(
+func (p *PolicyEngine) EvaluateDMARC(ctx context.Context, fromHeaderDomain, spfDomain string, spfResult SPFResult, dkimResults []DKIMVerification) (DMARCResult, DMARCPolicy, int, error) {
+	e, err := p.EvaluateDMARCDetails(ctx, fromHeaderDomain, spfDomain, spfResult, dkimResults)
+	return e.Result, e.Policy, e.Pct, err
+}
+func (p *PolicyEngine) EvaluateDMARCDetails(
 	ctx context.Context,
 	fromHeaderDomain string,
 	spfDomain string,
 	spfResult SPFResult,
 	dkimResults []DKIMVerification,
-) (DMARCResult, DMARCPolicy, int, error) {
+) (DMARCEvaluation, error) {
 	p.logger.Debug("Verifying DMARC",
 		zap.String("from_header_domain", fromHeaderDomain),
 		zap.String("spf_domain", spfDomain),
@@ -438,12 +442,12 @@ func (p *PolicyEngine) EvaluateDMARC(
 	rawRecord, policyDomain, err := p.lookupDMARCRecord(ctx, fromHeaderDomain)
 	if err != nil {
 		p.logger.Debug("DMARC TXT lookup failed", zap.String("domain", fromHeaderDomain), zap.Error(err))
-		return DMARCNone, DMARCPolicyNone, 100, nil
+		return DMARCEvaluation{Result: DMARCNone, Policy: DMARCPolicyNone, Pct: 100}, nil
 	}
 
 	if rawRecord == "" {
 		p.logger.Debug("No DMARC record found", zap.String("domain", fromHeaderDomain))
-		return DMARCNone, DMARCPolicyNone, 100, nil
+		return DMARCEvaluation{Result: DMARCNone, Policy: DMARCPolicyNone, Pct: 100}, nil
 	}
 
 	rec := parseDMARCRecord(rawRecord)
@@ -488,7 +492,7 @@ func (p *PolicyEngine) EvaluateDMARC(
 		zap.Bool("spf_aligned", spfAligned),
 		zap.Bool("dkim_pass", dkimPass))
 
-	return result, effectivePolicy, rec.Pct, nil
+	return DMARCEvaluation{Result: result, Policy: effectivePolicy, Pct: rec.Pct, Published: DMARCPolicySnapshot{Domain: policyDomain, ADKIM: rec.ADKIM, ASPF: rec.ASPF, Policy: rec.Policy, SubPolicy: rec.SubPolicy, Pct: rec.Pct}, RUA: rec.RUA, SPFAligned: spfPass, DKIMAligned: dkimPass}, nil
 }
 
 func (p *PolicyEngine) lookupDMARCRecord(ctx context.Context, fromHeaderDomain string) (string, string, error) {

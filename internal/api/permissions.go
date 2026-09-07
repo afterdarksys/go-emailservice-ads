@@ -25,7 +25,7 @@ func requiredScope(r *http.Request) string {
 	}
 	resource := strings.SplitN(path, "/", 2)[0]
 	switch resource {
-	case "compliance", "bounce", "scim":
+	case "compliance", "bounce", "scim", "dmarc":
 	case "message", "dlq":
 		resource = "queue"
 	case "recipients":

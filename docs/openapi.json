@@ -2350,6 +2350,88 @@
           }
         }
       }
+    },
+    "/api/v1/dmarc/reports": {
+      "get": {
+        "operationId": "dmarcList",
+        "summary": "DMARC aggregate report read",
+        "x-required-permission": "dmarc:read",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
+    },
+    "/api/v1/dmarc/reports/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "dmarcExport",
+        "summary": "DMARC aggregate report read",
+        "x-required-permission": "dmarc:read",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
+    },
+    "/api/v1/dmarc/reports/send": {
+      "post": {
+        "operationId": "dmarcSend",
+        "summary": "DMARC aggregate report send pending",
+        "x-required-permission": "dmarc:write",
+        "responses": {
+          "200": {
+            "description": "Report metadata list or XML report"
+          },
+          "204": {
+            "description": "Pending reports queued"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "503": {
+            "description": "Reporting disabled or delivery incomplete"
+          }
+        }
+      }
     }
   },
   "components": {

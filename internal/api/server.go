@@ -157,6 +157,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	}))
 	mux.HandleFunc("/api/v1/recipients/", s.authMiddleware(s.handleRecipientLookup))
 	mux.HandleFunc("/api/v1/scim/v2/", s.authMiddleware(s.handleSCIM))
+	mux.HandleFunc("/api/v1/dmarc/reports", s.authMiddleware(s.handleDMARC))
+	mux.HandleFunc("/api/v1/dmarc/reports/", s.authMiddleware(s.handleDMARC))
 	return mux
 }
 

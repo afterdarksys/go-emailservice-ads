@@ -16,6 +16,7 @@ import (
 
 // PlatformConfig contains active operational controls, shared by listeners.
 type PlatformConfig struct {
+	DMARCReporting             bool                    `yaml:"dmarc_reporting"`
 	Compliance                 compliance.Config       `yaml:"compliance"`
 	Bounce                     bounce.Config           `yaml:"bounce"`
 	FencingLeaseFile           string                  `yaml:"fencing_lease_file"`

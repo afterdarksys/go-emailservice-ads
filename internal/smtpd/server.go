@@ -780,9 +780,10 @@ func (s *Session) Data(r io.Reader) error {
 			}
 
 			dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
-			dmarcResult, dmarcPolicy, dmarcPct, derr := s.policyEngine.EvaluateDMARC(
+			evaluation, derr := s.policyEngine.EvaluateDMARCDetails(
 				dctx, fromHeaderDomain, spfDomain, security.SPFResult(s.msg.SPFResult), dkimResults)
 			dcancel()
+			dmarcResult, dmarcPolicy, dmarcPct := evaluation.Result, evaluation.Policy, evaluation.Pct
 			if derr != nil {
 				s.logger.Debug("DMARC evaluation error",
 					zap.String("from_header_domain", fromHeaderDomain), zap.Error(derr))
@@ -790,6 +791,27 @@ func (s *Session) Data(r io.Reader) error {
 			s.msg.DMARCResult = string(dmarcResult)
 
 			enforce := strings.EqualFold(s.config.Server.DMARC.Mode, "enforce")
+			if s.qManager.DMARCReports != nil {
+				disposition, reason := "none", ""
+				if dmarcResult == security.DMARCFail {
+					if !enforce {
+						reason = "local_policy"
+					} else if !dmarcPolicyApplies(b, dmarcPct) {
+						reason = "sampled_out"
+					} else {
+						disposition = string(dmarcPolicy)
+					}
+				}
+				scope := "mfrom"
+				if s.msg.From == "" {
+					scope = "helo"
+				}
+				if err := s.qManager.DMARCReports.Record(time.Now(), evaluation, s.ip, fromHeaderDomain, spfDomain, s.msg.SPFResult, scope, disposition, reason, dkimResults); err != nil {
+					s.logger.Error("DMARC reporting persistence failed", zap.Error(err))
+					return &smtp.SMTPError{Code: 451, Message: "Unable to persist authentication report"}
+				}
+			}
+
 			s.logger.Info("DMARC evaluation",
 				zap.String("from_header_domain", fromHeaderDomain),
 				zap.String("result", string(dmarcResult)),
