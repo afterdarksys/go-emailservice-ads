@@ -257,8 +257,9 @@ func (s *MessageStore) UpdateStatus(messageID, status string, errorMsg string) e
 	}
 
 	// Remove from index if delivered
-	if status == "delivered" {
+	if status == "delivered" || status == "deleted" {
 		delete(s.index, messageID)
+		delete(s.threadIDs, messageID)
 	}
 
 	s.indexMu.Unlock()

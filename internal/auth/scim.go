@@ -50,3 +50,25 @@ func (s *UserStore) UpdateSCIM(id, email, external string, active bool) (*User, 
 	}
 	return nil, ErrUserNotFound
 }
+
+// SecureDeleteUser is for an offline privacy operation. PostgreSQL physical
+// maintenance remains the database operator's responsibility.
+func (r *UserRepository) SecureDeleteUser(ctx context.Context, user string) error {
+	if r.driver == "sqlite" {
+		if _, err := r.db.ExecContext(ctx, "PRAGMA secure_delete=ON"); err != nil {
+			return err
+		}
+	}
+	if err := r.DeleteUser(ctx, user); err != nil && !errors.Is(err, ErrUserNotFound) {
+		return err
+	}
+	if r.driver == "sqlite" {
+		if _, err := r.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			return err
+		}
+		if _, err := r.db.ExecContext(ctx, "VACUUM"); err != nil {
+			return err
+		}
+	}
+	return nil
+}

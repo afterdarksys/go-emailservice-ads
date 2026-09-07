@@ -209,6 +209,10 @@ func (s *UserStore) AuthenticateWithIP(username, password, ip string) (*User, er
 	}
 	// Try SSO authentication first for @msgs.global users
 	if s.ssoProvider != nil && strings.HasSuffix(strings.ToLower(username), "@msgs.global") {
+		if !exists {
+			s.recordFailure(username, ip, now)
+			return nil, ErrInvalidCredentials
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 

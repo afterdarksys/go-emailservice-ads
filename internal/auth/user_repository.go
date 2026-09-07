@@ -430,7 +430,7 @@ func (r *UserRepository) GetUserQuota(ctx context.Context, username string) (*Us
 	query := `
 		SELECT max_messages_per_hour, max_messages_per_day, max_recipients_per_message, max_message_size_bytes
 		FROM user_quotas
-		WHERE u.username = $1
+		WHERE username = $1
 	`
 
 	var quota UserQuota
