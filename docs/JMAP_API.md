@@ -1,4 +1,4 @@
-# JMAP API: mailbox management and email synchronization
+# JMAP API: mailbox management and email mutations
 
 The optional JMAP listener uses its configured address. Put it behind a trusted
 TLS terminator as described in CONFIGURATION.md. Authentication accepts shared
@@ -12,7 +12,7 @@ Discover URLs with `GET /.well-known/jmap`. Use the discovered `primary` account
 ID for `POST /jmap/api`. With the durable mailbox store, the account allows keyword
 writes and mailbox management. Mailbox rights advertise keyword updates and
 child creation; rename/delete are enabled except for INBOX. Message add/remove
-and submission rights remain false. A custom backend without the synchronization interface stays
+rights allow moves and email deletion; submission rights remain false. A custom backend without the synchronization interface stays
 read-only. Request bodies, method counts and get/set/query results are bounded.
 
 | Operation | Current behavior |
@@ -20,7 +20,7 @@ read-only. Request bodies, method counts and get/set/query results are bounded.
 | Mailbox/get | Durable folders, parent relationships, counts, unread counts and supported rights. |
 | Email/get | Owned messages across folders, keywords, internal receipt date, decoded MIME body values and attachment descriptors. |
 | Email/query | Filters inMailbox, subject, from, to, text, hasKeyword and notKeyword; bounded position/limit pagination. |
-| Email/set | Update keywords using replacement or patch syntax; conditional writes with ifInState; per-object notFound/invalidProperties errors. Creation/destruction return per-object forbidden errors. Other email properties cannot be changed. |
+| Email/set | Update keywords and mailboxIds using replacement or patch syntax; destroy owned emails; conditional ifInState and per-object errors. Creation returns forbidden. Other email properties cannot be changed. |
 | Email/changes | Durable, account-scoped created/updated/destroyed IDs, bounded pagination and restart/restore continuity. |
 | GET download URL | Owner-scoped raw message or decoded MIME part; another account gets 404. |
 | Mailbox/set | Create, rename/reparent, subscribe/unsubscribe, sort order and empty-mailbox deletion; conditional state checks and per-object errors. |
@@ -101,6 +101,57 @@ keywords use printable ASCII IMAP-compatible names of up to 255 bytes. IMAP
 Deleted/Recent flags are not exposed as JMAP keywords or cleared by replacement.
 These writes generate IMAP flag notifications.
 
+The durable store uses per-email savepoints: a failed combined keyword/membership
+update rolls back all changes to that email. Independent objects in the batch
+can succeed; always inspect notUpdated and notDestroyed.
+
+## Move and delete emails
+
+Email/set updates mailboxIds to move an existing email. The server advertises
+maxMailboxesPerEmail=1: the final membership must contain exactly one owned,
+existing mailbox. An empty set returns invalidProperties; multiple memberships
+return tooManyMailboxes. Missing or foreign destinations return invalidProperties.
+
+Replace the entire membership with `"mailboxIds": {"DESTINATION_ID": true}`,
+or remove the old membership and add the new one in the same update:
+
+```json
+["Email/set", {
+  "accountId": "primary",
+  "ifInState": "STATE_FROM_EMAIL_GET",
+  "update": {
+    "EMAIL_ID": {
+      "mailboxIds/SOURCE_ID": null,
+      "mailboxIds/DESTINATION_ID": true,
+      "keywords/$seen": true
+    }
+  }
+}, "move"]
+```
+
+Use IDs from Mailbox/get. Replacement and patch syntax cannot be mixed for the
+same property. Moving preserves email/blob identity, payload, internal date and
+existing flags, assigns a destination IMAP UID, and consumes no additional
+message quota. Assigning the current mailbox is a membership no-op. A simultaneous
+keyword update commits with the move or rolls back with it.
+
+To delete, send `"destroy": ["EMAIL_ID"]` in Email/set. This removes the message
+from active mail and download access; it does not move it to Trash. To retain a
+recoverable message, move it to the mailbox with role trash instead. Destruction
+removes only requested IDs, even when other messages carry the IMAP Deleted flag.
+Missing, already-destroyed or foreign-owned email IDs return notFound. An ID in
+both update and destroy gets willDestroy in notUpdated; destruction is processed.
+
+Selected IMAP sessions receive descending EXPUNGE notifications for removed
+messages and destination arrival/flag notifications for moves. Email/changes
+reports moved IDs as updated and deleted IDs as destroyed; Mailbox/changes reports
+the corresponding count updates. Both feeds survive restart and backup restore.
+Metadata, UID allocation and change events commit together. Payload tombstoning
+follows the commit; interrupted cleanup is retried at startup and logged as
+"Deferred JMAP deletion payload cleanup". A cleanup failure does not make a
+committed deletion appear to have failed. Storage retention/compaction governs
+physical reclamation; this API does not promise forensic erasure.
+
 ## Incremental email synchronization
 
 Call Email/changes with `sinceState` from Email/get or the previous changes
@@ -110,7 +161,7 @@ Apply created/updated/destroyed IDs, then continue with `newState` while
 may disappear between changes and get; handle notFound and continue syncing.
 
 The SQLite change journal records mutations from SMTP delivery, IMAP flags,
-MOVE, folder rename/deletion, expunge and JMAP keyword writes. It retains the
+MOVE, folder rename/deletion, expunge and JMAP email writes. It retains the
 latest 10,000 events per account. Multiple events for one email are combined
 within each page, including changes subsequently reversed. State tokens are
 opaque and scoped to the account and database; they persist across restart and
@@ -132,8 +183,8 @@ unsupportedFilter. Email/query still reports canCalculateChanges=false:
 Email/queryChanges is not implemented. Email/changes is an object change feed,
 not incremental query membership or ordering.
 
-Email creation/import/destruction, JMAP moves, upload, thread
+Email creation/import, upload, thread
 grouping, submission and push remain unimplemented. Use SMTP/IMAP for these
 supported mail workflows. This is not a claim of full RFC 8620/8621 or named
 client interoperability. See the implementation regression tests and
-scripts/jmap-sync.py (invoked by verify-release.sh) for automated coverage.
+scripts/jmap-sync.py and scripts/jmap-email-mutations.py (invoked by verify-release.sh) for automated coverage.

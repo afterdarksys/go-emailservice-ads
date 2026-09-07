@@ -203,20 +203,7 @@ func (s *MailboxStore) SetEmailKeywords(ctx context.Context, user, since string,
 		if err != nil {
 			return out, err
 		}
-		flags := strings.Fields(value)
-		patch := patches[id]
-		if patch.Replace != nil {
-			preserved := []string{}
-			for _, f := range flags {
-				if strings.EqualFold(f, `\Deleted`) || strings.EqualFold(f, `\Recent`) {
-					preserved = append(preserved, f)
-				}
-			}
-			flags = append(preserved, (*patch.Replace)...)
-		}
-		flags = unionFlags(flags, patch.Add)
-		flags = subtractFlags(flags, patch.Remove)
-		flags, err = validFlags(flags)
+		flags, err := patchedEmailFlags(strings.Fields(value), patches[id])
 		if err != nil {
 			return out, err
 		}

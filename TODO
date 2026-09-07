@@ -42,7 +42,8 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Implement JMAP keyword updates with conditional state checks and durable paginated Email/changes, including SMTP/IMAP changes, bounded history and restored-service regressions.
 - [x] Correct JMAP method-call/response wire encoding to standard invocation arrays and include the real HTTP endpoint in release qualification.
 - [x] Add stable mailbox identities, JMAP Mailbox/set and durable Mailbox/changes, with rename/reparent, subscription, empty deletion protection and restored-service qualification.
-- [ ] Complete remaining JMAP writes (email create/import/destroy/move, upload/submission), query synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
+- [x] Add JMAP email move and destruction with atomic keyword/membership updates, owner/state checks, IMAP notifications and durable change-feed restore coverage.
+- [ ] Complete remaining JMAP writes (email create/import, upload/submission), query synchronization and remaining Sieve extensions before accepting those workflows. See docs/QA_UAT.md.
 - [ ] Reconcile and implement remaining LDAP/AD, SAML and SCIM requirements from the historical M3 plan. API OAuth introspection is implemented; it does not establish SMTP/IMAP OAuth support.
 - [ ] Decide scope for trained AI spam models, phishing/learning pipelines and shared cluster reputation/outbreak state from M4–M6. Current mailstorm baselines are deterministic and per instance.
 - [ ] Implement DMARC aggregate reporting if required; existing TLS reporting does not fulfill that feature.

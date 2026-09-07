@@ -41,6 +41,7 @@ named application and human-visible observations.
 | A5 | MOVE/UID MOVE | Selected messages move atomically; unrelated deleted messages remain; source/destination sessions update; moved payload/metadata survive restore. | Included in A1 |
 | A6 | JMAP keyword updates | API writes appear in IMAP; stale/foreign writes fail; Email/changes survives restore. | Included in A1 |
 | A7 | JMAP mailbox management | Stable IDs, create/rename/reparent, subscription and deletion protection; Mailbox/changes survives restore. | Included in A1 |
+| A8 | JMAP email move/delete | Atomic move/keyword writes, targeted destruction, selected IMAP notifications and both change feeds survive restore. | Included in A1 |
 | C1 | Add two accounts in the target client | TLS/authentication work; accounts see only their own folders/messages. | Pending |
 | C2 | Send/receive a reply with attachment | Recipient, subject, body and attachment are intact; Sent placement matches configuration. | Pending |
 | C3 | Folder lifecycle | Create, subscribe, rename, move/copy, delete and reconnect show durable state. | Pending |
@@ -63,7 +64,7 @@ After all rows pass, the operator may record:
 
 This scope excludes production rollout, high availability, load/slow-client
 stress, simultaneous body downloads with mailbox mutations, JMAP mail workflows
-beyond mailbox management and keyword updates/object changes and
+beyond mailbox management, email move/delete and keyword updates/object changes and
 unsupported Sieve extensions. Production identity, DNS, storage and failover gates
 remain in [deployment qualification](DEPLOYMENT_QUALIFICATION.md). Any workflow
 the intended users require must enter scope before recording their acceptance.

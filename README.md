@@ -428,7 +428,7 @@ go-emailservice-ads/
 │   ├── dns/                 # DNS resolver with caching
 │   ├── greylisting/         # Anti-spam greylisting
 │   ├── imap/                # IMAP server (full implementation)
-│   ├── jmap/                # NEW v2.0: JMAP reads, mailbox/keyword writes and change feeds
+│   ├── jmap/                # NEW v2.0: JMAP reads, mailbox/email mutations and change feeds
 │   ├── k8s/                 # NEW v2.0: Kubernetes integration
 │   │   ├── discovery.go     # Service discovery
 │   │   └── deployment_mode.go # Mode detection
