@@ -33,14 +33,16 @@ def qualify(request, port, imap_port, tls):
            'textBody': [{'partId': 'text', 'type': 'text/plain'}],
            'htmlBody': [{'partId': 'html', 'type': 'text/html'}],
            'bodyValues': {'text': {'value': 'composed hello café'},
-                          'html': {'value': '<p>composed hello café</p>'}}}
+                          'html': {'value': '<p>composed hello café</p><img src="cid:logo@example.test">'}}}
     # Upload a binary attachment independently of the imported-email checks.
     req = urllib.request.Request(f'http://127.0.0.1:{port}/jmap/upload/primary/', data=b'\x00\x01\xff',
         headers={'Content-Type': 'application/octet-stream', 'Authorization': 'Basic ' +
                  base64.b64encode(b'qa@mail.test:qa-new-password').decode()})
     with urllib.request.urlopen(req, timeout=10) as response:
         blob = json.load(response)['blobId']
-    obj['attachments'] = [{'blobId': blob, 'name': 'tiny.bin', 'type': 'application/octet-stream'}]
+    obj['attachments'] = [{'blobId': blob, 'name': 'tiny.bin', 'type': 'application/octet-stream'},
+                          {'blobId': blob, 'name': 'inline.png', 'type': 'image/png',
+                           'disposition': 'inline', 'cid': 'logo@example.test'}]
     with imaplib.IMAP4('localhost', imap_port, timeout=10) as client:
         client.starttls(ssl_context=tls); client.login('qa@mail.test', 'qa-new-password')
         assert client.select('Drafts')[0] == 'OK'
@@ -93,8 +95,11 @@ def qualify(request, port, imap_port, tls):
         parsed = email.message_from_bytes(raw, policy=email.policy.default)
         assert parsed['Bcc'] is None and parsed['Subject'] == 'JMAP composed café', parsed
         assert parsed.get_body(('plain',)).get_content() == 'composed hello café'
-        assert parsed.get_body(('html',)).get_content() == '<p>composed hello café</p>'
-        assert next(parsed.iter_attachments()).get_payload(decode=True) == b'\x00\x01\xff'
+        assert parsed.get_body(('html',)).get_content() == '<p>composed hello café</p><img src="cid:logo@example.test">'
+        binary = next(p for p in parsed.walk() if p.get_filename() == 'tiny.bin')
+        assert binary.get_payload(decode=True) == b'\x00\x01\xff'
+        inline = next(p for p in parsed.walk() if p['Content-ID'] == '<logo@example.test>')
+        assert inline.get_content_disposition() == 'inline' and inline.get_payload(decode=True) == b'\x00\x01\xff'
     return {'id': mid, 'receipt': receipt, 'received': received_id, 'state': submitted['newState']}
 
 

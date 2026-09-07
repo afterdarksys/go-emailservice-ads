@@ -43,7 +43,7 @@ named application and human-visible observations.
 | A7 | JMAP mailbox management | Stable IDs, create/rename/reparent, subscription and deletion protection; Mailbox/changes survives restore. | Included in A1 |
 | A8 | JMAP email move/delete | Atomic move/keyword writes, targeted destruction, selected IMAP notifications and both change feeds survive restore. | Included in A1 |
 | A9 | JMAP upload/import | Uploaded blobs and imported MIME/attachments remain owner-scoped, appear in IMAP, and survive restore with change-feed continuity. | Included in A1 |
-| A10 | JMAP structured composition | Text/HTML and uploaded attachments round-trip into a durable draft with IMAP arrival notification. | Included in A1 |
+| A10 | JMAP structured composition | Text/HTML, nested MIME trees, inline CID and reused part bytes round-trip with IMAP notification, owner checks and independent copies after source deletion/restore. | Included in A1 |
 | A11 | JMAP submission | Primary identity sends through SMTP admission; Bcc is private, owner/state checks reject, automatic Sent filing and durable receipts/messages survive restore. | Included in A1 |
 | A12 | Query/receipt lifecycle | Query deltas, receipt destruction and success-triggered source deletion survive restore without cancelling delivery. | Included in A1 |
 | A13 | Sieve workflows | Multiple flagged deliveries and redirect work; vacation sends once and remains suppressed after restore. | Included in A1 |

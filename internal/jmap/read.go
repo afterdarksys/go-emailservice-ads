@@ -10,12 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
-	"io"
 	"mime"
 	"net/http"
 	"net/mail"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -191,10 +189,10 @@ func keywords(flags []string) map[string]bool {
 	return out
 }
 func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]interface{} {
-	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": id, "mailboxIds": map[string]bool{messageMailboxID(meta): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}}
-	reader, err := messagemail.CreateReader(bytes.NewReader(raw))
-	if err != nil {
-		return obj
+	obj := map[string]interface{}{"id": id, "blobId": id, "threadId": id, "mailboxIds": map[string]bool{messageMailboxID(meta): true}, "keywords": keywords(meta.Flags), "size": len(raw), "receivedAt": meta.Date.UTC().Format(time.RFC3339), "subject": "", "from": []any{}, "to": []any{}, "cc": []any{}, "bcc": []any{}, "replyTo": []any{}, "messageId": []string{}, "textBody": []any{}, "htmlBody": []any{}, "attachments": []any{}, "hasAttachment": false, "bodyValues": map[string]interface{}{}, "bodyStructure": nil}
+	reader, _ := messagemail.CreateReader(bytes.NewReader(raw))
+	if reader == nil {
+		return nil
 	}
 	defer reader.Close()
 	subject, _ := reader.Header.Subject()
@@ -209,46 +207,9 @@ func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]int
 	if messageID, err := reader.Header.MessageID(); err == nil {
 		obj["messageId"] = []string{messageID}
 	}
-	values := map[string]interface{}{}
-	texts, htmls, attachments := []any{}, []any{}, []any{}
-	for n := 1; ; n++ {
-		part, err := reader.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			break
-		}
-		data, err := io.ReadAll(part.Body)
-		if err != nil {
-			break
-		}
-		pid := fmt.Sprint(n)
-		var kind string
-		var name any
-		attachment := false
-		switch h := part.Header.(type) {
-		case *messagemail.InlineHeader:
-			kind, _, _ = h.ContentType()
-		case *messagemail.AttachmentHeader:
-			kind, _, _ = h.ContentType()
-			filename, _ := h.Filename()
-			name = filename
-			attachment = true
-		}
-		item := map[string]interface{}{"partId": pid, "blobId": id + ".part." + pid, "size": len(data), "type": kind, "name": name, "charset": "utf-8"}
-		if attachment {
-			attachments = append(attachments, item)
-		} else {
-			values[pid] = map[string]interface{}{"value": string(data), "isEncodingProblem": false, "isTruncated": false}
-			if kind == "text/html" {
-				htmls = append(htmls, item)
-			} else {
-				texts = append(texts, item)
-			}
-		}
+	if err := addMIMEObjects(obj, id, raw); err != nil {
+		return nil
 	}
-	obj["textBody"], obj["htmlBody"], obj["attachments"], obj["bodyValues"], obj["hasAttachment"] = texts, htmls, attachments, values, len(attachments) > 0
 	return obj
 }
 func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
@@ -305,6 +266,9 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 				match = match && !keywords(meta.Flags)[want]
 			case "text":
 				object := emailObject(mid, raw, meta)
+				if object == nil {
+					return methodError("serverFail", id)
+				}
 				var searchable strings.Builder
 				for _, field := range []string{"subject", "from", "to", "cc", "bcc", "bodyValues"} {
 					fmt.Fprintln(&searchable, object[field])
@@ -363,12 +327,7 @@ func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blob := parts[1]
-	if strings.HasPrefix(blob, "upload-") {
-		store, ok := j.store.(mailstate.ImportStore)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
+	if store, ok := j.store.(mailstate.ImportStore); ok {
 		uploaded, err := store.GetBlob(r.Context(), authUserFromContext(r.Context()), blob)
 		if errors.Is(err, mailstate.ErrBlobNotFound) {
 			http.NotFound(w, r)
@@ -382,16 +341,10 @@ func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := blob
-	partNumber := 0
-	if pos := strings.LastIndex(blob, ".part."); pos >= 0 {
-		var err error
-		partNumber, err = strconv.Atoi(blob[pos+6:])
-		if err != nil || partNumber < 1 {
-			http.NotFound(w, r)
-			return
-		}
-		id = blob[:pos]
+	id, partNumber, err := mailstate.SplitPartBlob(blob)
+	if err != nil {
+		http.NotFound(w, r)
+		return
 	}
 	owned, err := j.ownedMessages(r.Context(), authUserFromContext(r.Context()))
 	if err != nil {
@@ -409,31 +362,14 @@ func (j *JMAPServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	contentType := "message/rfc822"
 	if partNumber > 0 {
-		reader, err := messagemail.CreateReader(bytes.NewReader(data))
-		if err != nil {
-			http.Error(w, "Invalid MIME message", 409)
+		data, contentType, err = mailstate.MIMEBlob(data, partNumber)
+		if errors.Is(err, mailstate.ErrBlobNotFound) {
+			http.NotFound(w, r)
 			return
 		}
-		defer reader.Close()
-		for n := 1; n <= partNumber; n++ {
-			part, err := reader.NextPart()
-			if err != nil {
-				http.NotFound(w, r)
-				return
-			}
-			if n == partNumber {
-				data, err = io.ReadAll(part.Body)
-				if err != nil {
-					http.Error(w, "Unreadable MIME part", 409)
-					return
-				}
-				switch h := part.Header.(type) {
-				case *messagemail.InlineHeader:
-					contentType, _, _ = h.ContentType()
-				case *messagemail.AttachmentHeader:
-					contentType, _, _ = h.ContentType()
-				}
-			}
+		if err != nil {
+			http.Error(w, "Unreadable MIME part", 409)
+			return
 		}
 	}
 	if contentType == "" {

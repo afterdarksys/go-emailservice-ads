@@ -48,7 +48,7 @@ external gates. No production rollout is implied by the implementation checklist
 - [x] Add JMAP submission success email updates/destruction, durable email/receipt query synchronization, paginated receipt changes and owner-scoped receipt deletion, including restore qualification.
 - [x] Implement documented Sieve gaps: redirect, vacation, copy and multiple delivery actions with durable execution plans, retry checkpoints, loop limits and vacation suppression across restore.
 - [x] Add Email/query and EmailSubmission/query anchors, signed offsets and negative positions, with filtered/owner-scoped lookup and unchanged query snapshots across pages.
-- [ ] Complete advanced JMAP composition: bodyStructure, inline CID and MIME-part blob reuse.
+- [x] Add bounded JMAP bodyStructure composition/readback, inline CID parts and owner-scoped MIME-part blob reuse, with independent copied bytes and restored-service qualification.
 - [ ] Add JMAP submission cancellation/delay.
 - [ ] Add JMAP thread collapsing and push.
 - [ ] Add automated receipt/Sieve-checkpoint retention if required. See docs/QA_UAT.md.

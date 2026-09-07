@@ -70,8 +70,12 @@ func (s *MailboxStore) getBlob(ctx context.Context, q syncQuery, user, id string
 		}
 		return out, err
 	}
+	messageID, number, err := mailstate.SplitPartBlob(id)
+	if err != nil {
+		return out, err
+	}
 	var exists int
-	err := q.QueryRowContext(ctx, `SELECT 1 FROM message_flags WHERE username=? AND msg_id=? AND expunged=0`, user, id).Scan(&exists)
+	err = q.QueryRowContext(ctx, `SELECT 1 FROM message_flags WHERE username=? AND msg_id=? AND expunged=0`, user, messageID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, mailstate.ErrBlobNotFound
 	}
@@ -79,7 +83,10 @@ func (s *MailboxStore) getBlob(ctx context.Context, q syncQuery, user, id string
 		return out, err
 	}
 	out.MediaType = "message/rfc822"
-	out.Data, err = s.adapter.FetchMessage(ctx, id)
+	out.Data, err = s.adapter.FetchMessage(ctx, messageID)
+	if err == nil && number > 0 {
+		out.Data, out.MediaType, err = mailstate.MIMEBlob(out.Data, number)
+	}
 	return out, err
 }
 func (s *MailboxStore) GetBlob(ctx context.Context, user, id string) (mailstate.Blob, error) {

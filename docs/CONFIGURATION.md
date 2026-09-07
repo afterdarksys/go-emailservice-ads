@@ -234,7 +234,10 @@ creates mail. Include temporary blob space in disk/backup sizing. See
 [JMAP API](JMAP_API.md#upload-and-import) for workflow and troubleshooting.
 
 Structured Email/set creation also enforces a 10 MiB encoded-email and aggregate
-prepared-MIME limit per method. The main executable enables immediate JMAP
+prepared-MIME limit per method. MIME creation/readback supports at most 128 nodes
+and 16 nesting levels; MIME reads also cap raw/decoded data at 64 MiB. These
+limits are fixed. Part blobs require ownership of the active source email; copied
+parts become independent bytes in the destination. The main executable enables immediate JMAP
 submission through the first submission-role SMTP backend, or the first SMTP
 backend when no such role is configured. Existing server message/recipient limits,
 sender quotas, policies, scanners and queue configuration apply. Keep JMAP behind
