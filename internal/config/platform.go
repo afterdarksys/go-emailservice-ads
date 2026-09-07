@@ -65,6 +65,14 @@ type ListenerConfig struct {
 
 func (c *Config) validatePlatform() error {
 	p := &c.Platform
+	if c.API.GRPCEnabled {
+		if c.API.TLS == nil {
+			return fmt.Errorf("management gRPC requires API TLS")
+		}
+		if _, _, err := net.SplitHostPort(c.API.GRPCAddr); err != nil {
+			return fmt.Errorf("invalid management gRPC address: %w", err)
+		}
+	}
 	if err := c.API.OAuth.Validate(); err != nil {
 		return err
 	}

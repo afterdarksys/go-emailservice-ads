@@ -9,6 +9,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/oauthaccess"
 	"github.com/afterdarksys/go-emailservice-ads/internal/tlsutil"
 	"github.com/afterdarksys/go-emailservice-ads/internal/version"
+	"google.golang.org/grpc"
 	"net"
 	"net/http"
 	"strings"
@@ -43,7 +44,7 @@ type Server struct {
 	stopped     bool
 	httpServer  *http.Server
 	startTime   time.Time
-	// grpcServer *grpc.Server
+	grpcServer  *grpc.Server
 
 	wg sync.WaitGroup
 }
@@ -64,7 +65,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, store *storage.MessageSto
 }
 
 // Start binds synchronously, so startup errors are reported before readiness.
-// gRPC remains unimplemented and intentionally has no listener.
+// Optional gRPC shares the REST authorization and handler contract.
 func (s *Server) Start() error {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -82,6 +83,10 @@ func (s *Server) Start() error {
 			return err
 		}
 		listener = tls.NewListener(listener, tlsConfig)
+	}
+	if err := s.startGRPC(); err != nil {
+		listener.Close()
+		return err
 	}
 	s.listener = listener
 	s.httpServer = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, Handler: s.buildMux()}
@@ -497,6 +502,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	s.stopped = true
 	server := s.httpServer
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+	}
 	s.lifecycleMu.Unlock()
 	if server == nil {
 		return nil
