@@ -25,6 +25,7 @@ import (
 	"github.com/afterdarksys/go-emailservice-ads/internal/auth"
 	"github.com/afterdarksys/go-emailservice-ads/internal/config"
 	"github.com/afterdarksys/go-emailservice-ads/internal/imap"
+	"github.com/afterdarksys/go-emailservice-ads/internal/mailstate"
 )
 
 const (
@@ -215,6 +216,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oneMailbox := 1
 	session := Session{
 		Capabilities: map[string]interface{}{
 			"urn:ietf:params:jmap:core": CoreCapability{
@@ -226,7 +228,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 				CollationAlgorithms:   []string{"i;ascii-numeric", "i;ascii-casemap"},
 			},
 			"urn:ietf:params:jmap:mail": MailCapability{
-				MaxMailboxesPerEmail:       nil, // unlimited
+				MaxMailboxesPerEmail:       &oneMailbox,
 				MaxMailboxDepth:            10,
 				MaxSizeMailboxName:         255,
 				MaxSizeAttachmentsPerEmail: 50 * 1024 * 1024,
@@ -238,7 +240,7 @@ func (j *JMAPServer) handleSession(w http.ResponseWriter, r *http.Request) {
 			"primary": {
 				Name:       "Primary Account",
 				IsPersonal: true,
-				IsReadOnly: true,
+				IsReadOnly: !j.keywordWrites(),
 				AccountCapabilities: map[string]interface{}{
 					"urn:ietf:params:jmap:mail": map[string]interface{}{},
 				},
@@ -341,18 +343,28 @@ func (j *JMAPServer) processMethodCall(ctx context.Context, authUser string, cal
 	if account, ok := args["accountId"].(string); ok && account != "primary" && account != authUser {
 		return methodError("accountNotFound", callID)
 	}
+	if value, exists := args["accountId"]; exists {
+		if _, ok := value.(string); !ok {
+			return methodError("invalidArguments", callID)
+		}
+	}
 	switch methodName {
 	case "Mailbox/get":
 		return j.mailboxGet(ctx, authUser, args, callID)
 	case "Mailbox/set":
+		if j.keywordWrites() {
+			return methodError("forbidden", callID)
+		}
 		return methodError("accountReadOnly", callID)
 	case "Email/get":
 		return j.handleEmailGet(ctx, authUser, args, callID)
 	case "Email/set":
-		return methodError("accountReadOnly", callID)
+		return j.emailSet(ctx, authUser, args, callID)
 	case "Email/query":
 		return j.emailQuery(ctx, authUser, args, callID)
-	case "Email/changes", "Mailbox/changes":
+	case "Email/changes":
+		return j.emailChanges(ctx, authUser, args, callID)
+	case "Mailbox/changes":
 		return methodError("cannotCalculateChanges", callID)
 	default:
 		return MethodResponse{
@@ -398,7 +410,7 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 	// read — whether by explicit id or "return all" — is filtered through this
 	// set so a guessed/enumerated message id from another mailbox cannot be
 	// fetched (object-level authorization).
-	owned, err := j.ownedMessages(ctx, authUser)
+	owned, state, err := j.emailSnapshot(ctx, authUser)
 	if err != nil {
 		return methodError("serverFail", callID)
 	}
@@ -454,7 +466,7 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 		Name: "Email/get",
 		Arguments: map[string]interface{}{
 			"accountId": accountID,
-			"state":     emailState(owned),
+			"state":     state,
 			"list":      list,
 			"notFound":  notFound,
 		},
@@ -464,10 +476,7 @@ func (j *JMAPServer) handleEmailGet(ctx context.Context, authUser string, args m
 
 // MessageOwnedSummary captures the minimal metadata needed to answer Email/get
 // for a message confirmed to belong to the authenticated user.
-type MessageOwnedSummary struct {
-	imap.MessageSummary
-	Folder string
-}
+type MessageOwnedSummary = mailstate.Message
 
 // toStringSlice converts an interface{} that is []interface{} of strings to []string.
 func toStringSlice(v interface{}) []string {

@@ -28,11 +28,14 @@ def run(binary, backup):
         cert, key = root/'cert.pem', root/'key.pem'
         subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         smtp_port, imap_port, api_port = port(), port(), port()
+        jmap_port = port()
+        jmap_checks = runpy.run_path(str(pathlib.Path(__file__).with_name('jmap-sync.py')))
         policies = root/'policies.yaml'
         policies.write_text('policies: []\n')
         config = {
             'server': {'addr':f'127.0.0.1:{smtp_port}', 'domain':'mail.test', 'local_domains':['mail.test'], 'require_auth':True, 'require_tls':True, 'tls':{'cert':str(cert),'key':str(key)}, 'spf':{'enabled':False}, 'dmarc':{'enabled':False}, 'dane':{'enabled':False}},
             'imap': {'addr':f'127.0.0.1:{imap_port}', 'tls_mode':'starttls','tls':{'cert':str(cert),'key':str(key)}},
+            'jmap': {'enabled': True, 'addr': f'127.0.0.1:{jmap_port}'},
             'api': {'rest_addr':f'127.0.0.1:{api_port}', 'tls':{'cert':str(cert),'key':str(key)}, 'api_keys':[{'name':'qa-admin','key':'qa-isolated-admin','permissions':['mailboxes:read','mailboxes:write','queue:read','policies:read','policies:write']},{'name':'qa-reader','key':'qa-isolated-reader','permissions':['queue:read']}]},
             'platform': {'data_dir':str(root/'data'),'policy_path':str(policies)},
             'auth': {'default_users':[{'username':'probe@mail.test','email':'probe@mail.test','password':'isolated-test-password'}]},
@@ -134,6 +137,7 @@ def run(binary, backup):
                     ok(client.close());ok(client.delete('Bulk'))
                 runpy.run_path(str(pathlib.Path(__file__).with_name('imap-multisession.py')))['qualify']('localhost', imap_port, tls)
                 runpy.run_path(str(pathlib.Path(__file__).with_name('imap-move.py')))['qualify']('localhost', imap_port, tls)
+                jmap_checkpoint = jmap_checks['qualify'](jmap_port, imap_port, tls)
 
             finally:
                 process.terminate()
@@ -169,13 +173,14 @@ def run(binary, backup):
                     assert client.select('MoveArchive')[0] == 'OK'
                     status, moved = client.uid('fetch', '5', '(FLAGS INTERNALDATE BODY.PEEK[])')
                     assert status == 'OK' and b'customer' in repr(moved).encode() and b'2020' in repr(moved).encode() and b'move payload' in repr(moved).encode(), moved
+                jmap_checks['restored'](jmap_port, jmap_checkpoint)
             finally:
                 process.terminate()
                 try:process.wait(timeout=15)
                 except subprocess.TimeoutExpired:
                     process.kill();process.wait();raise RuntimeError('restored service shutdown timed out')
             assert process.returncode==0,process.returncode
-        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, flags/search, shutdown and live restored-service verification')
+        print('PASS: SMTP/IMAP delivery, REST authorization/accounts/policies, folder mutations, JMAP keyword writes/changes, flags/search, shutdown and live restored-service verification')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
@@ -187,7 +192,7 @@ if __name__=='__main__':
     if args.report:
         report = {
             'schema_version': 1,
-            'scope': 'isolated live SMTP/IMAP, REST and backup/restore qualification',
+            'scope': 'isolated live SMTP/IMAP, JMAP keyword writes/changes, REST and backup/restore qualification',
             'status': 'running',
             'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'binary_sha256': hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),

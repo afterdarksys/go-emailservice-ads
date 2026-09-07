@@ -130,7 +130,7 @@ func (j *JMAPServer) mailboxGet(ctx context.Context, user string, args map[strin
 		case "Junk":
 			role = "junk"
 		}
-		list = append(list, map[string]interface{}{"id": fid, "name": name, "parentId": parent, "role": role, "sortOrder": 0, "totalEmails": len(msgs), "unreadEmails": unread, "totalThreads": len(msgs), "unreadThreads": unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": false, "mayRemoveItems": false, "maySetSeen": false, "maySetKeywords": false, "mayCreateChild": false, "mayRename": false, "mayDelete": false, "maySubmit": false}})
+		list = append(list, map[string]interface{}{"id": fid, "name": name, "parentId": parent, "role": role, "sortOrder": 0, "totalEmails": len(msgs), "unreadEmails": unread, "totalThreads": len(msgs), "unreadThreads": unread, "myRights": map[string]bool{"mayReadItems": true, "mayAddItems": false, "mayRemoveItems": false, "maySetSeen": j.keywordWrites(), "maySetKeywords": j.keywordWrites(), "mayCreateChild": false, "mayRename": false, "mayDelete": false, "maySubmit": false}})
 	}
 	// State describes every mailbox in the account, independent of ids selection.
 	raw, _ := json.Marshal(list)
@@ -241,7 +241,7 @@ func emailObject(id string, raw []byte, meta MessageOwnedSummary) map[string]int
 	return obj
 }
 func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[string]interface{}, id string) MethodResponse {
-	owned, err := j.ownedMessages(ctx, user)
+	owned, state, err := j.emailSnapshot(ctx, user)
 	if err != nil {
 		return methodError("serverFail", id)
 	}
@@ -343,7 +343,7 @@ func (j *JMAPServer) emailQuery(ctx context.Context, user string, args map[strin
 	for _, entry := range entries[position:end] {
 		ids = append(ids, entry.id)
 	}
-	return MethodResponse{Name: "Email/query", Arguments: map[string]interface{}{"accountId": "primary", "queryState": emailState(owned), "canCalculateChanges": false, "position": position, "ids": ids, "total": total}, CallID: id}
+	return MethodResponse{Name: "Email/query", Arguments: map[string]interface{}{"accountId": "primary", "queryState": state, "canCalculateChanges": false, "position": position, "ids": ids, "total": total}, CallID: id}
 
 }
 

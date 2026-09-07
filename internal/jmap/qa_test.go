@@ -72,7 +72,7 @@ func TestJMAPReflectsDurableFoldersFlagsAndExpunge(t *testing.T) {
 	if len(response.Arguments["notFound"].([]string)) != 1 {
 		t.Fatal("deleted mail still visible")
 	}
-	for _, method := range []string{"Email/set", "Mailbox/set", "Email/changes"} {
+	for _, method := range []string{"Mailbox/set", "Email/changes"} {
 		response = j.processMethodCall(ctx, "alice", MethodCall{Name: method, ID: "a", Arguments: map[string]interface{}{"accountId": "primary"}})
 		if response.Name != "error" {
 			t.Fatal("fabricated success", method, response)
