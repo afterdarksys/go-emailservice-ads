@@ -56,3 +56,6 @@ func (e *sieveEngine) Validate(script string) error {
 func (e *sieveEngine) GetCapabilities() []string {
 	return e.capabilities
 }
+
+// ValidateSieve checks a script using the delivery engine's supported grammar.
+func ValidateSieve(script string) error { _, err := svParse(script); return err }
